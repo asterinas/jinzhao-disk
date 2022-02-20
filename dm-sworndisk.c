@@ -375,6 +375,16 @@ static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
     return DM_MAPIO_REMAPPED;
 }
 
+void test_get_first_free_seg(struct dm_sworndisk_target *mdt) {
+    int i, seg;
+    
+    for (i=0; i<16; ++i) {
+        dm_sworndisk_get_first_free_segment(mdt->cmd, &seg);
+        DMINFO("next free segment: %d", seg);
+        dm_sworndisk_set_svt(mdt->cmd, i, true);
+    }
+}
+
 /*
  * This is constructor function of target gets called when we create some device of type 'dm_sworndisk_target'.
  * i.e on execution of command 'dmsetup create'. It gets called per device.
@@ -447,6 +457,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
     bio_list_init(&mdt->deferred_indexfind_bios);
     c0_init();
 
+    test_get_first_free_seg(mdt);
     // DMINFO("Exit : %s ", __func__);
     return ret;
 

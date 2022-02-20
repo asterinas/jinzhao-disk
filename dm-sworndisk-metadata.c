@@ -56,7 +56,7 @@ struct sworndisk_disk_superblock {
     __le64 blk_per_seg;
 
 	__u8 metadata_space_map_root[SPACE_MAP_ROOT_SIZE];
-	__le64 sit_root; // segment invalidation table root
+	__le64 svt_root; // segment validation table root
 	__le64 rit_root; // reverse index table root
 
 	__le32 data_block_size;
@@ -74,7 +74,7 @@ struct dm_sworndisk_metadata {
 	struct dm_transaction_manager *tm;
 
 	struct dm_array_info rit_info; // reverse index table info 
-	struct dm_disk_bitset sit_info; // segment invalidation table info
+	struct dm_disk_bitset svt_info; // segment invalidation table info
 
     unsigned long nr_segment;
     dm_block_t blk_per_seg;
@@ -82,7 +82,7 @@ struct dm_sworndisk_metadata {
 	struct rw_semaphore root_lock;
 	unsigned long flags;
 	dm_block_t rit_root;
-	dm_block_t sit_root;
+	dm_block_t svt_root;
 
 	sector_t data_block_size;
 	bool changed:1;
@@ -109,7 +109,7 @@ struct dm_sworndisk_metadata {
 	 * These structures are used when loading metadata.  They're too
 	 * big to put on the stack.
 	 */
-	struct dm_array_cursor sit_cursor;
+	struct dm_array_cursor svt_cursor;
 	struct dm_array_cursor rit_cursor;
 };
 
@@ -311,7 +311,7 @@ static int __write_initial_superblock(struct dm_sworndisk_metadata *cmd)
 	__copy_sm_root(cmd, disk_super);
 
 	disk_super->rit_root = cpu_to_le64(cmd->rit_root);
-	disk_super->sit_root = cpu_to_le64(cmd->sit_root);
+	disk_super->svt_root = cpu_to_le64(cmd->svt_root);
     disk_super->nr_segment = cpu_to_le64(cmd->nr_segment);
     disk_super->blk_per_seg = cpu_to_le64(cmd->blk_per_seg);
 	disk_super->metadata_block_size = cpu_to_le32(DM_SWORNDISK_METADATA_BLOCK_SIZE);
@@ -337,8 +337,8 @@ static int __format_metadata(struct dm_sworndisk_metadata *cmd)
 	if (r < 0)
 		goto bad;
 
-	dm_disk_bitset_init(cmd->tm, &cmd->sit_info);
-	r = dm_bitset_empty(&cmd->sit_info, &cmd->sit_root);
+	dm_disk_bitset_init(cmd->tm, &cmd->svt_info);
+	r = dm_bitset_empty(&cmd->svt_info, &cmd->svt_root);
 	if (r < 0)
 		goto bad;
 
@@ -390,7 +390,7 @@ static int __open_metadata(struct dm_sworndisk_metadata *cmd)
 	}
 
 	__setup_mapping_info(cmd);
-	dm_disk_bitset_init(cmd->tm, &cmd->sit_info);
+	dm_disk_bitset_init(cmd->tm, &cmd->svt_info);
 	sb_flags = le32_to_cpu(disk_super->flags);
 	cmd->clean_when_opened = test_bit(CLEAN_SHUTDOWN, &sb_flags);
 	dm_bm_unlock(sblock);
@@ -474,7 +474,7 @@ static void read_superblock_fields(struct dm_sworndisk_metadata *cmd,
 	cmd->version = le32_to_cpu(disk_super->version);
 	cmd->flags = le32_to_cpu(disk_super->flags);
 	cmd->rit_root = le64_to_cpu(disk_super->rit_root);
-	cmd->sit_root = le64_to_cpu(disk_super->sit_root);
+	cmd->svt_root = le64_to_cpu(disk_super->svt_root);
     cmd->nr_segment = le64_to_cpu(disk_super->nr_segment);
     cmd->blk_per_seg = le64_to_cpu(disk_super->blk_per_seg);
 	cmd->data_block_size = le32_to_cpu(disk_super->data_block_size);
@@ -537,8 +537,8 @@ static int __commit_transaction(struct dm_sworndisk_metadata *cmd,
 	 */
 	BUILD_BUG_ON(sizeof(struct sworndisk_disk_superblock) > 512);
 
-	r = dm_bitset_flush(&cmd->sit_info, cmd->sit_root,
-			    &cmd->sit_root);
+	r = dm_bitset_flush(&cmd->svt_info, cmd->svt_root,
+			    &cmd->svt_root);
 	if (r)
 		return r;
 
@@ -561,7 +561,7 @@ static int __commit_transaction(struct dm_sworndisk_metadata *cmd,
 		update_flags(disk_super, mutator);
 
 	disk_super->rit_root = cpu_to_le64(cmd->rit_root);
-	disk_super->sit_root = cpu_to_le64(cmd->sit_root);
+	disk_super->svt_root = cpu_to_le64(cmd->svt_root);
     disk_super->nr_segment = cpu_to_le64(cmd->nr_segment);
     disk_super->blk_per_seg = cpu_to_le64(cmd->blk_per_seg);
 	__copy_sm_root(cmd, disk_super);
@@ -863,24 +863,24 @@ int dm_sworndisk_metadata_abort(struct dm_sworndisk_metadata *cmd)
 	return r;
 }
 
-static int __set_sit(struct dm_sworndisk_metadata *cmd, dm_dblock_t b)
+static int __set_svt(struct dm_sworndisk_metadata *cmd, dm_dblock_t b)
 {
-	return dm_bitset_set_bit(&cmd->sit_info, cmd->sit_root,
-				 from_dblock(b), &cmd->sit_root);
+	return dm_bitset_set_bit(&cmd->svt_info, cmd->svt_root,
+				 from_dblock(b), &cmd->svt_root);
 }
 
-static int __clear_sit(struct dm_sworndisk_metadata *cmd, dm_dblock_t b)
+static int __clear_svt(struct dm_sworndisk_metadata *cmd, dm_dblock_t b)
 {
-	return dm_bitset_clear_bit(&cmd->sit_info, cmd->sit_root,
-				   from_dblock(b), &cmd->sit_root);
+	return dm_bitset_clear_bit(&cmd->svt_info, cmd->svt_root,
+				   from_dblock(b), &cmd->svt_root);
 }
 
-static int __sit(struct dm_sworndisk_metadata *cmd,
+static int __svt(struct dm_sworndisk_metadata *cmd,
 		     dm_dblock_t dblock, bool valid)
 {
 	int r;
 
-	r = (valid ? __set_sit : __clear_sit)(cmd, dblock);
+	r = (valid ? __set_svt : __clear_svt)(cmd, dblock);
 	if (r)
 		return r;
 
@@ -888,14 +888,30 @@ static int __sit(struct dm_sworndisk_metadata *cmd,
 	return 0;
 }
 
-int dm_sworndisk_set_sit(struct dm_sworndisk_metadata *cmd,
+int dm_sworndisk_set_svt(struct dm_sworndisk_metadata *cmd,
 			 dm_dblock_t dblock, bool valid)
 {
 	int r;
 
 	WRITE_LOCK(cmd);
-	r = __sit(cmd, dblock, valid);
+	r = __svt(cmd, dblock, valid);
 	WRITE_UNLOCK(cmd);
 
 	return r;
+}
+
+int dm_sworndisk_get_first_free_segment(struct dm_sworndisk_metadata *cmd, int *seg) {
+    int i, err;
+    bool result;
+    
+    for (i=0; i<cmd->nr_segment; ++i) {
+        err = dm_bitset_test_bit(&cmd->svt_info, cmd->svt_root, i, &cmd->svt_root, &result);
+        if (err)
+            return err;
+        if (result == false) {
+            *seg = i;
+            return 0;
+        }
+    }
+    return 0;
 }
