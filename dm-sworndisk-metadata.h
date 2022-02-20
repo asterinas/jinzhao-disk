@@ -59,7 +59,9 @@ struct dm_sworndisk_metadata;
 struct dm_sworndisk_metadata *dm_sworndisk_metadata_open(struct block_device *bdev,
 						 sector_t data_block_size,
 						 bool may_format_device,
-						 unsigned metadata_version);
+						 unsigned metadata_version,
+						 int nr_segment,
+						 int blk_per_seg);
 
 void dm_sworndisk_metadata_close(struct dm_sworndisk_metadata *cmd);
 
@@ -111,7 +113,7 @@ int dm_sworndisk_metadata_abort(struct dm_sworndisk_metadata *cmd);
 
 /*----------------------------------------------------------------*/
 
-int dm_sworndisk_set_svt(struct dm_sworndisk_metadata *cmd, dm_dblock_t dblock, bool valid);
+int dm_sworndisk_set_svt(struct dm_sworndisk_metadata *cmd, int dblock, bool valid);
 int dm_sworndisk_get_first_free_segment(struct dm_sworndisk_metadata *cmd, int *seg);
 
 #endif /* DM_CACHE_METADATA_H */

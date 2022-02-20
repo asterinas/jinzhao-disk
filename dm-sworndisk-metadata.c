@@ -342,6 +342,10 @@ static int __format_metadata(struct dm_sworndisk_metadata *cmd)
 	if (r < 0)
 		goto bad;
 
+	r = dm_bitset_resize(&cmd->svt_info, cmd->svt_root, 0, cmd->nr_segment, false, &cmd->svt_root);
+	if (r)
+		goto bad;
+
 	r = __write_initial_superblock(cmd);
 	if (r)
 		goto bad;
@@ -412,10 +416,11 @@ static int __open_or_format_metadata(struct dm_sworndisk_metadata *cmd,
 	if (r)
 		return r;
 
-	if (unformatted)
-		return format_device ? __format_metadata(cmd) : -EPERM;
+	return __format_metadata(cmd);
+	// if (unformatted)
+	// 	return format_device ? __format_metadata(cmd) : -EPERM;
 
-	return __open_metadata(cmd);
+	// return __open_metadata(cmd);
 }
 
 static int __create_persistent_data_objects(struct dm_sworndisk_metadata *cmd,
@@ -573,7 +578,9 @@ static int __commit_transaction(struct dm_sworndisk_metadata *cmd,
 static struct dm_sworndisk_metadata *metadata_open(struct block_device *bdev,
 					       sector_t data_block_size,
 					       bool may_format_device,
-					       unsigned metadata_version)
+					       unsigned metadata_version,
+						   int nr_segment,
+						   int blk_per_seg)
 {
 	int r;
 	struct dm_sworndisk_metadata *cmd;
@@ -589,6 +596,8 @@ static struct dm_sworndisk_metadata *metadata_open(struct block_device *bdev,
 	init_rwsem(&cmd->root_lock);
 	cmd->bdev = bdev;
 	cmd->data_block_size = data_block_size;
+	cmd->nr_segment = nr_segment;
+	cmd->blk_per_seg = blk_per_seg;
 	cmd->changed = true;
 	cmd->fail_io = false;
 
@@ -631,7 +640,9 @@ static struct dm_sworndisk_metadata *lookup(struct block_device *bdev)
 static struct dm_sworndisk_metadata *lookup_or_open(struct block_device *bdev,
 						sector_t data_block_size,
 						bool may_format_device,
-						unsigned metadata_version)
+						unsigned metadata_version,
+						int nr_segment,
+						int blk_per_seg)
 {
 	struct dm_sworndisk_metadata *cmd, *cmd2;
 
@@ -642,7 +653,7 @@ static struct dm_sworndisk_metadata *lookup_or_open(struct block_device *bdev,
 	if (cmd)
 		return cmd;
 
-	cmd = metadata_open(bdev, data_block_size, may_format_device, metadata_version);
+	cmd = metadata_open(bdev, data_block_size, may_format_device, metadata_version, nr_segment, blk_per_seg);
 	if (!IS_ERR(cmd)) {
 		mutex_lock(&table_lock);
 		cmd2 = lookup(bdev);
@@ -674,9 +685,11 @@ static bool same_params(struct dm_sworndisk_metadata *cmd, sector_t data_block_s
 struct dm_sworndisk_metadata *dm_sworndisk_metadata_open(struct block_device *bdev,
 						 sector_t data_block_size,
 						 bool may_format_device,
-						 unsigned metadata_version)
+						 unsigned metadata_version,
+						 int nr_segment,
+						 int blk_per_seg)
 {
-	struct dm_sworndisk_metadata *cmd = lookup_or_open(bdev, data_block_size, may_format_device, metadata_version);
+	struct dm_sworndisk_metadata *cmd = lookup_or_open(bdev, data_block_size, may_format_device, metadata_version, nr_segment, blk_per_seg);
 
 	if (!IS_ERR(cmd) && !same_params(cmd, data_block_size)) {
 		dm_sworndisk_metadata_close(cmd);
@@ -863,20 +876,20 @@ int dm_sworndisk_metadata_abort(struct dm_sworndisk_metadata *cmd)
 	return r;
 }
 
-static int __set_svt(struct dm_sworndisk_metadata *cmd, dm_dblock_t b)
+static int __set_svt(struct dm_sworndisk_metadata *cmd, int b)
 {
 	return dm_bitset_set_bit(&cmd->svt_info, cmd->svt_root,
 				 from_dblock(b), &cmd->svt_root);
 }
 
-static int __clear_svt(struct dm_sworndisk_metadata *cmd, dm_dblock_t b)
+static int __clear_svt(struct dm_sworndisk_metadata *cmd, int b)
 {
 	return dm_bitset_clear_bit(&cmd->svt_info, cmd->svt_root,
 				   from_dblock(b), &cmd->svt_root);
 }
 
 static int __svt(struct dm_sworndisk_metadata *cmd,
-		     dm_dblock_t dblock, bool valid)
+		     int dblock, bool valid)
 {
 	int r;
 
@@ -889,7 +902,7 @@ static int __svt(struct dm_sworndisk_metadata *cmd,
 }
 
 int dm_sworndisk_set_svt(struct dm_sworndisk_metadata *cmd,
-			 dm_dblock_t dblock, bool valid)
+			 int dblock, bool valid)
 {
 	int r;
 
@@ -903,7 +916,7 @@ int dm_sworndisk_set_svt(struct dm_sworndisk_metadata *cmd,
 int dm_sworndisk_get_first_free_segment(struct dm_sworndisk_metadata *cmd, int *seg) {
     int i, err;
     bool result;
-    
+
     for (i=0; i<cmd->nr_segment; ++i) {
         err = dm_bitset_test_bit(&cmd->svt_info, cmd->svt_root, i, &cmd->svt_root, &result);
         if (err)

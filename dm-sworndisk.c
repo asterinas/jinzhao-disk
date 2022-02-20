@@ -33,8 +33,8 @@
 
 #define DM_MSG_PREFIX "sworndisk"
 
-#define MAX_SEGMENT 1024
-#define BLK_PER_SEG 32
+#define MAX_SEGMENT 32
+#define BLK_PER_SEG 8
 
 /* For underlying device */
 struct dm_sworndisk_target {
@@ -253,24 +253,24 @@ static void defer_bio(struct dm_sworndisk_target *mdt, struct bio *bio)
 }
 
 static int findc1(struct dm_sworndisk_target *mdt, int lba) {
-    __le64 lba0, pba;
-    int h, t, m;
-    h = 0; t = mdt->sstlen;
-    while (h <= t) {
-        m = (h + t) / 2;
-	    // dm_cache_read(mdt->cmd, m, &pba);
+    // __le64 lba0, pba;
+    // int h, t, m;
+    // h = 0; t = mdt->sstlen;
+    // while (h <= t) {
+    //     m = (h + t) / 2;
+	//     dm_cache_read(mdt->cmd, m, &pba);
         
-        lba0 = pba >> 32;
-        pba = pba << 32 >> 32;
-        //DMINFO("%d %llu %llu", m, lba0, pba);
+    //     lba0 = pba >> 32;
+    //     pba = pba << 32 >> 32;
+    //     //DMINFO("%d %llu %llu", m, lba0, pba);
         
-        if (lba < lba0)
-            t = m - 1;
-        else if (lba > lba0)
-            h = m + 1;
-        else
-            return pba;
-    }
+    //     if (lba < lba0)
+    //         t = m - 1;
+    //     else if (lba > lba0)
+    //         h = m + 1;
+    //     else
+    //         return pba;
+    // }
     
     return 0;
 }
@@ -376,12 +376,16 @@ static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
 }
 
 void test_get_first_free_seg(struct dm_sworndisk_target *mdt) {
-    int i, seg;
+    int i, seg, r;
     
-    for (i=0; i<16; ++i) {
-        dm_sworndisk_get_first_free_segment(mdt->cmd, &seg);
+    for (i=0; i<10; ++i) {
+        r = dm_sworndisk_get_first_free_segment(mdt->cmd, &seg);
+        if (r) 
+            DMINFO("get first free segment err");
         DMINFO("next free segment: %d", seg);
-        dm_sworndisk_set_svt(mdt->cmd, i, true);
+        r = dm_sworndisk_set_svt(mdt->cmd, i, true);
+        if (r) 
+            DMINFO("dm_sworndisk_set_svt err");
     }
 }
 
@@ -438,8 +442,11 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
             goto out;
     }
     may_format = 0;
-    cmd = dm_sworndisk_metadata_open(mdt->metadata_dev->bdev, DM_SWORNDISK_METADATA_BLOCK_SIZE, may_format, 1);
-
+    cmd = dm_sworndisk_metadata_open(mdt->metadata_dev->bdev, DM_SWORNDISK_METADATA_BLOCK_SIZE, may_format, 1, MAX_SEGMENT, BLK_PER_SEG);
+    if (IS_ERR(cmd)) {
+        DMERR("open metadata device error");
+        goto out;
+    }
     mdt->cmd = cmd;
     mdt->wq = alloc_workqueue("dm-" DM_MSG_PREFIX, WQ_MEM_RECLAIM, 0);
 	if (!mdt->wq) {
@@ -457,7 +464,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
     bio_list_init(&mdt->deferred_indexfind_bios);
     c0_init();
 
-    test_get_first_free_seg(mdt);
+    // test_get_first_free_seg(mdt);
     // DMINFO("Exit : %s ", __func__);
     return ret;
 
@@ -484,7 +491,7 @@ static void dm_sworndisk_target_dtr(struct dm_target *ti)
 /*  This structure is fops for dm_sworndisk target */
 static struct target_type dm_sworndisk_target = {
 
-    .name = "dm_sworndisk_target",
+    .name = "sworndisk",
     .version = {1,0,0},
     .module = THIS_MODULE,
     .ctr = dm_sworndisk_target_ctr,

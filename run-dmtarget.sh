@@ -30,13 +30,12 @@ do
 		losetup /dev/loop0 disk0
 		losetup /dev/loop1 disk1 
 		losetup /dev/loop2 disk2 
-		modprobe dm-persistent-data
 		;;
 	w)
-		dd if=/dev/urandom of=/dev/mapper/my_device_mapper  bs=64K count=1280
+		dd if=/dev/urandom of=/dev/mapper/sworndisk_dev_mapper  bs=64K count=1280
 		;;
 	r)
-		dd if=/dev/mapper/my_device_mapper of=out bs=4096 count=128
+		dd if=/dev/mapper/sworndisk_dev_mapper of=out bs=4096 count=128
 		;;
 	h)
 		;;
@@ -46,13 +45,13 @@ do
 		make CONFIG_SWORNDISK=m CONFIG_DM_PERSISTENT_DATA=m M=drivers/md
 		make modules_install M=drivers/md
 		cd drivers/md
-		dmsetup remove my_device_mapper
+		dmsetup remove sworndisk_dev_mapper
 		modprobe -r sworndisk dm-persistent-data 
 		modprobe dm-persistent-data
 		modprobe sworndisk
 		# insmod persistent-data/dm-persistent-data.ko
 		# insmod mappery.ko
-		echo 0 262144 hello_target /dev/loop0 /dev/loop1 /dev/loop2 0 | dmsetup create my_device_mapper
+		echo 0 262144 sworndisk /dev/loop0 /dev/loop1 /dev/loop2 0 | dmsetup create sworndisk_dev_mapper
 		;;
 		
 	h)
