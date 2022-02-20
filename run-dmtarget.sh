@@ -43,13 +43,13 @@ do
 	m)
 		cd ../../
 		#make CONFIG_DM_CACHE=m M=drivers/md
-		make CONFIG_MAPPERY=m CONFIG_DM_PERSISTENT_DATA=m M=drivers/md
+		make CONFIG_SWORNDISK=m CONFIG_DM_PERSISTENT_DATA=m M=drivers/md
 		make modules_install M=drivers/md
 		cd drivers/md
 		dmsetup remove my_device_mapper
-		modprobe -r mappery dm-persistent-data 
+		modprobe -r sworndisk dm-persistent-data 
 		modprobe dm-persistent-data
-		modprobe mappery
+		modprobe sworndisk
 		# insmod persistent-data/dm-persistent-data.ko
 		# insmod mappery.ko
 		echo 0 262144 hello_target /dev/loop0 /dev/loop1 /dev/loop2 0 | dmsetup create my_device_mapper

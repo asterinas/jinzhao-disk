@@ -22,15 +22,22 @@
 #include <linux/init.h>
 #include <linux/mempool.h>
 #include <linux/rwsem.h>
-#include "dm.h"
-#include "metadata.h"
 #include <crypto/skcipher.h>
 #include <linux/scatterlist.h> 
+#include <linux/bitmap.h>
+#include <linux/spinlock.h>
 
-#define DM_MSG_PREFIX "hello"
+#include "persistent-data/dm-bitset.h"
+#include "dm.h"
+#include "dm-sworndisk-metadata.h"
+
+#define DM_MSG_PREFIX "sworndisk"
+
+#define MAX_SEGMENT 1024
+#define BLK_PER_SEG 32
 
 /* For underlying device */
-struct my_dm_target {
+struct dm_sworndisk_target {
     struct dm_dev *data_dev;
     struct dm_dev *metadata_dev;
     struct dm_dev *origin_dev;
@@ -41,11 +48,12 @@ struct my_dm_target {
     struct work_struct deferred_bio_worker;
     struct bio_list deferred_indexfind_bios;
     struct bio_list deferred_bios;
-	struct dm_cache_metadata *cmd;
+	struct dm_sworndisk_metadata *cmd;
     spinlock_t lock;
     sector_t sstlen;
     int pba_tail;
 };
+
 
 struct kv{
     int lba;
@@ -88,7 +96,7 @@ int c0_find(int lba) {
     return c0.hash_map[h].pba;
 }
 
-int c0_insert(int lba, struct my_dm_target *mdt) {
+int c0_insert(int lba, struct dm_sworndisk_target *mdt) {
     int h = hash_f(lba);
     while (c0.hash_map[h].lba != -1 && c0.hash_map[h].lba != lba) {
         h = (h+1)%(c0.capacity);
@@ -131,126 +139,126 @@ static void process_migration(struct work_struct *ws)
 
 }
 
-int linux_kernel_crypto_encrypt(void* data_in_out, int data_len, void* key, int key_len) {
-	struct crypto_skcipher* cipher;
-	struct skcipher_request* req;
-    struct crypto_wait wait;
-	struct scatterlist sg;
-    size_t block_size;
-	int ret;
+// int linux_kernel_crypto_encrypt(void* data_in_out, int data_len, void* key, int key_len) {
+// 	struct crypto_skcipher* cipher;
+// 	struct skcipher_request* req;
+//     struct crypto_wait wait;
+// 	struct scatterlist sg;
+//     size_t block_size;
+// 	int ret;
 
-    // 分配算法对象，支持的算法可以在/proc/crypto文件中查看
-	cipher = crypto_alloc_skcipher("cbc(aes)", 0, 0);
-	if (IS_ERR(cipher)) {
-		printk("fail to allocate cipher\n");
-		return -1;
-	}
+//     // 分配算法对象，支持的算法可以在/proc/crypto文件中查看
+// 	cipher = crypto_alloc_skcipher("cbc(aes)", 0, 0);
+// 	if (IS_ERR(cipher)) {
+// 		printk("fail to allocate cipher\n");
+// 		return -1;
+// 	}
 
-    // skcipher api不支持填充，所以加/解密数据需要为加密块的整数倍
-    block_size = crypto_skcipher_blocksize(cipher);
-    if (data_len % block_size != 0) {
-		printk("data len not aligned");
-		return -1;
-	}
+//     // skcipher api不支持填充，所以加/解密数据需要为加密块的整数倍
+//     block_size = crypto_skcipher_blocksize(cipher);
+//     if (data_len % block_size != 0) {
+// 		printk("data len not aligned");
+// 		return -1;
+// 	}
 
-    // 分配req对象
-	req = skcipher_request_alloc(cipher, GFP_KERNEL);
-	if (IS_ERR(req)) {
-		printk("fail to allocate req\n");
-		return -1;
-	}
-	sg_init_one(&sg, data_in_out, data_len);
-	skcipher_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG, crypto_req_done, &wait);
-    char iv[16] = { 0 };
-	skcipher_request_set_crypt(req, &sg, &sg, data_len, iv);
-	ret = crypto_skcipher_setkey(cipher, key, key_len);
-    if ( 0 != ret) {
-        printk("fail to set key, error %d\n", ret);
-        return -1;
-    }
-    // 执行解密操作
-	ret = crypto_wait_req(crypto_skcipher_encrypt(req), &wait); 
-	if (0 != ret) {
-        printk("decryption error %d\n", ret);
-        return -1;
-	}
-	// 释放资源
-	crypto_free_skcipher(cipher);
-	skcipher_request_free(req);
-	//printk("encryption finished");
-	return 0;
-}
+//     // 分配req对象
+// 	req = skcipher_request_alloc(cipher, GFP_KERNEL);
+// 	if (IS_ERR(req)) {
+// 		printk("fail to allocate req\n");
+// 		return -1;
+// 	}
+// 	sg_init_one(&sg, data_in_out, data_len);
+// 	skcipher_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG, crypto_req_done, &wait);
+//     char iv[16] = { 0 };
+// 	skcipher_request_set_crypt(req, &sg, &sg, data_len, iv);
+// 	ret = crypto_skcipher_setkey(cipher, key, key_len);
+//     if ( 0 != ret) {
+//         printk("fail to set key, error %d\n", ret);
+//         return -1;
+//     }
+//     // 执行解密操作
+// 	ret = crypto_wait_req(crypto_skcipher_encrypt(req), &wait); 
+// 	if (0 != ret) {
+//         printk("decryption error %d\n", ret);
+//         return -1;
+// 	}
+// 	// 释放资源
+// 	crypto_free_skcipher(cipher);
+// 	skcipher_request_free(req);
+// 	//printk("encryption finished");
+// 	return 0;
+// }
 
-int linux_kernel_crypto_decrypt(void* data_in_out, int data_len, void* key, int key_len) {
-	struct crypto_skcipher* cipher;
-	struct skcipher_request* req;
-    struct crypto_wait wait;
-	struct scatterlist sg;
-    size_t block_size;
-	int ret;
+// int linux_kernel_crypto_decrypt(void* data_in_out, int data_len, void* key, int key_len) {
+// 	struct crypto_skcipher* cipher;
+// 	struct skcipher_request* req;
+//     struct crypto_wait wait;
+// 	struct scatterlist sg;
+//     size_t block_size;
+// 	int ret;
 
-    // 分配算法对象，支持的算法可以在/proc/crypto文件中查看
-	cipher = crypto_alloc_skcipher("cbc(aes)", 0, 0);
-	if (IS_ERR(cipher)) {
-		printk("fail to allocate cipher\n");
-		return -1;
-	}
+//     // 分配算法对象，支持的算法可以在/proc/crypto文件中查看
+// 	cipher = crypto_alloc_skcipher("cbc(aes)", 0, 0);
+// 	if (IS_ERR(cipher)) {
+// 		printk("fail to allocate cipher\n");
+// 		return -1;
+// 	}
 
-    // skcipher api不支持填充，所以加/解密数据需要为加密块的整数倍
-    block_size = crypto_skcipher_blocksize(cipher);
-    if (data_len % block_size != 0) {
-		printk("data len not aligned");
-		return -1;
-	}
+//     // skcipher api不支持填充，所以加/解密数据需要为加密块的整数倍
+//     block_size = crypto_skcipher_blocksize(cipher);
+//     if (data_len % block_size != 0) {
+// 		printk("data len not aligned");
+// 		return -1;
+// 	}
 
-    // 分配req对象
-	req = skcipher_request_alloc(cipher, GFP_KERNEL);
-	if (IS_ERR(req)) {
-		printk("fail to allocate req\n");
-		return -1;
-	}
-	sg_init_one(&sg, data_in_out, data_len);
-	skcipher_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG, crypto_req_done, &wait);
-    char iv[16] = { 0 };
-	skcipher_request_set_crypt(req, &sg, &sg, data_len, iv);
-	ret = crypto_skcipher_setkey(cipher, key, key_len);
-    if ( 0 != ret) {
-        printk("fail to set key, error %d\n", ret);
-        return -1;
-    }
-    // 执行解密操作
-	ret = crypto_wait_req(crypto_skcipher_decrypt(req), &wait); 
-	if (0 != ret) {
-        printk("decryption error %d\n", ret);
-        return -1;
-	}
-	// 释放资源
-	crypto_free_skcipher(cipher);
-	skcipher_request_free(req);
-	//printk("decryption finished");
-	return 0;
-}
+//     // 分配req对象
+// 	req = skcipher_request_alloc(cipher, GFP_KERNEL);
+// 	if (IS_ERR(req)) {
+// 		printk("fail to allocate req\n");
+// 		return -1;
+// 	}
+// 	sg_init_one(&sg, data_in_out, data_len);
+// 	skcipher_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG, crypto_req_done, &wait);
+//     char iv[16] = { 0 };
+// 	skcipher_request_set_crypt(req, &sg, &sg, data_len, iv);
+// 	ret = crypto_skcipher_setkey(cipher, key, key_len);
+//     if ( 0 != ret) {
+//         printk("fail to set key, error %d\n", ret);
+//         return -1;
+//     }
+//     // 执行解密操作
+// 	ret = crypto_wait_req(crypto_skcipher_decrypt(req), &wait); 
+// 	if (0 != ret) {
+//         printk("decryption error %d\n", ret);
+//         return -1;
+// 	}
+// 	// 释放资源
+// 	crypto_free_skcipher(cipher);
+// 	skcipher_request_free(req);
+// 	//printk("decryption finished");
+// 	return 0;
+// }
 
 
-static void defer_bio(struct my_dm_target *mdt, struct bio *bio)
+static void defer_bio(struct dm_sworndisk_target *mdt, struct bio *bio)
 {
 	unsigned long flags;
 
 	spin_lock_irqsave(&mdt->lock, flags);
 	bio_list_add(&mdt->deferred_bios, bio);
-    DMINFO("%d", bio->bi_iter.bi_sector);
+    // DMINFO("%d", bio->bi_iter.bi_sector);
 	spin_unlock_irqrestore(&mdt->lock, flags);
 
 	queue_work(mdt->wq, &mdt->deferred_bio_worker);
 }
 
-static int findc1(struct my_dm_target *mdt, int lba) {
+static int findc1(struct dm_sworndisk_target *mdt, int lba) {
     __le64 lba0, pba;
     int h, t, m;
     h = 0; t = mdt->sstlen;
     while (h <= t) {
         m = (h + t) / 2;
-	    dm_cache_read(mdt->cmd, m, &pba);
+	    // dm_cache_read(mdt->cmd, m, &pba);
         
         lba0 = pba >> 32;
         pba = pba << 32 >> 32;
@@ -268,7 +276,7 @@ static int findc1(struct my_dm_target *mdt, int lba) {
 }
 
 static void process_deferred_indexfind_bios(struct work_struct *ws) {
-    struct my_dm_target *mdt = container_of(ws, struct my_dm_target, deferred_indexfind_worker);
+    struct dm_sworndisk_target *mdt = container_of(ws, struct dm_sworndisk_target, deferred_indexfind_worker);
     unsigned long flags;
 	struct bio_list bios;
 	struct bio *bio;
@@ -291,7 +299,7 @@ static void process_deferred_indexfind_bios(struct work_struct *ws) {
 
 }
 
-static void defer_indexfind_bio(struct my_dm_target *mdt, struct bio *bio)
+static void defer_indexfind_bio(struct dm_sworndisk_target *mdt, struct bio *bio)
 {
 	unsigned long flags;
 
@@ -304,7 +312,7 @@ static void defer_indexfind_bio(struct my_dm_target *mdt, struct bio *bio)
 
 static void process_deferred_bios(struct work_struct *ws)
 {
-	struct my_dm_target *mdt = container_of(ws, struct my_dm_target, deferred_bio_worker);
+	struct dm_sworndisk_target *mdt = container_of(ws, struct dm_sworndisk_target, deferred_bio_worker);
 
 	unsigned long flags;
 	struct bio_list bios;
@@ -324,17 +332,17 @@ static void process_deferred_bios(struct work_struct *ws)
 
 }
 
-static int hello_target_map(struct dm_target *target, struct bio *bio)
+static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
 {
     //DMINFO("Entry: %s", __func__);
-    struct my_dm_target *mdt = target->private;
+    struct dm_sworndisk_target *mdt = target->private;
     int lba, pba, offset;
     /*  bio should perform on our underlying device   */
     lba = bio->bi_iter.bi_sector;
     bio_set_dev(bio, mdt->origin_dev->bdev);
     //DMINFO("bio %llu %llu", REQ_FUA, REQ_PREFLUSH);
-    DMINFO("bio  op: %d wrtie: %d flush: %d sync: %d", bio->bi_opf, op_is_write(bio->bi_opf), op_is_flush(bio->bi_opf), op_is_sync(bio->bi_opf));
-    DMINFO("bio size: %d lba: %d" , bio->bi_iter.bi_size, lba);
+    // DMINFO("bio  op: %d wrtie: %d flush: %d sync: %d", bio->bi_opf, op_is_write(bio->bi_opf), op_is_flush(bio->bi_opf), op_is_sync(bio->bi_opf));
+    // DMINFO("bio size: %d lba: %d" , bio->bi_iter.bi_size, lba);
     // return DM_MAPIO_REMAPPED;
     if (bio_op(bio) == REQ_OP_WRITE) {
         //bio_set_dev(bio, mdt->data_dev->bdev);
@@ -352,7 +360,7 @@ static int hello_target_map(struct dm_target *target, struct bio *bio)
         offset = lba % 8;
         pba = c0_find(lba - offset);
         if (pba != -1) {
-            DMINFO("????");
+            // DMINFO("????");
             //bio_set_dev(bio, mdt->data_dev->bdev);
             bio->bi_iter.bi_sector = pba * 8 + offset;
             defer_bio(mdt, bio);
@@ -363,23 +371,24 @@ static int hello_target_map(struct dm_target *target, struct bio *bio)
         return DM_MAPIO_SUBMITTED;
     }
     
-    DMINFO("Exit : %s", __func__);
+    // DMINFO("Exit : %s", __func__);
     return DM_MAPIO_REMAPPED;
 }
 
 /*
- * This is constructor function of target gets called when we create some device of type 'hello_target'.
+ * This is constructor function of target gets called when we create some device of type 'dm_sworndisk_target'.
  * i.e on execution of command 'dmsetup create'. It gets called per device.
  */
-static int hello_target_ctr(struct dm_target *target,
+static int dm_sworndisk_target_ctr(struct dm_target *target,
 			    unsigned int argc, char **argv)
 {
-    int i;
-    struct my_dm_target *mdt;
+    bool may_format;
+    struct dm_sworndisk_target *mdt;
     unsigned long long start;
     char dummy;
     int ret = 0;
-    DMINFO("Entry: %s", __func__);
+    struct dm_sworndisk_metadata *cmd;
+    // DMINFO("Entry: %s", __func__);
 
     if (argc != 4) {
         DMERR("Invalid no. of arguments.");
@@ -387,7 +396,7 @@ static int hello_target_ctr(struct dm_target *target,
         ret =  -EINVAL;
     }
 
-    mdt = kmalloc(sizeof(struct my_dm_target), GFP_KERNEL);
+    mdt = kmalloc(sizeof(struct dm_sworndisk_target), GFP_KERNEL);
 
     if (mdt==NULL) {
         DMERR("Error in kmalloc");
@@ -403,7 +412,7 @@ static int hello_target_ctr(struct dm_target *target,
     mdt->start=(sector_t)start;
     mdt->sstlen = target->len / 8;
     mdt->pba_tail = 0;
-    DMINFO("%llu %llu start", start, target->len);
+    // DMINFO("%llu %llu start", start, target->len);
     /*  To add device in target's table and increment in device count */
 
     if (dm_get_device(target, argv[0], dm_table_get_mode(target->table), &mdt->data_dev)) {
@@ -418,9 +427,8 @@ static int hello_target_ctr(struct dm_target *target,
             target->error = "dm-basic_target: Device lookup failed";
             goto out;
     }
-    bool may_format = 0;
-    struct dm_cache_metadata *cmd = dm_cache_metadata_open(mdt->metadata_dev->bdev,
-				    8, may_format, target->len);
+    may_format = 0;
+    cmd = dm_sworndisk_metadata_open(mdt->metadata_dev->bdev, DM_SWORNDISK_METADATA_BLOCK_SIZE, may_format, 1);
 
     mdt->cmd = cmd;
     mdt->wq = alloc_workqueue("dm-" DM_MSG_PREFIX, WQ_MEM_RECLAIM, 0);
@@ -439,7 +447,7 @@ static int hello_target_ctr(struct dm_target *target,
     bio_list_init(&mdt->deferred_indexfind_bios);
     c0_init();
 
-    DMINFO("Exit : %s ", __func__);
+    // DMINFO("Exit : %s ", __func__);
     return ret;
 
 out:
@@ -451,54 +459,54 @@ out:
  *  This is destruction function, gets called per device.
  *  It removes device and decrement device count.
  */
-static void hello_target_dtr(struct dm_target *ti)
+static void dm_sworndisk_target_dtr(struct dm_target *ti)
 {
-    struct my_dm_target *mdt = (struct my_dm_target *) ti->private;
-    DMINFO("Entry: %s", __func__);
+    struct dm_sworndisk_target *mdt = (struct dm_sworndisk_target *) ti->private;
+    // DMINFO("Entry: %s", __func__);
     dm_put_device(ti, mdt->data_dev);
     dm_put_device(ti, mdt->metadata_dev);
     dm_put_device(ti, mdt->origin_dev);
-    dm_cache_metadata_close(mdt->cmd);
+    dm_sworndisk_metadata_close(mdt->cmd);
     kfree(mdt);
-    DMINFO("Exit : %s", __func__);
+    // DMINFO("Exit : %s", __func__);
 }
-/*  This structure is fops for hello target */
-static struct target_type hello_target = {
+/*  This structure is fops for dm_sworndisk target */
+static struct target_type dm_sworndisk_target = {
 
-    .name = "hello_target",
+    .name = "dm_sworndisk_target",
     .version = {1,0,0},
     .module = THIS_MODULE,
-    .ctr = hello_target_ctr,
-    .dtr = hello_target_dtr,
-    .map = hello_target_map,
+    .ctr = dm_sworndisk_target_ctr,
+    .dtr = dm_sworndisk_target_dtr,
+    .map = dm_sworndisk_target_map,
 };
 
 /*---------Module Functions -----------------*/
 
-static int init_hello_target(void)
+static int init_dm_sworndisk_target(void)
 {
     int result;
-    DMINFO("Entry: %s", __func__);
-    result = dm_register_target(&hello_target);
+    // DMINFO("Entry: %s", __func__);
+    result = dm_register_target(&dm_sworndisk_target);
     if (result < 0) {
         DMERR("Error in registering target");
     } else {
         DMINFO("Target registered");
     }
-    DMINFO("Exit : %s", __func__);
+    // DMINFO("Exit : %s", __func__);
     return 0;
 }
 
 
-static void cleanup_hello_target(void)
+static void cleanup_dm_sworndisk_target(void)
 {
-    DMINFO("Entry: %s", __func__);
-    dm_unregister_target(&hello_target);
-    DMINFO("Target unregistered");
-    DMINFO("Exit : %s", __func__);
+    // DMINFO("Entry: %s", __func__);
+    dm_unregister_target(&dm_sworndisk_target);
+    // DMINFO("Target unregistered");
+    // DMINFO("Exit : %s", __func__);
 }
 
-module_init(init_hello_target);
-module_exit(cleanup_hello_target);
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Narendra Pal Singh");
+module_init(init_dm_sworndisk_target);
+module_exit(cleanup_dm_sworndisk_target);
+MODULE_LICENSE("GPL v2");
+MODULE_AUTHOR("lnhoo");

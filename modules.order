@@ -33,4 +33,4 @@ kernel/drivers/md/dm-era.ko
 kernel/drivers/md/dm-log-writes.ko
 kernel/drivers/md/dm-integrity.ko
 kernel/drivers/md/dm-zoned.ko
-kernel/drivers/md/mappery.ko
+kernel/drivers/md/sworndisk.ko
