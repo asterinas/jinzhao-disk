@@ -1,0 +1,8 @@
+*.o
+*.ko
+*.cmd
+*.d
+*.mod.c
+disk0
+disk1
+disk2
