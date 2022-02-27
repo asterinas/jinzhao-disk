@@ -29,7 +29,7 @@ do
 		dd if=/dev/zero of=disk2 bs=1M count=128 # 128MB file
 		losetup /dev/loop0 disk0
 		losetup /dev/loop1 disk1 
-		losetup /dev/loop2 disk2 
+		# losetup /dev/loop2 disk2 
 		;;
 	w)
 		dd if=/dev/urandom of=/dev/mapper/sworndisk_dev_mapper  bs=64K count=1280
@@ -51,7 +51,7 @@ do
 		modprobe sworndisk
 		# insmod persistent-data/dm-persistent-data.ko
 		# insmod mappery.ko
-		echo 0 262144 sworndisk /dev/loop0 /dev/loop1 /dev/loop2 0 | dmsetup create sworndisk_dev_mapper
+		echo 0 262144 sworndisk /dev/loop0 /dev/loop1 0 | dmsetup create sworndisk_dev_mapper
 		;;
 		
 	h)

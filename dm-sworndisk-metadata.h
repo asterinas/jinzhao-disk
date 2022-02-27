@@ -115,5 +115,7 @@ int dm_sworndisk_metadata_abort(struct dm_sworndisk_metadata *cmd);
 
 int dm_sworndisk_set_svt(struct dm_sworndisk_metadata *cmd, int dblock, bool valid);
 int dm_sworndisk_get_first_free_segment(struct dm_sworndisk_metadata *cmd, int *seg);
+int dm_sworndisk_rit_insert(struct dm_sworndisk_metadata *cmd, int pba, int lba);
+int dm_sworndisk_rit_get(struct dm_sworndisk_metadata *cmd, int pba, int *lba);
 
 #endif /* DM_CACHE_METADATA_H */

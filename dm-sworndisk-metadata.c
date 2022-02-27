@@ -323,6 +323,7 @@ static int __write_initial_superblock(struct dm_sworndisk_metadata *cmd)
 static int __format_metadata(struct dm_sworndisk_metadata *cmd)
 {
 	int r;
+	__le64 value;
 
 	r = dm_tm_create_with_sm(cmd->bm, SWORNDISK_SUPERBLOCK_LOCATION,
 				 &cmd->tm, &cmd->metadata_sm);
@@ -336,6 +337,13 @@ static int __format_metadata(struct dm_sworndisk_metadata *cmd)
 	r = dm_array_empty(&cmd->rit_info, &cmd->rit_root);
 	if (r < 0)
 		goto bad;
+
+	// DMINFO("nr segment: %d, blk_per_seg: %d", cmd->nr_segment, cmd->blk_per_seg);
+
+	value = cpu_to_le64(0u);
+	r = dm_array_resize(&cmd->rit_info, cmd->rit_root,
+			    0, cmd->nr_segment*(cmd->blk_per_seg),
+			    &value, &cmd->rit_root);
 
 	dm_disk_bitset_init(cmd->tm, &cmd->svt_info);
 	r = dm_bitset_empty(&cmd->svt_info, &cmd->svt_root);
@@ -927,4 +935,41 @@ int dm_sworndisk_get_first_free_segment(struct dm_sworndisk_metadata *cmd, int *
         }
     }
     return 0;
+}
+
+
+static int __rit_insert(struct dm_sworndisk_metadata *cmd, int pba, int lba) {
+	int r;
+	__le64 value = cpu_to_le64(lba);
+	__dm_bless_for_disk(&value);
+
+	r = dm_array_set_value(&cmd->rit_info, cmd->rit_root, pba, &value, &cmd->rit_root);
+	if (r)
+		return r;
+
+	cmd->changed = true;
+	return 0;
+}
+
+int dm_sworndisk_rit_insert(struct dm_sworndisk_metadata *cmd, int pba, int lba) {
+	int r;
+
+	WRITE_LOCK(cmd);
+	r = __rit_insert(cmd, pba, lba);
+	WRITE_UNLOCK(cmd);
+
+	return r;
+}
+
+int dm_sworndisk_rit_get(struct dm_sworndisk_metadata *cmd, int pba, int *lba) {
+	int r;
+	__le64 value;
+
+	READ_LOCK(cmd);
+	r = dm_array_get_value(&cmd->rit_info, cmd->rit_root, pba, &value);
+	READ_UNLOCK(cmd);
+	if (r)
+		return r;
+	*lba = le64_to_cpu(value);
+	return 0;
 }
