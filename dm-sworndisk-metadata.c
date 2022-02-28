@@ -924,16 +924,24 @@ int dm_sworndisk_set_svt(struct dm_sworndisk_metadata *cmd,
 int dm_sworndisk_get_first_free_segment(struct dm_sworndisk_metadata *cmd, int *seg) {
     int i, err;
     bool result;
+	bool available;
 
+	available = false;
     for (i=0; i<cmd->nr_segment; ++i) {
+		READ_LOCK(cmd);
         err = dm_bitset_test_bit(&cmd->svt_info, cmd->svt_root, i, &cmd->svt_root, &result);
+		READ_UNLOCK(cmd);
         if (err)
             return err;
         if (result == false) {
             *seg = i;
+			available = true;
             return 0;
         }
     }
+
+	if (!available) 
+		return -1;
     return 0;
 }
 
