@@ -172,10 +172,6 @@ void memtable_init(struct memtable* mt) {
     mt->write = memtable_write;
 }
 
-struct lsm_tree {
-
-};
-
 struct segment_allocator {
     struct dm_sworndisk_metadata *cmd;
     unsigned int nr_segment;
@@ -188,27 +184,29 @@ struct segment_allocator {
     void (*clean)(struct segment_allocator* al);
 };
 
+#define MB_SHIFT 20
+#define MAX_DATA_SIZE (5 << MB_SHIFT)
+char data[MAX_DATA_SIZE];
+
 struct segment_buffer {
-    spinlock_t lock;
+    // spinlock_t lock;
     struct bio_list bios;
     struct segment_allocator sa;
     struct memtable mt;
 
     int (*push_bio)(struct segment_buffer* buf, struct bio *bio);
     void (*flush_bios)(struct segment_buffer* buf);
+    void (*encrypt)(struct segment_buffer* buf);
+    void (*decrypt)(struct segment_buffer* buf);
 };
 
 /* For underlying device */
 struct dm_sworndisk_target {
     struct dm_dev *data_dev;
     struct dm_dev *metadata_dev;
-    // struct dm_dev *origin_dev;
     sector_t start;
     struct workqueue_struct *wq;
-	struct work_struct migration_worker;
-    struct work_struct deferred_indexfind_worker;
     struct work_struct deferred_bio_worker;
-    struct bio_list deferred_indexfind_bios;
     struct bio_list deferred_bios;
 	struct dm_sworndisk_metadata *cmd;
     struct segment_buffer seg_buffer;
@@ -244,7 +242,7 @@ int segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
     int lsa;
     int psa;
     unsigned int nr_sector;
-    unsigned long flags;
+    // unsigned long flags;
     bool should_flush;
 
     // spin_lock_irqsave(&buf->lock, flags);
@@ -262,17 +260,12 @@ int segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
 
     // rediret bio
     lsa = bio_get_sector(bio);
-
-    // DMINFO("lsa: %d, psa: %d, nr_sector: %d", lsa, psa, nr_sector);
     bio_set_sector(bio, psa);
     // update block index tree
-
     buf->mt.write(&buf->mt, lsa, psa, nr_sector);
-    // DMINFO("write memtable, lsa: %d, psa: %d", lsa, psa);
 
     // update reverse index table
     buf->sa.write_reverse_index_table(&buf->sa, psa, lsa, nr_sector);
-    // DMINFO("write rit, psa: %d, lsa:%d", psa, lsa);
 
 	bio_list_add(&buf->bios, bio);
 	// spin_unlock_irqrestore(&buf->lock, flags);
@@ -283,18 +276,18 @@ int segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
 
 void segbuf_flush_bios(struct segment_buffer* buf) {
     struct bio *bio;
-    unsigned long flags;
+    // unsigned long flags;
 
     // spin_lock_irqsave(&buf->lock, flags);
     while ((bio = bio_list_pop(&buf->bios))) {
-        // DMINFO("flush bio, psa: %d", bio_get_sector(bio));
+        DMINFO("flush bio, psa: %d", bio_get_sector(bio));
         submit_bio(bio);
     }
     // spin_unlock_irqrestore(&buf->lock, flags);
 }
 
 void segbuf_init(struct segment_buffer *buf) {
-    spin_lock_init(&buf->lock);
+    // spin_lock_init(&buf->lock);
     bio_list_init(&buf->bios);
     memtable_init(&buf->mt);
 
@@ -324,7 +317,6 @@ int sa_alloc_sectors(struct segment_allocator* al, struct bio* bio, int *psa, un
 
     *should_flush = false;
     *nr_sector = bio_sectors(bio) + (bool)(bio->bi_iter.bi_size % SD_SECTOR_SIZE);
-    // DMINFO("segment: %d, sector: %d, nr_sector: %d", al->cur_segment, al->cur_sector, *nr_sector);
     if (al->cur_sector + *nr_sector >= SEC_PER_SEG) {
         *should_flush = true;
         seg = al->get_next_free_segment(al);
@@ -387,89 +379,6 @@ void segment_allocator_test(struct dm_sworndisk_metadata *cmd) {
         DMINFO("psa: %d, nr_sector: %d", psa, nr_sector);
     }
 }
-
-struct kv {
-    int pba;
-    int lba;
-};
-
-struct lsm_c0 {
-    struct kv *hash_map;
-    unsigned int capacity;
-    unsigned int size;
-    unsigned int max_size;
-} c0;
-
-void c0_init(void) 
-{
-    c0.capacity = 100007;
-    c0.max_size = 50000;
-    c0.hash_map = kmalloc(sizeof(struct kv) * c0.capacity, GFP_KERNEL);
-    memset(c0.hash_map, -1, sizeof(struct kv) * c0.capacity);
-    return;
-}
-
-void c0_clear(void) 
-{
-    memset(c0.hash_map, -1, sizeof(struct kv) * c0.capacity);
-}
-
-int hash_f(int k) {
-    return k % c0.capacity;
-}
-
-int c0_find(int lba) {
-    int h = hash_f(lba);
-    while (c0.hash_map[h].lba != -1 && c0.hash_map[h].lba != lba) {
-        h = (h+1)%(c0.capacity);
-    }
-    
-    return c0.hash_map[h].pba;
-}
-
-int c0_insert(int lba, struct dm_sworndisk_target *mdt) {
-    int h = hash_f(lba);
-    while (c0.hash_map[h].lba != -1 && c0.hash_map[h].lba != lba) {
-        h = (h+1)%(c0.capacity);
-    }
-
-    if (c0.hash_map[h].lba == -1) {
-        c0.size++;
-    }
-    c0.hash_map[h].lba = lba;
-    c0.hash_map[h].pba = mdt->pba_tail;   
-    mdt->pba_tail++;
-    return c0.hash_map[h].pba;
-}
-
-int kv_cmp(const void *a,const void *b)
-{
-    struct kv *da1 = (struct kv *)a;
-    struct kv *da2 = (struct kv *)b;
- 
-    if(da1->lba > da2->lba)
-        return 1;
-    else if(da1->lba < da2->lba)
-        return -1;
-    else
-        return 0;
-}
-
-static void process_migration(struct work_struct *ws)
-{
-    int i;
-    int j = 0;
-    struct kv *sst = kmalloc(sizeof(struct kv) * c0.size, GFP_KERNEL);
-    for (i = 0; i < c0.capacity; i++)
-        if (c0.hash_map[i].lba != -1) {
-            sst[j] = c0.hash_map[i];
-            j++;
-        }
-    sort(sst, c0.size, sizeof(struct kv), kv_cmp, NULL);
-    kfree(sst);
-
-}
-
 
 
 // int linux_kernel_crypto_encrypt(void* data_in_out, int data_len, void* key, int key_len) {
@@ -585,63 +494,6 @@ static void defer_bio(struct dm_sworndisk_target *mdt, struct bio *bio)
 	queue_work(mdt->wq, &mdt->deferred_bio_worker);
 }
 
-static int findc1(struct dm_sworndisk_target *mdt, int lba) {
-    // __le64 lba0, pba;
-    // int h, t, m;
-    // h = 0; t = mdt->sstlen;
-    // while (h <= t) {
-    //     m = (h + t) / 2;
-	//     dm_cache_read(mdt->cmd, m, &pba);
-        
-    //     lba0 = pba >> 32;
-    //     pba = pba << 32 >> 32;
-    //     //DMINFO("%d %llu %llu", m, lba0, pba);
-        
-    //     if (lba < lba0)
-    //         t = m - 1;
-    //     else if (lba > lba0)
-    //         h = m + 1;
-    //     else
-    //         return pba;
-    // }
-    
-    return 0;
-}
-
-static void process_deferred_indexfind_bios(struct work_struct *ws) {
-    struct dm_sworndisk_target *mdt = container_of(ws, struct dm_sworndisk_target, deferred_indexfind_worker);
-    unsigned long flags;
-	struct bio_list bios;
-	struct bio *bio;
-    int lba, pba, offset;
-
-	bio_list_init(&bios);
-
-	spin_lock_irqsave(&mdt->lock, flags);
-	bio_list_merge(&bios, &mdt->deferred_indexfind_bios);
-	bio_list_init(&mdt->deferred_indexfind_bios);
-	spin_unlock_irqrestore(&mdt->lock, flags);
-
-	while ((bio = bio_list_pop(&bios))) {
-        offset = bio->bi_iter.bi_sector % 8;
-		lba = bio->bi_iter.bi_sector - offset;
-        pba = findc1(mdt, lba);
-        bio->bi_iter.bi_sector = pba + offset;
-        defer_bio(mdt, bio);
-	}
-
-}
-
-static void defer_indexfind_bio(struct dm_sworndisk_target *mdt, struct bio *bio)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&mdt->lock, flags);
-	bio_list_add(&mdt->deferred_indexfind_bios, bio);
-	spin_unlock_irqrestore(&mdt->lock, flags);
-
-    queue_work(mdt->wq, &mdt->deferred_indexfind_worker);
-}
 
 static void process_deferred_bios(struct work_struct *ws)
 {
@@ -689,46 +541,6 @@ static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
 exit:
     return DM_MAPIO_REMAPPED;
 }
-
-// static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
-// {
-//     struct dm_sworndisk_target *mdt = target->private;
-//     int lba, pba, offset;
-//     /*  bio should perform on our underlying device   */
-//     lba = bio->bi_iter.bi_sector;
-//     bio_set_dev(bio, mdt->data_dev->bdev);
-
-//     if (bio_op(bio) == REQ_OP_WRITE) {
-//         //bio_set_dev(bio, mdt->data_dev->bdev);
-//         offset = lba % 8;
-//         lba -= offset;
-//         pba = c0_insert(lba, mdt);
-//         bio->bi_iter.bi_sector = pba * 8 + offset;
-//         // DMINFO("bio->bi_size: %d", bio->bi_iter.bi_size);
-//         defer_bio(mdt, bio);
-//         if (c0.size > c0.max_size)
-//             queue_work(mdt->wq, &mdt->migration_worker);
-//         return DM_MAPIO_SUBMITTED;
-//     }
-
-//     if (bio_op(bio) == REQ_OP_READ) {
-//         offset = lba % 8;
-//         pba = c0_find(lba - offset);
-//         if (pba != -1) {
-//             // DMINFO("????");
-//             //bio_set_dev(bio, mdt->data_dev->bdev);
-//             bio->bi_iter.bi_sector = pba * 8 + offset;
-//             defer_bio(mdt, bio);
-//         }
-//         else {
-//             defer_indexfind_bio(mdt, bio);
-//         }
-//         return DM_MAPIO_SUBMITTED;
-//     }
-    
-//     // DMINFO("Exit : %s", __func__);
-//     return DM_MAPIO_REMAPPED;
-// }
 
 void test_get_first_free_seg(struct dm_sworndisk_target *mdt) {
     int i, seg, r;
@@ -828,25 +640,12 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 		goto out;
 	}
 
-	INIT_WORK(&mdt->migration_worker, process_migration);
-    INIT_WORK(&mdt->deferred_indexfind_worker, process_deferred_indexfind_bios);
 	INIT_WORK(&mdt->deferred_bio_worker, process_deferred_bios);
     target->private = mdt;
     spin_lock_init(&mdt->lock);
-
 	bio_list_init(&mdt->deferred_bios);
-    bio_list_init(&mdt->deferred_indexfind_bios);
-    c0_init();
-
     segbuf_init(&mdt->seg_buffer);
     sa_init(&mdt->seg_buffer.sa, mdt->cmd, NR_SEGMENT);
-    // memtable_test();
-    // segment_allocator_test(cmd);
-    // dm_sworndisk_rit_test(mdt);
-    // DMINFO("Exit : %s ", __func__);
-    // INIT_DELAYED_WORK(&mdt->segment_background_cleaning_work, sworndisk_segment_background_cleaning);
-    // schedule_delayed_work(&mdt->segment_background_cleaning_work, 1 * HZ);
-    // test_get_first_free_seg(mdt);
 
     return ret;
 
