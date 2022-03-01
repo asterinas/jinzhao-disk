@@ -1,13 +1,3 @@
-/*
- * This module creates target for linear device mapper which maps a linear range of the device-mapper
- * device onto a linear range of another device.
- *
- * See http://narendrapal2020.blogspot.com/2014/03/device-mapper.html and
- * http://techgmm.blogspot.com/p/writing-your-own-device-mapper-target.html.
- *
- * Test on linux kernel 2.6.32.
- */
-
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -29,6 +19,9 @@
 #include <linux/workqueue.h>
 #include <linux/hashtable.h>
 #include <linux/vmalloc.h>
+#include <crypto/aead.h> 
+#include <linux/scatterlist.h> 
+#include <linux/random.h>
 
 #include "persistent-data/dm-bitset.h"
 #include "dm.h"
@@ -172,6 +165,124 @@ void memtable_init(struct memtable* mt) {
     mt->write = memtable_write;
 }
 
+struct aead_cipher {
+    int (*encrypt)(struct aead_cipher* ci, void* data, int data_len, void* key, int key_len, void* iv);
+    int (*decrypt)(struct aead_cipher* ci, void* data, int data_len, void* key, int key_len, void* iv, void* mac, int mac_len);
+    int (*get_random_key)(char** p_key, int key_len);
+    int (*get_random_iv)(char** p_iv, int iv_len);
+};
+/*
+    name         : gcm(aes)
+    driver       : generic-gcm-aesni
+    module       : aesni_intel
+    priority     : 400
+    refcnt       : 1
+    selftest     : passed
+    internal     : no
+    type         : aead
+    async        : yes
+    blocksize    : 1
+    ivsize       : 12
+    maxauthsize  : 16
+    geniv        : <none>
+*/
+
+#define AES_GCM_BLOCK_SIZE 1 // in bytes
+#define AES_GCM_IV_SIZE 12
+#define AES_GCM_AUTH_SIZE 16
+struct aes_gcm_cipher {
+    struct aead_cipher interface;
+    struct scatterlist sg;
+    struct crypto_aead *tfm;
+    struct aead_request *req;
+    struct crypto_wait wait;
+    size_t block_size;
+    size_t auth_size;
+    size_t iv_size;
+};
+
+int __get_random_bytes(char** p_data, unsigned int len) {
+    *p_data = kmalloc(len, GFP_KERNEL);
+    if (IS_ERR(*p_data)) {
+        DMERR("get random bytes alloc mem error\n");
+        return PTR_ERR(*p_data);
+    }
+    get_random_bytes(*p_data, len);
+    return 0;
+}
+
+int aes_gcm_get_random_key(char** p_key, int key_len) {
+    return __get_random_bytes(p_key, key_len);
+}
+
+int aes_gcm_get_random_iv(char** p_iv, int iv_len) {
+    return __get_random_bytes(p_iv, iv_len);
+}
+
+int aes_gcm_cipher_encrypt(struct aead_cipher *ac, void* data, int data_len, void* key, int key_len, void* iv) {
+    int r;
+
+    struct aes_gcm_cipher* ag = container_of(ac, struct aes_gcm_cipher, interface);
+    sg_init_one(&ag->sg, data, data_len);
+    aead_request_set_crypt(ag->req, &ag->sg, &ag->sg, data_len, iv);
+    aead_request_set_ad(ag->req, 0);
+    r = crypto_aead_setkey(ag->tfm, key, key_len);
+    if (r) {
+        DMERR("gcm(aes) key could not be set\n");
+        return -EAGAIN;
+    }
+    r = crypto_aead_encrypt(ag->req);
+	if (r) {
+        DMERR("gcm(aes) decryption error\n");
+        return -EAGAIN;
+	}
+    return 0;
+}
+
+int aes_gcm_cipher_decrypt(struct aead_cipher *ac, void* data, int data_len, void* key, int key_len, void* iv, void* mac, int mac_len) {
+    int r;
+    struct aes_gcm_cipher* ag = container_of(ac, struct aes_gcm_cipher, interface);
+    memcpy(data+data_len, mac, mac_len);
+    sg_init_one(&ag->sg, data, data_len+mac_len);
+    aead_request_set_crypt(ag->req, &ag->sg, &ag->sg, data_len+mac_len, iv);
+    aead_request_set_ad(ag->req, 0);
+    r = crypto_aead_setkey(ag->tfm, key, key_len);
+    if (r) {
+        DMERR("gcm(aes) key could not be set\n");
+        return -EAGAIN;
+    }
+    r = crypto_aead_decrypt(ag->req);
+    if (r == -EBADMSG) {
+        DMERR("gcm(aes) authentication failed");
+    } else if (r) {
+        DMERR("gcm(aes) decryption error\n");
+        return -EAGAIN;
+	}
+    return 0;
+}
+
+int aes_gcm_cipher_init(struct aes_gcm_cipher *ag) {
+    ag->tfm = crypto_alloc_aead("gcm(aes)", 0, 0);
+    if (IS_ERR(ag->tfm)) {
+        DMERR("could not allocate aead handler\n");
+        return PTR_ERR(ag->tfm);
+    }
+    ag->req = aead_request_alloc(ag->tfm, GFP_KERNEL);
+    if (!ag->req) {
+        DMERR("could not allocate aead request\n");
+        return -ENOMEM;
+    }
+    ag->block_size = crypto_aead_blocksize(ag->tfm);
+    ag->auth_size = crypto_aead_authsize(ag->tfm);
+    ag->iv_size = crypto_aead_ivsize(ag->tfm);
+
+    ag->interface.get_random_key = aes_gcm_get_random_key;
+    ag->interface.get_random_iv = aes_gcm_get_random_iv;
+    ag->interface.encrypt = aes_gcm_cipher_encrypt;
+    ag->interface.decrypt = aes_gcm_cipher_decrypt;
+    return 0;
+}
+
 struct segment_allocator {
     struct dm_sworndisk_metadata *cmd;
     unsigned int nr_segment;
@@ -196,8 +307,6 @@ struct segment_buffer {
 
     int (*push_bio)(struct segment_buffer* buf, struct bio *bio);
     void (*flush_bios)(struct segment_buffer* buf);
-    void (*encrypt)(struct segment_buffer* buf);
-    void (*decrypt)(struct segment_buffer* buf);
 };
 
 /* For underlying device */
@@ -211,8 +320,6 @@ struct dm_sworndisk_target {
 	struct dm_sworndisk_metadata *cmd;
     struct segment_buffer seg_buffer;
     spinlock_t lock;
-    sector_t sstlen;
-    int pba_tail;
 
     // struct delayed_work segment_background_cleaning_work;
 };
@@ -380,108 +487,6 @@ void segment_allocator_test(struct dm_sworndisk_metadata *cmd) {
     }
 }
 
-
-// int linux_kernel_crypto_encrypt(void* data_in_out, int data_len, void* key, int key_len) {
-// 	struct crypto_skcipher* cipher;
-// 	struct skcipher_request* req;
-//     struct crypto_wait wait;
-// 	struct scatterlist sg;
-//     size_t block_size;
-// 	int ret;
-
-//     // 分配算法对象，支持的算法可以在/proc/crypto文件中查看
-// 	cipher = crypto_alloc_skcipher("cbc(aes)", 0, 0);
-// 	if (IS_ERR(cipher)) {
-// 		printk("fail to allocate cipher\n");
-// 		return -1;
-// 	}
-
-//     // skcipher api不支持填充，所以加/解密数据需要为加密块的整数倍
-//     block_size = crypto_skcipher_blocksize(cipher);
-//     if (data_len % block_size != 0) {
-// 		printk("data len not aligned");
-// 		return -1;
-// 	}
-
-//     // 分配req对象
-// 	req = skcipher_request_alloc(cipher, GFP_KERNEL);
-// 	if (IS_ERR(req)) {
-// 		printk("fail to allocate req\n");
-// 		return -1;
-// 	}
-// 	sg_init_one(&sg, data_in_out, data_len);
-// 	skcipher_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG, crypto_req_done, &wait);
-//     char iv[16] = { 0 };
-// 	skcipher_request_set_crypt(req, &sg, &sg, data_len, iv);
-// 	ret = crypto_skcipher_setkey(cipher, key, key_len);
-//     if ( 0 != ret) {
-//         printk("fail to set key, error %d\n", ret);
-//         return -1;
-//     }
-//     // 执行解密操作
-// 	ret = crypto_wait_req(crypto_skcipher_encrypt(req), &wait); 
-// 	if (0 != ret) {
-//         printk("decryption error %d\n", ret);
-//         return -1;
-// 	}
-// 	// 释放资源
-// 	crypto_free_skcipher(cipher);
-// 	skcipher_request_free(req);
-// 	//printk("encryption finished");
-// 	return 0;
-// }
-
-// int linux_kernel_crypto_decrypt(void* data_in_out, int data_len, void* key, int key_len) {
-// 	struct crypto_skcipher* cipher;
-// 	struct skcipher_request* req;
-//     struct crypto_wait wait;
-// 	struct scatterlist sg;
-//     size_t block_size;
-// 	int ret;
-
-//     // 分配算法对象，支持的算法可以在/proc/crypto文件中查看
-// 	cipher = crypto_alloc_skcipher("cbc(aes)", 0, 0);
-// 	if (IS_ERR(cipher)) {
-// 		printk("fail to allocate cipher\n");
-// 		return -1;
-// 	}
-
-//     // skcipher api不支持填充，所以加/解密数据需要为加密块的整数倍
-//     block_size = crypto_skcipher_blocksize(cipher);
-//     if (data_len % block_size != 0) {
-// 		printk("data len not aligned");
-// 		return -1;
-// 	}
-
-//     // 分配req对象
-// 	req = skcipher_request_alloc(cipher, GFP_KERNEL);
-// 	if (IS_ERR(req)) {
-// 		printk("fail to allocate req\n");
-// 		return -1;
-// 	}
-// 	sg_init_one(&sg, data_in_out, data_len);
-// 	skcipher_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG, crypto_req_done, &wait);
-//     char iv[16] = { 0 };
-// 	skcipher_request_set_crypt(req, &sg, &sg, data_len, iv);
-// 	ret = crypto_skcipher_setkey(cipher, key, key_len);
-//     if ( 0 != ret) {
-//         printk("fail to set key, error %d\n", ret);
-//         return -1;
-//     }
-//     // 执行解密操作
-// 	ret = crypto_wait_req(crypto_skcipher_decrypt(req), &wait); 
-// 	if (0 != ret) {
-//         printk("decryption error %d\n", ret);
-//         return -1;
-// 	}
-// 	// 释放资源
-// 	crypto_free_skcipher(cipher);
-// 	skcipher_request_free(req);
-// 	//printk("decryption finished");
-// 	return 0;
-// }
-
-
 static void defer_bio(struct dm_sworndisk_target *mdt, struct bio *bio)
 {
 	unsigned long flags;
@@ -609,8 +614,6 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
         ret = -EINVAL;
     }
     mdt->start=(sector_t)start;
-    mdt->sstlen = target->len / 8;
-    mdt->pba_tail = 0;
     // DMINFO("%llu %llu start", start, target->len);
     /*  To add device in target's table and increment in device count */
 
@@ -646,7 +649,6 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 	bio_list_init(&mdt->deferred_bios);
     segbuf_init(&mdt->seg_buffer);
     sa_init(&mdt->seg_buffer.sa, mdt->cmd, NR_SEGMENT);
-
     return ret;
 
 out:
