@@ -449,10 +449,10 @@ void segbuf_crypto_bio_writeback_buffers(struct segment_buffer* buf, struct bio*
 
     offset = 0;
     bio_for_each_segment(bvec, bio, bv_iter) {
-        kaddr = kmap(bvec.bv_page);
+        // kaddr = kmap(bvec.bv_page);
         // memcpy(kaddr + bvec.bv_offset, data + offset, bvec.bv_len);
-        offset += bvec.bv_len;
-        kunmap(bvec.bv_page);
+        // offset += bvec.bv_len;
+        // kunmap(bvec.bv_page);
     }
 }
 
