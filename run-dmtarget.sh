@@ -32,11 +32,12 @@ do
 		dd if=/dev/urandom of=/dev/mapper/sworndisk_dev_mapper  bs=64K count=1280 status=progress
 		;;
 	r)
-		dd if=/dev/mapper/sworndisk_dev_mapper of=out bs=4096 count=128 status=progress
+		dd if=/dev/mapper/sworndisk_dev_mapper of=out bs=4096 count=1280 status=progress
 		;;
 	h)
 		;;
 	m)
+		rm -rf -r sworndisk.o sworndisk.mod.o sworndisk.ko
 		cd ../../
 		#make CONFIG_DM_CACHE=m M=drivers/md
 		make CONFIG_SWORNDISK=m CONFIG_DM_PERSISTENT_DATA=m M=drivers/md
@@ -48,7 +49,7 @@ do
 		modprobe sworndisk
 		# insmod persistent-data/dm-persistent-data.ko
 		# insmod mappery.ko
-		echo 0 262144 sworndisk /dev/loop0 /dev/loop1 0 | dmsetup create sworndisk_dev_mapper
+		echo 0 2097152 sworndisk /dev/loop0 /dev/loop1 0 | dmsetup create sworndisk_dev_mapper
 		;;
 		
 	h)
