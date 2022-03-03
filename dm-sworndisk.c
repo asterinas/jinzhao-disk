@@ -29,7 +29,7 @@
 
 #define SD_BLOCK_SIZE 4096 // SwornDisk Block Size
 #define SD_SECTOR_SIZE 512
-#define NR_SEGMENT 4096
+#define NR_SEGMENT 122880
 #define SEC_PER_BLK 8
 #define BLK_PER_SEG 64
 #define SEC_PER_SEG (SEC_PER_BLK*BLK_PER_SEG)
