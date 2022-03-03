@@ -378,7 +378,7 @@ int segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
 
     r = buf->sa.alloc_sectors(&buf->sa, bio, &psa, &nr_sector, &should_flush);
     if (r) {
-        DMINFO("alloc_sectors error");
+        DMERR("alloc_sectors error");
         return r;
     }
         
@@ -486,17 +486,16 @@ int segbuf_encrypt_bio(struct segment_buffer* buf, struct bio* bio, struct memta
         if (r)
             return r;
 
-        // r = buf->ag.interface.encrypt(&buf->ag.interface, buffer, SD_SECTOR_SIZE, key, AES_GCM_KEY_SIZE, iv);
-        // if (r)
-        //     return r;
+        r = buf->ag.interface.encrypt(&buf->ag.interface, buffer, SD_SECTOR_SIZE, key, AES_GCM_KEY_SIZE, iv);
+        if (r)
+            return r;
         
         mv = mt_value_create(psa+i, key, iv, buffer+SD_SECTOR_SIZE);
         if (mv == NULL) 
             return -ENOMEM;
-        // DMINFO("mt put, lsa: %d, psa: %d", lsa+i, psa+i);
         mt->put(mt, lsa+i, mv);
         ++i;
-        memcpy(data+offset, buffer, SD_SECTOR_SIZE);
+        // memcpy(data+offset, buffer, SD_SECTOR_SIZE);
     }
     
     segbuf_crypto_bio_writeback_buffers(buf, bio, data);
@@ -571,12 +570,12 @@ void end_bio_decrypt(struct bio* bio) {
         iv = mv.iv;
         mac = mv.mac;
 
-        // r = buf->ag.interface.decrypt(&buf->ag.interface, buffer, SD_SECTOR_SIZE, key, AES_GCM_KEY_SIZE, iv, mac, AES_GCM_AUTH_SIZE);
-        // if (r)
-        //     goto exit;
+        r = buf->ag.interface.decrypt(&buf->ag.interface, buffer, SD_SECTOR_SIZE, key, AES_GCM_KEY_SIZE, iv, mac, AES_GCM_AUTH_SIZE);
+        if (r)
+            goto exit;
 
         ++i;
-        memcpy(data+offset, buffer, SD_SECTOR_SIZE);
+        // memcpy(data+offset, buffer, SD_SECTOR_SIZE);
     }
 
     segbuf_crypto_bio_writeback_buffers(buf, bio, data);
@@ -724,12 +723,9 @@ int map_read_bio(struct dm_sworndisk_target *mdt, struct bio* bio) {
     lsa = bio_get_sector(bio);
     r = mdt->seg_buffer.mt.get(&mdt->seg_buffer.mt, lsa, &mv);
     if (r) {
-        DMINFO("map_read_bio, invalid lsa: %d", lsa);
+        // DMINFO("map_read_bio, invalid lsa: %d", lsa);
         return r;
-    } else {
-        //  DMINFO("map_read_bio, valid lsa: %d", lsa);
-    }
-         
+    }    
 
     decrypt_bio = bio_clone_fast(bio, GFP_NOIO, mdt->bio_set);
     bd_handler = bio_decrypt_handler_create(lsa, bio, mdt);
@@ -750,7 +746,7 @@ static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
     bio_set_dev(bio, mdt->data_dev->bdev);
 
     if (bio_op(bio) == REQ_OP_WRITE) {
-        DMINFO("write bio, sector: %d, nr_sector: %d", bio_get_sector(bio), bio_sectors(bio));
+        // DMINFO("write bio, sector: %d, nr_sector: %d", bio_get_sector(bio), bio_sectors(bio));
         while(bio_sectors(bio)>1) {
             sector_bio = bio_split(bio, 1, GFP_NOIO, mdt->bio_set);
             defer_bio(mdt, sector_bio);
