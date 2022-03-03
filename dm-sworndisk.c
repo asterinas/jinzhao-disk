@@ -446,17 +446,14 @@ void segbuf_crypto_bio_writeback_buffers(struct segment_buffer* buf, struct bio*
     struct bvec_iter bv_iter;
     struct bio_vec bvec;
     void* kaddr;
-    void* vaddr;
 
     offset = 0;
     bio_for_each_segment(bvec, bio, bv_iter) {
         kaddr = kmap(bvec.bv_page);
-        memcpy(kaddr + bvec.bv_offset, data + offset, bvec.bv_len);
+        // memcpy(kaddr + bvec.bv_offset, data + offset, bvec.bv_len);
         offset += bvec.bv_len;
         kunmap(bvec.bv_page);
     }
-    vaddr = bio_data(bio);
-    memcpy(vaddr, data, bio_get_data_len(bio));
 }
 
 int segbuf_encrypt_bio(struct segment_buffer* buf, struct bio* bio, struct memtable* mt, int lsa, int psa) {
@@ -495,7 +492,7 @@ int segbuf_encrypt_bio(struct segment_buffer* buf, struct bio* bio, struct memta
             return -ENOMEM;
         mt->put(mt, lsa+i, mv);
         ++i;
-        // memcpy(data+offset, buffer, SD_SECTOR_SIZE);
+        memcpy(data+offset, buffer, SD_SECTOR_SIZE);
     }
     
     segbuf_crypto_bio_writeback_buffers(buf, bio, data);
@@ -575,7 +572,7 @@ void end_bio_decrypt(struct bio* bio) {
             goto exit;
 
         ++i;
-        // memcpy(data+offset, buffer, SD_SECTOR_SIZE);
+        memcpy(data+offset, buffer, SD_SECTOR_SIZE);
     }
 
     segbuf_crypto_bio_writeback_buffers(buf, bio, data);
