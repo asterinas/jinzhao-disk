@@ -456,50 +456,54 @@ void segbuf_crypto_bio_writeback_buffers(struct segment_buffer* buf, struct bio*
     }
 }
 
+char key[AES_GCM_KEY_SIZE];
+char iv[AES_GCM_IV_SIZE];
+char mac[AES_GCM_AUTH_SIZE];
+
 int segbuf_encrypt_bio(struct segment_buffer* buf, struct bio* bio, struct memtable* mt, int lsa, int psa) {
-    int r;
+    // int r;
     int i;
-    char* data;
-    char* buffer; // buffer which contains data with a sector
+    // char* data;
+    // char* buffer; // buffer which contains data with a sector
     int offset;
     int data_len;
-    char* key;
-    char* iv;
+    // char* key;
+    // char* iv;
     struct mt_value *mv;
 
    
     data_len = bio_get_data_len(bio);
-    r = segbuf_crypto_bio_prepare_buffers(buf, bio, &data, &buffer, data_len);
-    if (r)
-        return r;
+    // r = segbuf_crypto_bio_prepare_buffers(buf, bio, &data, &buffer, data_len);
+    // if (r)
+    //     return r;
     
     i = 0;
     for (offset=0; offset<data_len; offset+=SD_SECTOR_SIZE) {
-        memcpy(buffer, data+offset, SD_SECTOR_SIZE);
-        r = buf->ag.interface.get_random_key(&key, AES_GCM_KEY_SIZE);
-        if (r)
-            return r;
-        r = buf->ag.interface.get_random_iv(&iv, buf->ag.iv_size);
-        if (r)
-            return r;
+        // memcpy(buffer, data+offset, SD_SECTOR_SIZE);
+        // r = buf->ag.interface.get_random_key(&key, AES_GCM_KEY_SIZE);
+        // if (r)
+        //     return r;
+        // r = buf->ag.interface.get_random_iv(&iv, buf->ag.iv_size);
+        // if (r)
+        //     return r;
 
         // r = buf->ag.interface.encrypt(&buf->ag.interface, buffer, SD_SECTOR_SIZE, key, AES_GCM_KEY_SIZE, iv);
         // if (r)
         //     return r;
         
-        mv = mt_value_create(psa+i, key, iv, buffer+SD_SECTOR_SIZE);
+        mv = mt_value_create(psa+i, key, iv, mac);
         if (mv == NULL) 
             return -ENOMEM;
         mt->put(mt, lsa+i, mv);
         ++i;
-        memcpy(data+offset, buffer, SD_SECTOR_SIZE);
+        // memcpy(data+offset, buffer, SD_SECTOR_SIZE);
     }
     
-    segbuf_crypto_bio_writeback_buffers(buf, bio, data);
-    kfree(key);
-    kfree(iv);
-    kfree(buffer);
-    kfree(data);
+    // segbuf_crypto_bio_writeback_buffers(buf, bio, data);
+    // kfree(key);
+    // kfree(iv);
+    // kfree(buffer);
+    // kfree(data);
     return 0;
 }
 
