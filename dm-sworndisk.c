@@ -139,9 +139,9 @@ struct mt_value* mt_value_create(int psa, char* key, char* iv, char* mac) {
     }
 
     val->psa = psa;
-    memcpy(&val->key, key, AES_GCM_KEY_SIZE);
-    memcpy(&val->iv, iv, AES_GCM_IV_SIZE);
-    memcpy(&val->mac, mac, AES_GCM_AUTH_SIZE);
+    // memcpy(&val->key, key, AES_GCM_KEY_SIZE);
+    // memcpy(&val->iv, iv, AES_GCM_IV_SIZE);
+    // memcpy(&val->mac, mac, AES_GCM_AUTH_SIZE);
     return val;
 }
 
@@ -393,7 +393,7 @@ int segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
     // encrypt bio
     buf->encrypt_bio(buf, bio, &buf->mt, lsa, psa);
     // update reverse index table
-    buf->sa.write_reverse_index_table(&buf->sa, psa, lsa, nr_sector);
+    // buf->sa.write_reverse_index_table(&buf->sa, psa, lsa, nr_sector);
 
 	bio_list_add(&buf->bios, bio);
 	// spin_unlock_irqrestore(&buf->lock, flags);
