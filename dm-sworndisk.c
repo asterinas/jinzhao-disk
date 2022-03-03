@@ -449,10 +449,10 @@ void segbuf_crypto_bio_writeback_buffers(struct segment_buffer* buf, struct bio*
 
     offset = 0;
     bio_for_each_segment(bvec, bio, bv_iter) {
-        // kaddr = kmap(bvec.bv_page);
-        // memcpy(kaddr + bvec.bv_offset, data + offset, bvec.bv_len);
-        // offset += bvec.bv_len;
-        // kunmap(bvec.bv_page);
+        kaddr = kmap(bvec.bv_page);
+        memcpy(kaddr + bvec.bv_offset, data + offset, bvec.bv_len);
+        offset += bvec.bv_len;
+        kunmap(bvec.bv_page);
     }
 }
 
@@ -483,9 +483,9 @@ int segbuf_encrypt_bio(struct segment_buffer* buf, struct bio* bio, struct memta
         if (r)
             return r;
 
-        r = buf->ag.interface.encrypt(&buf->ag.interface, buffer, SD_SECTOR_SIZE, key, AES_GCM_KEY_SIZE, iv);
-        if (r)
-            return r;
+        // r = buf->ag.interface.encrypt(&buf->ag.interface, buffer, SD_SECTOR_SIZE, key, AES_GCM_KEY_SIZE, iv);
+        // if (r)
+        //     return r;
         
         mv = mt_value_create(psa+i, key, iv, buffer+SD_SECTOR_SIZE);
         if (mv == NULL) 
@@ -567,9 +567,9 @@ void end_bio_decrypt(struct bio* bio) {
         iv = mv.iv;
         mac = mv.mac;
 
-        r = buf->ag.interface.decrypt(&buf->ag.interface, buffer, SD_SECTOR_SIZE, key, AES_GCM_KEY_SIZE, iv, mac, AES_GCM_AUTH_SIZE);
-        if (r)
-            goto exit;
+        // r = buf->ag.interface.decrypt(&buf->ag.interface, buffer, SD_SECTOR_SIZE, key, AES_GCM_KEY_SIZE, iv, mac, AES_GCM_AUTH_SIZE);
+        // if (r)
+        //     goto exit;
 
         ++i;
         memcpy(data+offset, buffer, SD_SECTOR_SIZE);
@@ -737,32 +737,38 @@ int map_read_bio(struct dm_sworndisk_target *mdt, struct bio* bio) {
 static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
 {
     int r;
-    struct bio* sector_bio;
+    // struct bio* sector_bio;
+    struct mt_value mv;
     struct dm_sworndisk_target *mdt = target->private;
 
     bio_set_dev(bio, mdt->data_dev->bdev);
 
     if (bio_op(bio) == REQ_OP_WRITE) {
         // DMINFO("write bio, sector: %d, nr_sector: %d", bio_get_sector(bio), bio_sectors(bio));
-        while(bio_sectors(bio)>1) {
-            sector_bio = bio_split(bio, 1, GFP_NOIO, mdt->bio_set);
-            defer_bio(mdt, sector_bio);
-        }
+        // while(bio_sectors(bio)>1) {
+        //     sector_bio = bio_split(bio, 1, GFP_NOIO, mdt->bio_set);
+        //     defer_bio(mdt, sector_bio);
+        // }
         defer_bio(mdt, bio);
         return DM_MAPIO_SUBMITTED;
     }
 
     if (bio_op(bio) == REQ_OP_READ) {
         // DMINFO("read bio, sector: %d, nr_sector: %d", bio_get_sector(bio), bio_sectors(bio));
-        while(bio_sectors(bio)>1) {
-            sector_bio = bio_split(bio, 1, GFP_NOIO, mdt->bio_set);
-            r = map_read_bio(mdt, sector_bio);
-            if (r)
-                goto exit;
-        }
-        r = map_read_bio(mdt, bio);
-        if (r)
+        // while(bio_sectors(bio)>1) {
+        //     sector_bio = bio_split(bio, 1, GFP_NOIO, mdt->bio_set);
+        //     r = map_read_bio(mdt, sector_bio);
+        //     if (r)
+        //         goto exit;
+        // }
+        // r = map_read_bio(mdt, bio);
+        // if (r)
+        //     goto exit;
+        r = mdt->seg_buffer.mt.get(&mdt->seg_buffer.mt, bio_get_sector(bio), &mv);
+        if (r) 
             goto exit;
+        bio_set_sector(bio, mv.psa);
+        submit_bio(bio);
         return DM_MAPIO_SUBMITTED;
     }
 
