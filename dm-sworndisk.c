@@ -29,8 +29,8 @@
 
 #define SD_BLOCK_SIZE 4096 // SwornDisk Block Size
 #define SD_SECTOR_SIZE 512
-#define NR_SEGMENT 122880
-#define SEC_PER_BLK 8
+#define NR_SEGMENT 4096
+#define SEC_PER_BLK 32
 #define BLK_PER_SEG 64
 #define SEC_PER_SEG (SEC_PER_BLK*BLK_PER_SEG)
 
@@ -49,7 +49,6 @@ void hashmap_init(struct hashmap* map, int bucket_num);
 void hashmap_destroy(struct hashmap* map);
 void hashmap_add(struct hashmap* map, int key, void* data);
 bool hashmap_delete(struct hashmap* map, int key);
-void test_hashmap(void);
 bool hashmap_exists(struct hashmap* map, int key);
 void* hashmap_getval(struct hashmap* map, int key);
 
@@ -242,7 +241,7 @@ int aes_gcm_cipher_encrypt(struct aead_cipher *ac, void* data, int data_len, voi
     }
     r = crypto_aead_encrypt(ag->req);
 	if (r) {
-        DMERR("gcm(aes) decryption error\n");
+        DMERR("gcm(aes) encryption error\n");
         return -EAGAIN;
 	}
     return 0;
@@ -262,7 +261,7 @@ int aes_gcm_cipher_decrypt(struct aead_cipher *ac, void* data, int data_len, voi
     }
     r = crypto_aead_decrypt(ag->req);
     if (r == -EBADMSG) {
-        DMERR("gcm(aes) authentication failed");
+        // DMERR("gcm(aes) authentication failed");
         return r;
     } else if (r) {
         DMERR("gcm(aes) decryption error\n");
@@ -393,7 +392,7 @@ int segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
     // encrypt bio
     buf->encrypt_bio(buf, bio, &buf->mt, lsa, psa);
     // update reverse index table
-    // buf->sa.write_reverse_index_table(&buf->sa, psa, lsa, nr_sector);
+    buf->sa.write_reverse_index_table(&buf->sa, psa, lsa, nr_sector);
 
 	bio_list_add(&buf->bios, bio);
 	// spin_unlock_irqrestore(&buf->lock, flags);
@@ -456,9 +455,11 @@ void segbuf_crypto_bio_writeback_buffers(struct segment_buffer* buf, struct bio*
     }
 }
 
+#define PADDING_SPACE 1024
 char key[AES_GCM_KEY_SIZE];
 char iv[AES_GCM_IV_SIZE];
 char mac[AES_GCM_AUTH_SIZE];
+char buffer[SD_SECTOR_SIZE+AES_GCM_AUTH_SIZE+PADDING_SPACE];
 
 int segbuf_encrypt_bio(struct segment_buffer* buf, struct bio* bio, struct memtable* mt, int lsa, int psa) {
     // int r;
@@ -487,7 +488,7 @@ int segbuf_encrypt_bio(struct segment_buffer* buf, struct bio* bio, struct memta
         // if (r)
         //     return r;
 
-        // r = buf->ag.interface.encrypt(&buf->ag.interface, buffer, SD_SECTOR_SIZE, key, AES_GCM_KEY_SIZE, iv);
+        // buf->ag.interface.encrypt(&buf->ag.interface, buffer, SD_SECTOR_SIZE, key, AES_GCM_KEY_SIZE, iv);
         // if (r)
         //     return r;
         
@@ -616,15 +617,23 @@ int sa_get_next_free_segment(struct segment_allocator* al) {
 }
 
 int sa_alloc_sectors(struct segment_allocator* al, struct bio* bio, int *psa, unsigned int *nr_sector, bool *should_flush) {
+    int r;
     int seg;
 
     *should_flush = false;
     *nr_sector = bio_sectors(bio) + (bool)(bio->bi_iter.bi_size % SD_SECTOR_SIZE);
     if (al->cur_sector + *nr_sector >= SEC_PER_SEG) {
         *should_flush = true;
+try:
         seg = al->get_next_free_segment(al);
-        if (seg < 0) 
-            return seg;
+        if (seg < 0) {
+            // return seg;
+            // since there are no segment cleaning methods, a trick to provide sufficient disk space
+            r = dm_sworndisk_reset_svt(al->cmd);
+            if (r)
+                return r;
+            goto try;
+        }
         al->cur_segment = seg;
         al->cur_sector = 0;
     }
@@ -662,26 +671,6 @@ int sa_init(struct segment_allocator* al, struct dm_sworndisk_metadata *cmd, uns
     return 0;
 }
 
-void segment_allocator_test(struct dm_sworndisk_metadata *cmd) {
-    int i;
-    int r;
-    int psa;
-    int nr_sector;
-    bool should_flush;
-    struct bio bio;
-
-    struct segment_allocator al;
-    r = sa_init(&al, cmd, NR_SEGMENT);
-    if (r)
-        DMINFO("segment_allocator init error");
-
-    for (i=0; i<10; ++i) {
-        bio.bi_iter.bi_size = 4097;
-        al.alloc_sectors(&al, &bio, &psa, &nr_sector, &should_flush);
-        DMINFO("psa: %d, nr_sector: %d", psa, nr_sector);
-    }
-}
-
 static void defer_bio(struct dm_sworndisk_target *mdt, struct bio *bio)
 {
 	unsigned long flags;
@@ -710,7 +699,16 @@ static void process_deferred_bios(struct work_struct *ws)
 	spin_unlock_irqrestore(&mdt->lock, flags);
 
 	while ((bio = bio_list_pop(&bios))) {
-        mdt->seg_buffer.push_bio(&mdt->seg_buffer, bio);
+        switch (bio_op(bio)) {
+            case REQ_OP_WRITE:
+                mdt->seg_buffer.push_bio(&mdt->seg_buffer, bio);
+                break;
+            case REQ_OP_READ:
+                // mdt->seg_buffer.ag.interface.decrypt(&mdt->seg_buffer.ag.interface, buffer, SD_SECTOR_SIZE, key, AES_GCM_KEY_SIZE, iv, mac, AES_GCM_AUTH_SIZE);
+                submit_bio(bio);
+                break;
+        }
+        
 	}
 }
 
@@ -772,44 +770,12 @@ static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
         if (r) 
             goto exit;
         bio_set_sector(bio, mv.psa);
-        submit_bio(bio);
+        defer_bio(mdt, bio);
         return DM_MAPIO_SUBMITTED;
     }
 
 exit:
     return DM_MAPIO_REMAPPED;
-}
-
-void test_get_first_free_seg(struct dm_sworndisk_target *mdt) {
-    int i, seg, r;
-    
-    for (i=0; i<20; ++i) {
-        r = dm_sworndisk_get_first_free_segment(mdt->cmd, &seg);
-        if (r) 
-            DMINFO("get first free segment err");
-        DMINFO("next free segment: %d", seg);
-        r = dm_sworndisk_set_svt(mdt->cmd, i, true);
-        if (r) 
-            DMINFO("dm_sworndisk_set_svt err");
-    }
-}
-
-void dm_sworndisk_rit_test(struct dm_sworndisk_target *mdt) {
-    int i, r, lba;
-
-    for (i=0; i<10; ++i) {
-        r = dm_sworndisk_rit_insert(mdt->cmd, i, i*10);
-        if (r)
-            DMINFO("dm_sworndisk_rit_insert err");
-    }
-
-    for (i=0; i<10; ++i) {
-        r = dm_sworndisk_rit_get(mdt->cmd, i, &lba);
-        if (r)
-            DMINFO("dm_sworndisk_rit_get err");
-        else 
-            DMINFO("pba: %d, lba: %d", i, lba);
-    }
 }
 
 /*

@@ -921,6 +921,19 @@ int dm_sworndisk_set_svt(struct dm_sworndisk_metadata *cmd,
 	return r;
 }
 
+int dm_sworndisk_reset_svt(struct dm_sworndisk_metadata *cmd) {
+	int r;
+
+	r = dm_bitset_empty(&cmd->svt_info, &cmd->svt_root);
+	if (r)
+		return r;
+	r = dm_bitset_resize(&cmd->svt_info, cmd->svt_root, 0, cmd->nr_segment, false, &cmd->svt_root);
+	if (r)
+		return r;
+
+	return 0;
+}
+
 int dm_sworndisk_get_first_free_segment(struct dm_sworndisk_metadata *cmd, int *seg) {
     int i, err;
     bool result;
