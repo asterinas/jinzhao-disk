@@ -138,9 +138,9 @@ struct mt_value* mt_value_create(int psa, char* key, char* iv, char* mac) {
     }
 
     val->psa = psa;
-    // memcpy(&val->key, key, AES_GCM_KEY_SIZE);
-    // memcpy(&val->iv, iv, AES_GCM_IV_SIZE);
-    // memcpy(&val->mac, mac, AES_GCM_AUTH_SIZE);
+    memcpy(&val->key, key, AES_GCM_KEY_SIZE);
+    memcpy(&val->iv, iv, AES_GCM_IV_SIZE);
+    memcpy(&val->mac, mac, AES_GCM_AUTH_SIZE);
     return val;
 }
 
@@ -178,8 +178,8 @@ void memtable_init(struct memtable* mt) {
 }
 
 struct aead_cipher {
-    int (*encrypt)(struct aead_cipher* ci, void* data, int data_len, void* key, int key_len, void* iv);
-    int (*decrypt)(struct aead_cipher* ci, void* data, int data_len, void* key, int key_len, void* iv, void* mac, int mac_len);
+    int (*encrypt)(struct aead_cipher* ci, void* data, int data_len, void* key, int key_len, void* iv, void* mac, int mac_len, uint64_t seq);
+    int (*decrypt)(struct aead_cipher* ci, void* data, int data_len, void* key, int key_len, void* iv, void* mac, int mac_len, uint64_t seq);
     int (*get_random_key)(char** p_key, int key_len);
     int (*get_random_iv)(char** p_iv, int iv_len);
 };
@@ -198,9 +198,15 @@ struct aead_cipher {
     maxauthsize  : 16
     geniv        : <none>
 */
+/* AEAD request:
+	 *  |----- AAD -------|------ DATA -------|-- AUTH TAG --|
+	 *  | (authenticated) | (auth+encryption) |              |
+	 *  | sector_LE |  IV |  sector in/out    |  tag in/out  |
+	 */
+#define AEAD_MSG_PART_NUM 4
 struct aes_gcm_cipher {
     struct aead_cipher interface;
-    struct scatterlist sg;
+    struct scatterlist sg[AEAD_MSG_PART_NUM];
     struct crypto_aead *tfm;
     struct aead_request *req;
     struct crypto_wait wait;
@@ -227,13 +233,17 @@ int aes_gcm_get_random_iv(char** p_iv, int iv_len) {
     return __get_random_bytes(p_iv, iv_len);
 }
 
-int aes_gcm_cipher_encrypt(struct aead_cipher *ac, void* data, int data_len, void* key, int key_len, void* iv) {
+int aes_gcm_cipher_encrypt(struct aead_cipher *ac, void* data, int data_len, void* key, int key_len, void* iv, void* mac, int mac_len, uint64_t seq) {
     int r;
 
     struct aes_gcm_cipher* ag = container_of(ac, struct aes_gcm_cipher, interface);
-    sg_init_one(&ag->sg, data, data_len);
-    aead_request_set_crypt(ag->req, &ag->sg, &ag->sg, data_len, iv);
-    aead_request_set_ad(ag->req, 0);
+    sg_init_table(ag->sg, AEAD_MSG_PART_NUM);
+    sg_set_buf(&ag->sg[0], &seq, sizeof(uint64_t));
+    sg_set_buf(&ag->sg[1], iv, ag->iv_size);
+    sg_set_buf(&ag->sg[2], data, data_len);
+    sg_set_buf(&ag->sg[3], mac, mac_len);
+    aead_request_set_crypt(ag->req, ag->sg, ag->sg, data_len, iv);
+    aead_request_set_ad(ag->req, sizeof(uint64_t)+ag->iv_size);
     r = crypto_aead_setkey(ag->tfm, key, key_len);
     if (r) {
         DMERR("gcm(aes) key could not be set\n");
@@ -247,13 +257,16 @@ int aes_gcm_cipher_encrypt(struct aead_cipher *ac, void* data, int data_len, voi
     return 0;
 }
 
-int aes_gcm_cipher_decrypt(struct aead_cipher *ac, void* data, int data_len, void* key, int key_len, void* iv, void* mac, int mac_len) {
+int aes_gcm_cipher_decrypt(struct aead_cipher *ac, void* data, int data_len, void* key, int key_len, void* iv, void* mac, int mac_len, uint64_t seq) {
     int r;
     struct aes_gcm_cipher* ag = container_of(ac, struct aes_gcm_cipher, interface);
-    memcpy(data+data_len, mac, mac_len);
-    sg_init_one(&ag->sg, data, data_len+mac_len);
-    aead_request_set_crypt(ag->req, &ag->sg, &ag->sg, data_len+mac_len, iv);
-    aead_request_set_ad(ag->req, 0);
+    sg_init_table(ag->sg, AEAD_MSG_PART_NUM);
+    sg_set_buf(&ag->sg[0], &seq, sizeof(uint64_t));
+    sg_set_buf(&ag->sg[1], iv, ag->iv_size);
+    sg_set_buf(&ag->sg[2], data, data_len);
+    sg_set_buf(&ag->sg[3], mac, mac_len);
+    aead_request_set_crypt(ag->req, ag->sg, ag->sg, data_len+ag->auth_size, iv);
+    aead_request_set_ad(ag->req, sizeof(uint64_t)+ag->iv_size);
     r = crypto_aead_setkey(ag->tfm, key, key_len);
     if (r) {
         DMERR("gcm(aes) key could not be set\n");
@@ -261,7 +274,7 @@ int aes_gcm_cipher_decrypt(struct aead_cipher *ac, void* data, int data_len, voi
     }
     r = crypto_aead_decrypt(ag->req);
     if (r == -EBADMSG) {
-        // DMERR("gcm(aes) authentication failed");
+        DMERR("gcm(aes) authentication failed");
         return r;
     } else if (r) {
         DMERR("gcm(aes) decryption error\n");
@@ -413,19 +426,20 @@ void segbuf_flush_bios(struct segment_buffer* buf) {
     // spin_unlock_irqrestore(&buf->lock, flags);
 }
 
+#define PADDING_SPACE 512
 int segbuf_crypto_bio_prepare_buffers(struct segment_buffer* buf, struct bio* bio, char** p_data, char** p_buffer, int data_len) {
     int offset;
     struct bvec_iter bv_iter;
     struct bio_vec bvec;
     void* kaddr;
 
-    *p_data = (char*) kmalloc(data_len, GFP_KERNEL);
+    *p_data = (char*) kzalloc(data_len, GFP_KERNEL);
     if (IS_ERR(*p_data)) {
         DMERR("segbuf_encrypt_bio alloc data mem error\n");
         return PTR_ERR(*p_data);
     }
 
-    *p_buffer = (char*) kmalloc(SD_SECTOR_SIZE+buf->ag.auth_size, GFP_KERNEL);
+    *p_buffer = (char*) kzalloc(SD_SECTOR_SIZE+buf->ag.auth_size+PADDING_SPACE, GFP_KERNEL);
     if (IS_ERR(*p_buffer)) {
         DMERR("segbuf_encrypt_bio alloc buffer mem error\n");
         return PTR_ERR(*p_buffer);
@@ -433,7 +447,7 @@ int segbuf_crypto_bio_prepare_buffers(struct segment_buffer* buf, struct bio* bi
     offset = 0;
     bio_for_each_segment(bvec, bio, bv_iter) {
         kaddr = kmap(bvec.bv_page);
-        memcpy(*p_data + offset, kaddr + bvec.bv_offset, bvec.bv_len);
+        memcpy(*p_data + offset, kaddr+bvec.bv_offset, bvec.bv_len);
         offset += bvec.bv_len;
         kunmap(bvec.bv_page);
     }
@@ -449,62 +463,60 @@ void segbuf_crypto_bio_writeback_buffers(struct segment_buffer* buf, struct bio*
     offset = 0;
     bio_for_each_segment(bvec, bio, bv_iter) {
         kaddr = kmap(bvec.bv_page);
-        memcpy(kaddr + bvec.bv_offset, data + offset, bvec.bv_len);
+        memcpy(kaddr+bvec.bv_offset, data + offset, bvec.bv_len);
         offset += bvec.bv_len;
         kunmap(bvec.bv_page);
     }
 }
 
-#define PADDING_SPACE 1024
-char key[AES_GCM_KEY_SIZE];
-char iv[AES_GCM_IV_SIZE];
-char mac[AES_GCM_AUTH_SIZE];
-char buffer[SD_SECTOR_SIZE+AES_GCM_AUTH_SIZE+PADDING_SPACE];
-
 int segbuf_encrypt_bio(struct segment_buffer* buf, struct bio* bio, struct memtable* mt, int lsa, int psa) {
-    // int r;
+    int r;
     int i;
-    // char* data;
-    // char* buffer; // buffer which contains data with a sector
+    char* data;
+    char* buffer; // buffer which contains data with a sector
     int offset;
     int data_len;
-    // char* key;
-    // char* iv;
+    char* key;
+    char* iv;
+    char* mac;
     struct mt_value *mv;
 
    
     data_len = bio_get_data_len(bio);
-    // r = segbuf_crypto_bio_prepare_buffers(buf, bio, &data, &buffer, data_len);
-    // if (r)
-    //     return r;
-    
+    r = segbuf_crypto_bio_prepare_buffers(buf, bio, &data, &buffer, data_len);
+    if (r)
+        return r;
+    // DMINFO("lsa: %d, data: %s", lsa, data); 
     i = 0;
     for (offset=0; offset<data_len; offset+=SD_SECTOR_SIZE) {
-        // memcpy(buffer, data+offset, SD_SECTOR_SIZE);
-        // r = buf->ag.interface.get_random_key(&key, AES_GCM_KEY_SIZE);
-        // if (r)
-        //     return r;
-        // r = buf->ag.interface.get_random_iv(&iv, buf->ag.iv_size);
-        // if (r)
-        //     return r;
+        memcpy(buffer, data+offset, SD_SECTOR_SIZE);
+        r = buf->ag.interface.get_random_key(&key, AES_GCM_KEY_SIZE);
+        if (r)
+            return r;
+        r = buf->ag.interface.get_random_iv(&iv, buf->ag.iv_size);
+        if (r)
+            return r;
+        mac = kmalloc(AES_GCM_AUTH_SIZE, GFP_KERNEL);
+        if (IS_ERR(mac)) 
+            return PTR_ERR(mac);
 
-        // buf->ag.interface.encrypt(&buf->ag.interface, buffer, SD_SECTOR_SIZE, key, AES_GCM_KEY_SIZE, iv);
-        // if (r)
-        //     return r;
+        r = buf->ag.interface.encrypt(&buf->ag.interface, buffer, SD_SECTOR_SIZE, key, AES_GCM_KEY_SIZE, iv, mac, AES_GCM_AUTH_SIZE, lsa+i);
+        if (r)
+            return r;
         
         mv = mt_value_create(psa+i, key, iv, mac);
         if (mv == NULL) 
             return -ENOMEM;
         mt->put(mt, lsa+i, mv);
         ++i;
-        // memcpy(data+offset, buffer, SD_SECTOR_SIZE);
+        memcpy(data+offset, buffer, SD_SECTOR_SIZE);
     }
     
-    // segbuf_crypto_bio_writeback_buffers(buf, bio, data);
-    // kfree(key);
-    // kfree(iv);
-    // kfree(buffer);
-    // kfree(data);
+    segbuf_crypto_bio_writeback_buffers(buf, bio, data);
+    kfree(key);
+    kfree(iv);
+    kfree(buffer);
+    kfree(data);
     return 0;
 }
 
@@ -563,27 +575,39 @@ void end_bio_decrypt(struct bio* bio) {
         DMERR("segbuf_crypto_bio_prepare_buffers error");
         goto exit;
     }
-        
+  
     i = 0;
     for (offset=0; offset<data_len; offset+=SD_SECTOR_SIZE) {
         memcpy(buffer, data+offset, SD_SECTOR_SIZE);
-        mt->get(mt, lsa + i, &mv);
+        r = mt->get(mt, lsa + i, &mv);
+        if (r) {
+            DMINFO("end_bio_decrypt, lsa not found: %d", lsa+i);
+            goto exit;
+        }
         key = mv.key;
         iv = mv.iv;
         mac = mv.mac;
 
-        // r = buf->ag.interface.decrypt(&buf->ag.interface, buffer, SD_SECTOR_SIZE, key, AES_GCM_KEY_SIZE, iv, mac, AES_GCM_AUTH_SIZE);
-        // if (r)
-        //     goto exit;
+        r = buf->ag.interface.decrypt(&buf->ag.interface, buffer, SD_SECTOR_SIZE, key, AES_GCM_KEY_SIZE, iv, mac, AES_GCM_AUTH_SIZE, lsa+i);
+        if (r) {
+            DMINFO("decrypt error");
+            goto exit;
+        }
+            
 
         ++i;
         memcpy(data+offset, buffer, SD_SECTOR_SIZE);
     }
 
+    // DMINFO("lsa: %d, data: %s", lsa, data); 
     segbuf_crypto_bio_writeback_buffers(buf, bio, data);
-    kfree(buffer);
-    kfree(data);
 exit:
+    if (handler)
+        kfree(handler);
+    if (buffer)
+        kfree(buffer);
+    if (data)
+        kfree(data);
     handler->ob->bi_status = bio->bi_status;
     bio_endio(handler->ob);
 }
@@ -704,7 +728,6 @@ static void process_deferred_bios(struct work_struct *ws)
                 mdt->seg_buffer.push_bio(&mdt->seg_buffer, bio);
                 break;
             case REQ_OP_READ:
-                // mdt->seg_buffer.ag.interface.decrypt(&mdt->seg_buffer.ag.interface, buffer, SD_SECTOR_SIZE, key, AES_GCM_KEY_SIZE, iv, mac, AES_GCM_AUTH_SIZE);
                 submit_bio(bio);
                 break;
         }
@@ -712,67 +735,50 @@ static void process_deferred_bios(struct work_struct *ws)
 	}
 }
 
-int map_read_bio(struct dm_sworndisk_target *mdt, struct bio* bio) {
-    int r;
-    int lsa;
-    struct bio* decrypt_bio;
-    struct mt_value mv;
-    struct bio_decrypt_handler* bd_handler;
-
-    lsa = bio_get_sector(bio);
-    r = mdt->seg_buffer.mt.get(&mdt->seg_buffer.mt, lsa, &mv);
-    if (r) {
-        // DMINFO("map_read_bio, invalid lsa: %d", lsa);
-        return r;
-    }    
-
-    decrypt_bio = bio_clone_fast(bio, GFP_NOIO, mdt->bio_set);
-    bd_handler = bio_decrypt_handler_create(lsa, bio, mdt);
-    decrypt_bio->bi_private = bd_handler;
-    bio_set_dev(decrypt_bio, mdt->data_dev->bdev);
-    bio_set_sector(decrypt_bio, mv.psa);
-    decrypt_bio->bi_end_io = end_bio_decrypt;
-    generic_make_request(decrypt_bio);
-    return 0;
-}
-
 static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
 {
     int r;
-    // struct bio* sector_bio;
+    int lsa;
     struct mt_value mv;
+    struct bio* large_bio;
+    struct bio* decrypt_bio;
+    struct bio_decrypt_handler* bd_handler;
     struct dm_sworndisk_target *mdt = target->private;
+    bool can_split;
 
     bio_set_dev(bio, mdt->data_dev->bdev);
+    can_split = true;
+    large_bio = bio;
+split:
+    if (bio_sectors(large_bio) > 1) 
+        bio = bio_split(large_bio, 1, GFP_NOIO, mdt->bio_set);
+    else {
+        bio = large_bio;
+        can_split = false;
+    }
 
+    lsa = bio_get_sector(bio);
     if (bio_op(bio) == REQ_OP_WRITE) {
-        // DMINFO("write bio, sector: %d, nr_sector: %d", bio_get_sector(bio), bio_sectors(bio));
-        // while(bio_sectors(bio)>1) {
-        //     sector_bio = bio_split(bio, 1, GFP_NOIO, mdt->bio_set);
-        //     defer_bio(mdt, sector_bio);
-        // }
         defer_bio(mdt, bio);
-        return DM_MAPIO_SUBMITTED;
     }
 
     if (bio_op(bio) == REQ_OP_READ) {
-        // DMINFO("read bio, sector: %d, nr_sector: %d", bio_get_sector(bio), bio_sectors(bio));
-        // while(bio_sectors(bio)>1) {
-        //     sector_bio = bio_split(bio, 1, GFP_NOIO, mdt->bio_set);
-        //     r = map_read_bio(mdt, sector_bio);
-        //     if (r)
-        //         goto exit;
-        // }
-        // r = map_read_bio(mdt, bio);
-        // if (r)
-        //     goto exit;
-        r = mdt->seg_buffer.mt.get(&mdt->seg_buffer.mt, bio_get_sector(bio), &mv);
+        r = mdt->seg_buffer.mt.get(&mdt->seg_buffer.mt, lsa, &mv);
         if (r) 
             goto exit;
-        bio_set_sector(bio, mv.psa);
-        defer_bio(mdt, bio);
-        return DM_MAPIO_SUBMITTED;
+        decrypt_bio = bio_clone_fast(bio, GFP_NOIO, mdt->bio_set);
+        bd_handler = bio_decrypt_handler_create(lsa, bio, mdt);
+        decrypt_bio->bi_private = bd_handler;
+        bio_set_dev(decrypt_bio, mdt->data_dev->bdev);
+        bio_set_sector(decrypt_bio, mv.psa);
+        decrypt_bio->bi_end_io = end_bio_decrypt;
+        defer_bio(mdt, decrypt_bio);
     }
+
+    if (can_split)
+        goto split;
+    
+    return DM_MAPIO_SUBMITTED;
 
 exit:
     return DM_MAPIO_REMAPPED;

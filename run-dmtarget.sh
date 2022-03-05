@@ -21,18 +21,19 @@ while getopts ':swrhmf' option;
 do
 	case "$option" in
 	s)
-		touch disk0
-		touch disk1
-		dd if=/dev/zero of=disk0 bs=1M count=5120 # 5GB file
-		dd if=/dev/zero of=disk1 bs=1M count=128 # 128MB file
+		# touch disk0
+		# touch disk1
+		# dd if=/dev/zero of=disk0 bs=1M count=5120 # 5GB file
+		# dd if=/dev/zero of=disk1 bs=1M count=128 # 128MB file
 		losetup /dev/loop0 disk0
 		losetup /dev/loop1 disk1 
 		;;
 	w)
-		dd if=/dev/urandom of=/dev/mapper/sworndisk_dev_mapper  bs=64K count=1280 status=progress
+		# dd if=/dev/urandom of=/dev/mapper/sworndisk_dev_mapper  bs=512 count=1
+		dd if=/dev/urandom of=/dev/mapper/sworndisk_dev_mapper  bs=64K count=1280
 		;;
 	r)
-		dd if=/dev/mapper/sworndisk_dev_mapper of=out bs=4096 count=1280 status=progress
+		dd if=/dev/mapper/sworndisk_dev_mapper of=out bs=4096 count=1280
 		;;
 	h)
 		;;
