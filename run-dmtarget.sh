@@ -30,10 +30,11 @@ do
 		;;
 	w)
 		# dd if=/dev/urandom of=/dev/mapper/sworndisk_dev_mapper  bs=512 count=1
-		dd if=/dev/urandom of=/dev/mapper/sworndisk_dev_mapper  bs=64K count=1280
+		dd if=/home/lnhoo/test-file of=/dev/mapper/sworndisk_dev_mapper bs=6275 count=1
+		# dd if=/dev/urandom of=/dev/mapper/sworndisk_dev_mapper  bs=64K count=1280
 		;;
 	r)
-		dd if=/dev/mapper/sworndisk_dev_mapper of=out bs=4096 count=1280
+		dd if=/dev/mapper/sworndisk_dev_mapper of=out bs=4096 count=1
 		;;
 	h)
 		;;

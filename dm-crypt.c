@@ -44,16 +44,16 @@
  * context holding the current state of a multi-part conversion
  */
 struct convert_context {
-	struct completion restart;
-	struct bio *bio_in;
-	struct bio *bio_out;
-	struct bvec_iter iter_in;
-	struct bvec_iter iter_out;
+	struct completion restart; // 同步机制，确保bio加解密处理完成
+	struct bio *bio_in; // 被处理的bio
+	struct bio *bio_out; // 处理后的bio
+	struct bvec_iter iter_in; // 被处理的bio的bio_vec迭代器
+	struct bvec_iter iter_out; // 处理后的bio的bio_vec迭代器
 	u64 cc_sector;
 	atomic_t cc_pending;
 	union {
-		struct skcipher_request *req;
-		struct aead_request *req_aead;
+		struct skcipher_request *req; // 对称加密请求
+		struct aead_request *req_aead; // AEAD请求（对称加密+完整性校验）
 	} r;
 
 };
@@ -62,21 +62,22 @@ struct convert_context {
  * per bio private data
  */
 struct dm_crypt_io {
-	struct crypt_config *cc;
-	struct bio *base_bio;
-	u8 *integrity_metadata;
-	bool integrity_metadata_from_pool;
-	struct work_struct work;
+	struct crypt_config *cc; // 加解密配置
+	struct bio *base_bio; // block io structure
+	u8 *integrity_metadata; // 完整性元数据
+	bool integrity_metadata_from_pool; 
+	struct work_struct work; 
 
-	struct convert_context ctx;
+	struct convert_context ctx; // 加解密上下文
 
 	atomic_t io_pending;
 	blk_status_t error;
-	sector_t sector;
+	sector_t sector; 
 
 	struct rb_node rb_node;
 } CRYPTO_MINALIGN_ATTR;
 
+// 加解密请求
 struct dm_crypt_request {
 	struct convert_context *ctx;
 	struct scatterlist sg_in[4];
@@ -136,35 +137,36 @@ enum cipher_flags {
  * The fields in here must be read only after initialization.
  */
 struct crypt_config {
-	struct dm_dev *dev;
-	sector_t start;
+	struct dm_dev *dev; // 需要加密数据的设备
+	sector_t start; // 在dm table中记录的设备扇区的起始位置
 
 	/*
 	 * pool for per bio private data, crypto requests,
 	 * encryption requeusts/buffer pages and integrity tags
 	 */
-	mempool_t *req_pool;
-	mempool_t *page_pool;
-	mempool_t *tag_pool;
-	unsigned tag_pool_max_sectors;
+	mempool_t *req_pool; // 加解密请求内存池
+	mempool_t *page_pool; // 页内存池
+	mempool_t *tag_pool; // 标记内存池
+	unsigned tag_pool_max_sectors; 
 
 	struct percpu_counter n_allocated_pages;
 
-	struct bio_set *bs;
-	struct mutex bio_alloc_lock;
+	struct bio_set *bs; // 块I/O对象集合
+	struct mutex bio_alloc_lock; // bio分配使用的互斥锁
 
-	struct workqueue_struct *io_queue;
-	struct workqueue_struct *crypt_queue;
+	struct workqueue_struct *io_queue; // io工作队列
+	struct workqueue_struct *crypt_queue; // 加密工作队列 
 
-	struct task_struct *write_thread;
-	wait_queue_head_t write_thread_wait;
-	struct rb_root write_tree;
+	struct task_struct *write_thread; // 写进程
+	wait_queue_head_t write_thread_wait; // 写进程等待队列
+	struct rb_root write_tree; // 写用到的红黑树
 
-	char *cipher;
+	char *cipher; 
 	char *cipher_string;
-	char *cipher_auth;
+	char *cipher_auth; 
 	char *key_string;
 
+	// 初始化向量生成器
 	const struct crypt_iv_operations *iv_gen_ops;
 	union {
 		struct iv_essiv_private essiv;
@@ -172,19 +174,20 @@ struct crypt_config {
 		struct iv_lmk_private lmk;
 		struct iv_tcw_private tcw;
 	} iv_gen_private;
+	// 初始化向量偏移量
 	u64 iv_offset;
-	unsigned int iv_size;
-	unsigned short int sector_size;
-	unsigned char sector_shift;
+	unsigned int iv_size; // 初始化向量长度
+	unsigned short int sector_size; // 扇区大小
+	unsigned char sector_shift; 
 
 	/* ESSIV: struct crypto_cipher *essiv_tfm */
 	void *iv_private;
 	union {
 		struct crypto_skcipher **tfms;
 		struct crypto_aead **tfms_aead;
-	} cipher_tfm;
-	unsigned tfms_count;
-	unsigned long cipher_flags;
+	} cipher_tfm; // 加密器实体
+	unsigned tfms_count; // 加密器个数
+	unsigned long cipher_flags; // 加密选项
 
 	/*
 	 * Layout of each crypto request:
@@ -204,7 +207,7 @@ struct crypt_config {
 	unsigned int per_bio_data_size;
 
 	unsigned long flags;
-	unsigned int key_size;
+	unsigned int key_size; // 密钥长度
 	unsigned int key_parts;      /* independent parts in key buffer */
 	unsigned int key_extra_size; /* additional keys length */
 	unsigned int key_mac_size;   /* MAC key size for authenc(...) */
@@ -237,11 +240,13 @@ static struct scatterlist *crypt_get_sg_data(struct crypt_config *cc,
  */
 static struct crypto_skcipher *any_tfm(struct crypt_config *cc)
 {
+	// 从transformers中随意取出第一个，用途的访问和key无关的属性
 	return cc->cipher_tfm.tfms[0];
 }
 
 static struct crypto_aead *any_tfm_aead(struct crypt_config *cc)
 {
+	// 从transformers中随意取出第一个，用途的访问和key无关的属性
 	return cc->cipher_tfm.tfms_aead[0];
 }
 
@@ -295,6 +300,7 @@ static struct crypto_aead *any_tfm_aead(struct crypt_config *cc)
  * http://article.gmane.org/gmane.linux.kernel.device-mapper.dm-crypt/454
  */
 
+// 不同的iv生成函数
 static int crypt_iv_plain_gen(struct crypt_config *cc, u8 *iv,
 			      struct dm_crypt_request *dmreq)
 {
@@ -1087,6 +1093,7 @@ static int crypt_convert_block_aead(struct crypt_config *cc,
 	uint64_t *sector;
 	int r = 0;
 
+	// iv长度必须和配置的一样
 	BUG_ON(cc->integrity_iv_size && cc->integrity_iv_size != cc->iv_size);
 
 	/* Reject unexpected unaligned bio. */
