@@ -4,13 +4,13 @@
  * This file is released under the GPL.
  */
 
-#include "dm-sworndisk-metadata.h"
+#include "../include/metadata.h"
 
-#include "persistent-data/dm-array.h"
-#include "persistent-data/dm-bitset.h"
-#include "persistent-data/dm-space-map.h"
-#include "persistent-data/dm-space-map-disk.h"
-#include "persistent-data/dm-transaction-manager.h"
+#include "../../persistent-data/dm-array.h"
+#include "../../persistent-data/dm-bitset.h"
+#include "../../persistent-data/dm-space-map.h"
+#include "../../persistent-data/dm-space-map-disk.h"
+#include "../../persistent-data/dm-transaction-manager.h"
 
 #include <linux/device-mapper.h>
 #include <linux/refcount.h>
@@ -884,24 +884,21 @@ int dm_sworndisk_metadata_abort(struct dm_sworndisk_metadata *cmd)
 	return r;
 }
 
-static int __set_svt(struct dm_sworndisk_metadata *cmd, int b)
+static int __set_svt(struct dm_sworndisk_metadata *cmd, size_t seg)
 {
-	return dm_bitset_set_bit(&cmd->svt_info, cmd->svt_root,
-				 from_dblock(b), &cmd->svt_root);
+	return dm_bitset_set_bit(&cmd->svt_info, cmd->svt_root, seg, &cmd->svt_root);
 }
 
-static int __clear_svt(struct dm_sworndisk_metadata *cmd, int b)
+static int __clear_svt(struct dm_sworndisk_metadata *cmd, size_t seg)
 {
-	return dm_bitset_clear_bit(&cmd->svt_info, cmd->svt_root,
-				   from_dblock(b), &cmd->svt_root);
+	return dm_bitset_clear_bit(&cmd->svt_info, cmd->svt_root, seg, &cmd->svt_root);
 }
 
-static int __svt(struct dm_sworndisk_metadata *cmd,
-		     int dblock, bool valid)
+static int __svt(struct dm_sworndisk_metadata *cmd, size_t seg, bool valid)
 {
 	int r;
 
-	r = (valid ? __set_svt : __clear_svt)(cmd, dblock);
+	r = (valid ? __set_svt : __clear_svt)(cmd, seg);
 	if (r)
 		return r;
 
@@ -909,13 +906,12 @@ static int __svt(struct dm_sworndisk_metadata *cmd,
 	return 0;
 }
 
-int dm_sworndisk_set_svt(struct dm_sworndisk_metadata *cmd,
-			 int dblock, bool valid)
+int dm_sworndisk_set_svt(struct dm_sworndisk_metadata *cmd, size_t seg, bool valid)
 {
 	int r;
 
 	WRITE_LOCK(cmd);
-	r = __svt(cmd, dblock, valid);
+	r = __svt(cmd, seg, valid);
 	WRITE_UNLOCK(cmd);
 
 	return r;
@@ -934,13 +930,14 @@ int dm_sworndisk_reset_svt(struct dm_sworndisk_metadata *cmd) {
 	return 0;
 }
 
-int dm_sworndisk_get_first_free_segment(struct dm_sworndisk_metadata *cmd, int *seg) {
-    int i, err;
+int dm_sworndisk_get_first_free_segment(struct dm_sworndisk_metadata *cmd, size_t *seg, size_t next_seg) {
+    size_t i;
+	int err;
     bool result;
 	bool available;
 
 	available = false;
-    for (i=0; i<cmd->nr_segment; ++i) {
+    for (i=next_seg; i<cmd->nr_segment; ++i) {
 		READ_LOCK(cmd);
         err = dm_bitset_test_bit(&cmd->svt_info, cmd->svt_root, i, &cmd->svt_root, &result);
 		READ_UNLOCK(cmd);
@@ -954,12 +951,12 @@ int dm_sworndisk_get_first_free_segment(struct dm_sworndisk_metadata *cmd, int *
     }
 
 	if (!available) 
-		return -1;
+		return -ENODATA;
     return 0;
 }
 
 
-static int __rit_insert(struct dm_sworndisk_metadata *cmd, int pba, int lba) {
+static int __rit_insert(struct dm_sworndisk_metadata *cmd, sector_t pba, sector_t lba) {
 	int r;
 	__le64 value = cpu_to_le64(lba);
 	__dm_bless_for_disk(&value);
@@ -972,7 +969,7 @@ static int __rit_insert(struct dm_sworndisk_metadata *cmd, int pba, int lba) {
 	return 0;
 }
 
-int dm_sworndisk_rit_insert(struct dm_sworndisk_metadata *cmd, int pba, int lba) {
+int dm_sworndisk_rit_insert(struct dm_sworndisk_metadata *cmd, sector_t pba, sector_t lba) {
 	int r;
 
 	WRITE_LOCK(cmd);
@@ -982,7 +979,7 @@ int dm_sworndisk_rit_insert(struct dm_sworndisk_metadata *cmd, int pba, int lba)
 	return r;
 }
 
-int dm_sworndisk_rit_get(struct dm_sworndisk_metadata *cmd, int pba, int *lba) {
+int dm_sworndisk_rit_get(struct dm_sworndisk_metadata *cmd, sector_t pba, sector_t *lba) {
 	int r;
 	__le64 value;
 

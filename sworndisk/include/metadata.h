@@ -4,12 +4,10 @@
  * This file is released under the GPL.
  */
 
-#ifndef DM_CACHE_METADATA_H
-#define DM_CACHE_METADATA_H
+#ifndef DM_SWORNDISK_METADATA_H
+#define DM_SWORNDISK_METADATA_H
 
-#include "dm-cache-block-types.h"
-#include "dm-cache-policy-internal.h"
-#include "persistent-data/dm-space-map-metadata.h"
+#include "../../persistent-data/dm-space-map-metadata.h"
 
 /*----------------------------------------------------------------*/
 
@@ -113,10 +111,10 @@ int dm_sworndisk_metadata_abort(struct dm_sworndisk_metadata *cmd);
 
 /*----------------------------------------------------------------*/
 
-int dm_sworndisk_set_svt(struct dm_sworndisk_metadata *cmd, int dblock, bool valid);
-int dm_sworndisk_get_first_free_segment(struct dm_sworndisk_metadata *cmd, int *seg);
-int dm_sworndisk_rit_insert(struct dm_sworndisk_metadata *cmd, int pba, int lba);
-int dm_sworndisk_rit_get(struct dm_sworndisk_metadata *cmd, int pba, int *lba);
+int dm_sworndisk_set_svt(struct dm_sworndisk_metadata *cmd, size_t seg, bool valid);
+int dm_sworndisk_get_first_free_segment(struct dm_sworndisk_metadata *cmd, size_t *seg, size_t next_seg);
+int dm_sworndisk_rit_insert(struct dm_sworndisk_metadata *cmd, sector_t pba, sector_t lba);
+int dm_sworndisk_rit_get(struct dm_sworndisk_metadata *cmd, sector_t pba, sector_t *lba);
 int dm_sworndisk_reset_svt(struct dm_sworndisk_metadata *cmd);
 
 #endif /* DM_CACHE_METADATA_H */
