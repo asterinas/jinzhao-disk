@@ -25,13 +25,17 @@ struct mt_value* mt_value_create(int pba, char* key, char* iv, char* mac) {
 void hash_memtable_put(struct memtable* mt, int lba, struct mt_value* val) {
     HASH_MEMTABLE_THIS_POINTER_DECLARE
 
+    down_write(&this->rwsem);
     hashmap_add(&this->map, lba, val);
+    up_write(&this->rwsem);
 }
 
 int hash_memtable_get(struct memtable* mt, int lba, struct mt_value** p_mv) {
     HASH_MEMTABLE_THIS_POINTER_DECLARE
 
+    down_read(&this->rwsem);
     *p_mv = hashmap_getval(&this->map, lba);
+    up_read(&this->rwsem);
     if (*p_mv == NULL) 
         return -ENODATA;
     return 0;
@@ -53,7 +57,8 @@ void hash_memtable_destory(struct memtable* mt) {
 struct memtable* hash_memtable_init(struct hash_memtable* this) {
     if (IS_ERR_OR_NULL(this))
         return NULL;
-
+    
+    init_rwsem(&this->rwsem);
     hashmap_init(&this->map, DEFAULT_HASHMAP_CAPACITY_BITS);
     this->memtable.put = hash_memtable_put;
     this->memtable.get = hash_memtable_get;

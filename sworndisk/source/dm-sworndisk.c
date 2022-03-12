@@ -22,9 +22,11 @@
 #include "../include/memtable.h"
 #include "../include/bio_operate.h"
 #include "../include/segment_buffer.h"
+#include "../include/generic_cache.h"
 
 /* For underlying device */
 struct dm_sworndisk_target {
+    spinlock_t lock;
     struct dm_dev *data_dev;
     struct dm_dev *metadata_dev;
     sector_t start;
@@ -34,7 +36,7 @@ struct dm_sworndisk_target {
 	struct dm_sworndisk_metadata *cmd;
     struct segment_buffer *seg_buffer;
     struct bio_set* bio_set; 
-    spinlock_t lock;
+    struct generic_cache* cache;
 };
 
 
@@ -50,11 +52,21 @@ static void defer_bio(struct dm_sworndisk_target *mdt, struct bio *bio) {
 
 
 static void process_deferred_bios(struct work_struct *ws) {
+    int r;
+    char* data;
+    sector_t lba;
+    struct mt_value *mv;
+    struct cache_entry* entry;
+    struct generic_cache* cache;
+    struct bio_crypt_context* crypt_ctx;
+    struct bio_async_io_context* io_ctx;
+    struct default_segment_buffer* buf_instance;
 	struct dm_sworndisk_target *mdt = container_of(ws, struct dm_sworndisk_target, deferred_bio_worker);
 
 	unsigned long flags;
 	struct bio_list bios;
 	struct bio* bio;
+    struct bio* origin;
 
 	bio_list_init(&bios);
 
@@ -63,20 +75,73 @@ static void process_deferred_bios(struct work_struct *ws) {
 	bio_list_init(&mdt->deferred_bios);
 	spin_unlock_irqrestore(&mdt->lock, flags);
 
-	while ((bio = bio_list_pop(&bios))) {
-        mdt->seg_buffer->push_bio(mdt->seg_buffer, bio);
+    crypt_ctx = NULL;
+    io_ctx = NULL;
+    cache = mdt->cache;
+    buf_instance = (struct default_segment_buffer*)(mdt->seg_buffer->implementer(mdt->seg_buffer));
+	while ((origin = bio_list_pop(&bios))) {
+        lba = bio_get_sector(origin);
+        bio = bio_copy(origin, GFP_NOIO, mdt->bio_set);
+        if (IS_ERR_OR_NULL(bio)) 
+            goto bad;
+
+        if (bio_op(bio) == REQ_OP_WRITE) {
+             // write cache
+            data = bio_data_buffer_copy(bio);
+            if (IS_ERR_OR_NULL(data))
+                goto bad;
+            entry = cache_entry_create(lba, data, bio_get_data_len(bio), true);
+            if (IS_ERR_OR_NULL(entry))
+                goto bad;
+            cache->set(cache, lba, entry);
+            bio_endio(origin);
+            // async write
+            crypt_ctx =  bio_crypt_context_create(lba, NULL, NULL, NULL,  buf_instance->cipher);
+            if (IS_ERR_OR_NULL(crypt_ctx))
+                goto bad;
+            io_ctx = bio_async_io_context_create(bio, origin, buf_instance->mt, cache, crypt_ctx);
+            if (IS_ERR_OR_NULL(io_ctx))
+                goto bad;
+            bio->bi_private = io_ctx;
+            mdt->seg_buffer->push_bio(mdt->seg_buffer, bio);
+        }
+            
+        if (bio_op(bio) == REQ_OP_READ) {
+            // query cache
+            entry = cache->get(cache, lba);
+            if (entry) {
+                bio_fill_data_buffer(bio, entry->data, entry->data_len);
+                bio_endio(origin);
+                goto next_bio;
+            }
+            // fetch from source
+            r = buf_instance->mt->get(buf_instance->mt, lba, &mv);
+            if (r) 
+                goto bad;
+            crypt_ctx = bio_crypt_context_create(lba, mv->key, mv->iv, mv->mac, buf_instance->cipher);
+            if (IS_ERR_OR_NULL(crypt_ctx))
+                goto bad;
+            io_ctx = bio_async_io_context_create(bio, origin, buf_instance->mt, cache, crypt_ctx);
+            if (IS_ERR_OR_NULL(io_ctx))
+                goto bad;
+            bio->bi_private = io_ctx;
+            bio_set_sector(bio, mv->pba);
+            submit_bio(bio);
+        }
+next_bio:
+        continue;
+bad:
+        if (io_ctx) 
+            bio_async_io_context_destroy(io_ctx);
+        else if (crypt_ctx) 
+            bio_crypt_context_destroy(crypt_ctx);
+        bio_endio(origin);
 	}
 }
 
 
 static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
 {
-    int r;
-    sector_t lba;
-    struct mt_value *mv;
-    struct bio* crypt_bio;
-    struct bio_crypt_context* ctx;
-    struct default_segment_buffer* buf_instance;
     struct dm_sworndisk_target* mdt;
 
     mdt = target->private;
@@ -84,34 +149,13 @@ static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
     if (bio_sectors(bio) > BIO_CRYPT_SECTOR_LIMIT)
         dm_accept_partial_bio(bio, BIO_CRYPT_SECTOR_LIMIT);
 
-    lba = bio_get_sector(bio);
-    crypt_bio = bio_copy(bio, GFP_NOIO, mdt->bio_set);
-    if (IS_ERR_OR_NULL(crypt_bio)) {
-        DMINFO("dm_sworndisk_target_map deepcopy bio error");
-        goto exit;
-    }
-
-    if (bio_op(bio) == REQ_OP_WRITE) {
-        ctx = bio_crypt_context_create(lba, NULL, NULL, NULL, bio, NULL);
-        if (IS_ERR_OR_NULL(ctx))
+    switch (bio_op(bio)) {
+        case REQ_OP_READ:
+        case REQ_OP_WRITE:
+            defer_bio(mdt, bio);
+            break;
+        default:
             goto exit;
-        crypt_bio->bi_private = ctx;
-        defer_bio(mdt, crypt_bio);
-    }
-
-    if (bio_op(bio) == REQ_OP_READ) {
-        buf_instance = (struct default_segment_buffer*)(mdt->seg_buffer->implementer(mdt->seg_buffer));
-        if (IS_ERR_OR_NULL(buf_instance))
-            goto exit;
-        r = buf_instance->mt->get(buf_instance->mt, lba, &mv);
-        if (r) 
-            goto exit;
-        ctx = bio_crypt_context_create(lba, mv->key, mv->iv, mv->mac, bio, buf_instance->cipher);
-        if (IS_ERR_OR_NULL(ctx))
-            goto exit;
-        crypt_bio->bi_private = ctx;
-        bio_set_sector(crypt_bio, mv->pba);
-        submit_bio(crypt_bio);
     }
 
     return DM_MAPIO_SUBMITTED;
@@ -193,6 +237,11 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
         ret = -ENOMEM;
         goto bad;
     }
+    mdt->cache = generic_cache_create(DEFAULT_CACHE_CAPACITY, DEFAULT_MAX_LOCKED_ENTRY);
+    if (IS_ERR_OR_NULL(mdt->cache)) {
+        ret = -ENOMEM;
+        goto bad;
+    }     
     return 0;
 
 bad:
@@ -204,6 +253,8 @@ bad:
         mdt->seg_buffer->destroy(mdt->seg_buffer);
     if (mdt->wq) 
         destroy_workqueue(mdt->wq);
+    if (mdt->cache)
+        generic_cache_destroy(mdt->cache);
     if (mdt)
         kfree(mdt);
     DMERR("Exit : %s with ERROR", __func__);

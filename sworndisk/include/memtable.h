@@ -1,9 +1,9 @@
 #ifndef DM_SWORNDISK_MEMTABLE_H
 #define DM_SWORNDISK_MEMTABLE_H
 
-#include "hashmap.h"
+#include <linux/rwsem.h>
 
-#define DEFAULT_HASHMAP_CAPACITY_BITS 16
+#include "hashmap.h"
 
 // memtable value
 struct mt_value {
@@ -21,6 +21,7 @@ struct memtable {
 };
 
 struct hash_memtable {
+    struct rw_semaphore rwsem;
     struct hashmap map;
     struct memtable memtable;
 };
