@@ -35,7 +35,7 @@ void __fifo_remove_entry(struct cache_policy* policy, uint32_t key) {
     struct generic_cache* cache;
     FIFO_CACHE_POLICY_THIS_POINTER_DECLARE
 
-    DMINFO("__fifo_remove_entry: %d", key);
+    // DMINFO("__fifo_remove_entry: %d", key);
     cache = this->base_cache;
     node = hashmap_getval(&this->index_table, key);
     if (!node)
@@ -65,7 +65,7 @@ void fifo_add_entry(struct cache_policy* policy, uint32_t key, struct cache_entr
     struct list_head* locked_entry_list;
     FIFO_CACHE_POLICY_THIS_POINTER_DECLARE
 
-    DMINFO("fifo_add_entry: %d");
+    // DMINFO("fifo_add_entry: %d");
     cache = this->base_cache;
     down_write(&cache->rwsem);
     entry_list = &cache->entry_list;
@@ -110,7 +110,7 @@ void fifo_unlock_entry(struct cache_policy* policy, uint32_t key) {
     struct list_head* entry_list;
     FIFO_CACHE_POLICY_THIS_POINTER_DECLARE
 
-    DMINFO("fifo_unlock_entry: %d", key);
+    // DMINFO("fifo_unlock_entry: %d", key);
     cache = this->base_cache;
     down_write(&cache->rwsem);
     entry_list = &cache->entry_list;

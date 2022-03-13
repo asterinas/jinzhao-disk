@@ -42,7 +42,7 @@ void bio_async_io_work_complete(struct work_struct* ws) {
     bio->bi_iter = io_ctx->bi_iter;
     cache = io_ctx->cache;
     mt = io_ctx->mt;
-    pba = bio_get_sector(bio);
+    pba = io_ctx->pba;
 
     if (bio_op(bio) == REQ_OP_READ) {
         bio_crypt(bio);
@@ -53,12 +53,12 @@ void bio_async_io_work_complete(struct work_struct* ws) {
     }
 
     if (bio_op(bio) == REQ_OP_WRITE) {
-        cache->unlock(cache, lba);
         mv = mt_value_create(pba, crypt_ctx->key, crypt_ctx->iv, crypt_ctx->mac);
         if (IS_ERR_OR_NULL(mv))
             goto cleanup;
         mt->put(mt, lba, mv);
 cleanup:
+        cache->unlock(cache, lba);
         bio_free_pages(bio);
     }
 
@@ -69,7 +69,7 @@ void crypt_bio_endio(struct bio* bio) {
    struct bio_async_io_context* io_ctx;
 
    io_ctx = bio->bi_private;
-   schedule_work(&io_ctx->complete);
+   queue_work(io_ctx->wq, &io_ctx->complete);
 }
 
 
@@ -188,7 +188,7 @@ void bio_crypt(struct bio* bio) {
     r = (bio_op(bio) == REQ_OP_READ ? cipher->decrypt : cipher->encrypt)
       (cipher, kaddr+bio_offset(bio), bio_cur_bytes(bio), key, AES_GCM_KEY_SIZE, iv, mac, AES_GCM_AUTH_SIZE, lba);
     if (r) {
-        DMINFO("bio_crypt error");
+        DMINFO("bio_crypt error: %ld", lba);
         goto exit;
     }
 exit:
@@ -196,7 +196,7 @@ exit:
 }
 
 void bio_async_io_context_destroy(struct bio_async_io_context* ctx) {
-    if (ctx->crypt_ctx)
+    if (ctx && ctx->crypt_ctx)
         bio_crypt_context_destroy(ctx->crypt_ctx);
     if (ctx)
         kfree(ctx);
@@ -211,7 +211,7 @@ void bio_async_io_work(struct work_struct* ws) {
 }
 
 void bio_async_io_context_init(struct bio_async_io_context* ctx, struct bio* bio, 
-  struct bio* origin, struct memtable* mt, struct generic_cache* cache, struct bio_crypt_context* crypt_ctx) {
+  struct bio* origin, struct memtable* mt, struct generic_cache* cache, struct bio_crypt_context* crypt_ctx`) {
     ctx->bio = bio;
     ctx->origin = origin;
     ctx->mt = mt;

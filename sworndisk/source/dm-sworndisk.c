@@ -75,11 +75,12 @@ static void process_deferred_bios(struct work_struct *ws) {
 	bio_list_init(&mdt->deferred_bios);
 	spin_unlock_irqrestore(&mdt->lock, flags);
 
-    crypt_ctx = NULL;
-    io_ctx = NULL;
     cache = mdt->cache;
     buf_instance = (struct default_segment_buffer*)(mdt->seg_buffer->implementer(mdt->seg_buffer));
 	while ((origin = bio_list_pop(&bios))) {
+        crypt_ctx = NULL;
+        io_ctx = NULL;
+
         lba = bio_get_sector(origin);
         bio = bio_copy(origin, GFP_NOIO, mdt->bio_set);
         if (IS_ERR_OR_NULL(bio)) 
@@ -99,9 +100,10 @@ static void process_deferred_bios(struct work_struct *ws) {
             crypt_ctx =  bio_crypt_context_create(lba, NULL, NULL, NULL,  buf_instance->cipher);
             if (IS_ERR_OR_NULL(crypt_ctx))
                 goto bad;
-            io_ctx = bio_async_io_context_create(bio, origin, buf_instance->mt, cache, crypt_ctx);
+            io_ctx = bio_async_io_context_create(pba, bio, origin, buf_instance->mt, cache, crypt_ctx);
             if (IS_ERR_OR_NULL(io_ctx))
                 goto bad;
+            io_ctx->wq = mdt->wq;
             bio->bi_private = io_ctx;
             mdt->seg_buffer->push_bio(mdt->seg_buffer, bio);
         }
@@ -110,11 +112,13 @@ static void process_deferred_bios(struct work_struct *ws) {
             // query cache
             entry = cache->get(cache, lba);
             if (entry) {
+                // DMINFO("cache hit: %ld", lba);
                 bio_fill_data_buffer(bio, entry->data, entry->data_len);
                 bio_endio(origin);
                 goto next_bio;
             }
             // fetch from source
+            // DMINFO("cache miss: %ld", lba);
             r = buf_instance->mt->get(buf_instance->mt, lba, &mv);
             if (r) 
                 goto bad;
@@ -124,6 +128,7 @@ static void process_deferred_bios(struct work_struct *ws) {
             io_ctx = bio_async_io_context_create(bio, origin, buf_instance->mt, cache, crypt_ctx);
             if (IS_ERR_OR_NULL(io_ctx))
                 goto bad;
+            io_ctx->wq = mdt->wq;
             bio->bi_private = io_ctx;
             bio_set_sector(bio, mv->pba);
             submit_bio(bio);

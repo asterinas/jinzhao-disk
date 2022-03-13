@@ -10,9 +10,9 @@
 
 int segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
     int r;
-    sector_t lba;
     sector_t pba;
     bool should_flush;
+    struct bio_async_io_context* io_ctx;
     DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
 
     r = this->sa->alloc_sectors(this->sa, bio, &pba, &should_flush);
@@ -23,12 +23,13 @@ int segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
         
 
     // if (should_flush) 
-        // buf->flush_bios(buf);
+    //     buf->flush_bios(buf);
 
 
     // rediret bio
-    lba = bio_get_sector(bio);
     bio_set_sector(bio, pba);
+    io_ctx = bio->bi_private;
+    io_ctx->pba = pba;
     // update reverse index table
     // this->sa->write_reverse_index_table(this->sa, pba, lba);
 
@@ -47,7 +48,7 @@ void segbuf_flush_bios(struct segment_buffer* buf) {
         // DMINFO("flush bio, pba: %d", bio_get_sector(bio));
         // async write work schedule
         io_ctx = bio->bi_private;
-        schedule_work(&io_ctx->work);
+        queue_work(io_ctx->wq, &io_ctx->work);
     }
 }
 

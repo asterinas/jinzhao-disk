@@ -19,12 +19,14 @@ struct bio_crypt_context {
 };
 
 struct bio_async_io_context {
+	sector_t pba;
 	struct bio* bio;
 	struct bio* origin;
 	struct memtable* mt;
 	struct bvec_iter bi_iter;
 	struct work_struct work;
 	struct work_struct complete;
+	struct workqueue_struct* wq;
 	struct generic_cache* cache;
 	struct bio_crypt_context* crypt_ctx;
 };
