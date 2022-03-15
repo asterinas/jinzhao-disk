@@ -211,7 +211,7 @@ void bio_async_io_work(struct work_struct* ws) {
 }
 
 void bio_async_io_context_init(struct bio_async_io_context* ctx, struct bio* bio, 
-  struct bio* origin, struct memtable* mt, struct generic_cache* cache, struct bio_crypt_context* crypt_ctx`) {
+  struct bio* origin, struct memtable* mt, struct generic_cache* cache, struct bio_crypt_context* crypt_ctx) {
     ctx->bio = bio;
     ctx->origin = origin;
     ctx->mt = mt;

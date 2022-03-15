@@ -100,7 +100,7 @@ static void process_deferred_bios(struct work_struct *ws) {
             crypt_ctx =  bio_crypt_context_create(lba, NULL, NULL, NULL,  buf_instance->cipher);
             if (IS_ERR_OR_NULL(crypt_ctx))
                 goto bad;
-            io_ctx = bio_async_io_context_create(pba, bio, origin, buf_instance->mt, cache, crypt_ctx);
+            io_ctx = bio_async_io_context_create(bio, origin, buf_instance->mt, cache, crypt_ctx);
             if (IS_ERR_OR_NULL(io_ctx))
                 goto bad;
             io_ctx->wq = mdt->wq;
