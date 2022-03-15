@@ -46,5 +46,6 @@ char* bio_data_buffer_copy(struct bio* bio);
 int bio_fill_data_buffer(struct bio* bio, char* buffer, size_t len);
 void bio_async_io_context_destroy(struct bio_async_io_context* ctx);
 void bio_crypt_context_destroy(struct bio_crypt_context* ctx);
+void bio_crypt(struct bio* bio);
 
 #endif

@@ -29,7 +29,7 @@ do
 		losetup /dev/loop1 disk1 
 		;;
 	w)
-		dd if=/dev/urandom of=/dev/mapper/sworndisk_dev_mapper  bs=512 count=10
+		dd if=/dev/urandom of=/dev/mapper/sworndisk_dev_mapper  bs=512 count=100000
 		# dd if=/home/lnhoo/kfpd.qlv of=/dev/mapper/sworndisk_dev_mapper bs=9833460 count=1
 		# dd if=/dev/urandom of=/dev/mapper/sworndisk_dev_mapper  bs=64K count=1280
 		;;

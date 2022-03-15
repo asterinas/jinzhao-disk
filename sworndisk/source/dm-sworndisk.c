@@ -232,7 +232,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
     target->private = mdt;
     spin_lock_init(&mdt->lock);
 	bio_list_init(&mdt->deferred_bios);
-    mdt->seg_buffer = segbuf_init(kmalloc(sizeof(struct default_segment_allocator), GFP_KERNEL), cmd, NR_SEGMENT);
+    mdt->seg_buffer = segbuf_init(kmalloc(sizeof(struct default_segment_allocator), GFP_KERNEL), mdt->data_dev, cmd, NR_SEGMENT);
     if (!mdt->seg_buffer) {
         ret = -ENOMEM;
         goto bad;

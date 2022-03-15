@@ -61,7 +61,8 @@ cleanup:
         cache->unlock(cache, lba);
         bio_free_pages(bio);
     }
-
+    
+    bio_put(bio);
     bio_async_io_context_destroy(io_ctx);
 }
 
