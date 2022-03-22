@@ -1,7 +1,9 @@
 #include "../include/segment_allocator.h"
 
 #define DEFAULT_SEGMENT_ALLOCATOR_THIS_POINTER_DECLARE struct default_segment_allocator* this; \
-            this = container_of(al, struct default_segment_allocator, segment_allocator);
+            struct dm_sworndisk_target* sworndisk; \
+              this = container_of(al, struct default_segment_allocator, segment_allocator); \
+                sworndisk = this->sworndisk;
 
 #include "../include/dm_sworndisk.h"
 
@@ -9,13 +11,13 @@ int sa_get_next_free_segment(struct segment_allocator* al, size_t *seg, size_t n
     int r;
     DEFAULT_SEGMENT_ALLOCATOR_THIS_POINTER_DECLARE 
 
-    r = dm_sworndisk_get_first_free_segment(this->metadata, seg, next_seg);
+    r = dm_sworndisk_get_first_free_segment(sworndisk->metadata, seg, next_seg);
     if (r) {
         DMERR("get_first_free_segment error\n");
         return r;
     }
 
-    r = dm_sworndisk_set_svt(this->metadata, *seg, true);
+    r = dm_sworndisk_set_svt(sworndisk->metadata, *seg, true);
     if (r) {
         DMERR("dm_sworndisk_set_svt error\n");
         return r;
@@ -24,7 +26,7 @@ int sa_get_next_free_segment(struct segment_allocator* al, size_t *seg, size_t n
     return 0;
 }
 
-int sa_alloc_sectors(struct segment_allocator* al, struct bio* bio, sector_t *pba, bool *should_flush) {
+int sa_alloc_sectors(struct segment_allocator* al, struct bio* bio, sector_t *pba) {
     int r;
     size_t seg;
     size_t next_seg;
@@ -32,16 +34,14 @@ int sa_alloc_sectors(struct segment_allocator* al, struct bio* bio, sector_t *pb
     DEFAULT_SEGMENT_ALLOCATOR_THIS_POINTER_DECLARE
 
     next_seg = this->cur_segment + 1;
-    *should_flush = false;
     nr_sector = bio_sectors(bio);
     if (this->cur_sector + nr_sector >= SEC_PER_SEG) {
-        *should_flush = true;
 try:
         r = al->get_next_free_segment(al, &seg, next_seg);
         if (r) {
             // return seg;
             // since there are no segment cleaning methods, a trick to provide sufficient disk space
-            r = dm_sworndisk_reset_svt(this->metadata);
+            r = dm_sworndisk_reset_svt(sworndisk->metadata);
             if (r)
                 return r;
             goto try;
@@ -59,7 +59,7 @@ int sa_write_reverse_index_table(struct segment_allocator* al, sector_t lba, sec
     int r;
     DEFAULT_SEGMENT_ALLOCATOR_THIS_POINTER_DECLARE
 
-    r = dm_sworndisk_rit_insert(this->metadata, pba, lba);
+    r = dm_sworndisk_rit_insert(sworndisk->metadata, pba, lba);
     if (r)
         return r;
     return 0;
@@ -71,15 +71,11 @@ void sa_destroy(struct segment_allocator* al) {
     kfree(this);
 }
 
-struct segment_allocator* sa_init(struct default_segment_allocator* this, struct dm_sworndisk_metadata *metadata, size_t nr_segment) {
+int sa_init(struct default_segment_allocator* this, struct dm_sworndisk_target* sworndisk) {
     int r;
 
-    if (IS_ERR_OR_NULL(this))
-        return NULL;
-
-    this->metadata = metadata;
-    this->nr_segment = nr_segment;
     this->cur_sector = 0;
+    this->sworndisk = sworndisk;
     this->segment_allocator.get_next_free_segment = sa_get_next_free_segment;
     this->segment_allocator.alloc_sectors = sa_alloc_sectors;
     this->segment_allocator.write_reverse_index_table = sa_write_reverse_index_table;
@@ -87,7 +83,19 @@ struct segment_allocator* sa_init(struct default_segment_allocator* this, struct
     this->segment_allocator.destroy = sa_destroy;
 
     r = this->segment_allocator.get_next_free_segment(&this->segment_allocator, &this->cur_segment, 0);
+    return r;
+}
+
+struct segment_allocator* sa_create(struct dm_sworndisk_target* sworndisk) {
+    int r;
+    struct default_segment_allocator* sa;
+
+    sa = kmalloc(sizeof(struct default_segment_allocator), GFP_KERNEL);
+    if (!sa)
+        return NULL;
+    
+    r = sa_init(sa, sworndisk);
     if (r)
         return NULL;
-    return &this->segment_allocator;
+    return &sa->segment_allocator;
 }

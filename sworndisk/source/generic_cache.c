@@ -121,6 +121,10 @@ void fifo_unlock_entry(struct cache_policy* policy, uint32_t key) {
     entry->locked = false;
     list_move_tail(&entry->node, entry_list);
     cache->size += 1;
+    while(cache->size >= cache->capacity) {
+        entry = list_first_entry(entry_list, struct cache_entry, node);
+        __fifo_remove_entry(policy, entry->key);
+    }
 exit:
     up_write(&cache->rwsem);
 }
@@ -133,7 +137,7 @@ void fifo_destroy(struct cache_policy* policy) {
 
 void fifo_cache_policy_init(struct fifo_cache_policy* this, struct generic_cache* base_cache) {
     this->base_cache = base_cache;
-    hashmap_init(&this->index_table, DEFAULT_HASHMAP_CAPACITY_BITS);
+    hashmap_init(&this->index_table, get_order(DEFAULT_CACHE_CAPACITY));
 
     this->cache_policy.add_entry = fifo_add_entry;
     this->cache_policy.remove_entry = fifo_remove_entry;
@@ -201,6 +205,9 @@ struct generic_cache* generic_cache_create(size_t capacity, size_t max_locked_en
 }
 
 void generic_cache_destroy(struct generic_cache* cache) {
-    cache->policy->destroy(cache->policy);
-    kfree(cache);
+    if (!IS_ERR_OR_NULL(cache)) {
+        if (!IS_ERR_OR_NULL(cache->policy))
+            cache->policy->destroy(cache->policy);
+        kfree(cache);
+    }
 }

@@ -42,8 +42,6 @@ struct aead_cipher {
 struct aes_gcm_cipher {
     struct aead_cipher interface;
     struct crypto_aead *tfm;
-    struct aead_request *req;
-    struct crypto_wait wait;
     size_t key_size;
     size_t block_size;
     size_t auth_size;
@@ -52,5 +50,6 @@ struct aes_gcm_cipher {
 
 
 struct aead_cipher* aes_gcm_cipher_init(struct aes_gcm_cipher *ag);
+int __get_random_bytes(char** p_data, unsigned int len);
 
 #endif

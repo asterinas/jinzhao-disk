@@ -7,8 +7,8 @@
 
 #include "hashmap.h"
 
-#define DEFAULT_MAX_LOCKED_ENTRY 512
-#define DEFAULT_CACHE_CAPACITY 1024
+#define DEFAULT_MAX_LOCKED_ENTRY 2048
+#define DEFAULT_CACHE_CAPACITY 4096
 
 typedef struct list_head list_node_t;
 #define INIT_LIST_NODE(x) INIT_LIST_HEAD(x)

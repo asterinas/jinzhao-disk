@@ -6,113 +6,129 @@
 #include "../include/crypto.h"
 
 #define DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE struct default_segment_buffer* this; \
-                this = container_of(buf, struct default_segment_buffer, segment_buffer);
+                struct dm_sworndisk_target* sworndisk; \
+                  this = container_of(buf, struct default_segment_buffer, segment_buffer); \
+                    sworndisk = this->sworndisk;
 
-int segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
-    int r;
-    sector_t pba;
-    bool should_flush;
-    struct bio_async_io_context* io_ctx;
-    unsigned long flags;
+// assume bio has only one segment
+void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
+    char* data;
+    struct cache_entry* entry;
+    struct mt_value* mv;
+    sector_t lba, pba;
     DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
 
-    r = this->sa->alloc_sectors(this->sa, bio, &pba, &should_flush);
-    if (r) {
-        DMERR("alloc_sectors error");
-        return r;
+    if (this->cur_sector + bio_sectors(bio) >= SEC_PER_SEG) {
+        // init_completion(&this->comp);
+        // schedule_work(&this->flush_worker);
+        // wait_for_completion(&this->comp);
+        buf->flush_bios(buf);
+        this->cur_segment += 1;
+        this->cur_sector = 0;
     }
-        
+    
+    lba = bio_get_sector(bio);
+    pba = this->cur_segment * SEC_PER_SEG + this->cur_sector;
 
-    if (should_flush) 
-        schedule_work(&this->flush_bio_work);
-
-
-    // rediret bio
-    bio_set_sector(bio, pba);
-    io_ctx = bio->bi_private;
-    io_ctx->pba = pba;
-    // update reverse index table
-    // this->sa->write_reverse_index_table(this->sa, pba, lba);
-    spin_lock_irqsave(&this->lock, flags);
-	bio_list_add(&this->bios, bio);
-    spin_unlock_irqrestore(&this->lock, flags);
-    // buf->flush_bios(buf);
-    return 0;
-}
-
-void segbuf_flush_bio_endio(struct bio* bio) {
-    struct bio* crypted;
-    struct bio_list* bios;
-
-    bios = bio->bi_private;
-    while ((crypted = bio_list_pop(bios)))
-        bio_endio(crypted);
-    if (!IS_ERR_OR_NULL(bios))
-        kfree(bios);
-    bio_put(bio);
-}
-
-#define BIO_FLUSH_BATCH 300
-void segbuf_flush_bios(struct segment_buffer* buf) {
-    size_t i;
-    int64_t nr_allocted_segment;
-    int64_t nr_pending_segment;
-    struct bio* bio;
-    struct bio* merged_bio;
-    struct bio_list bios;
-    struct bio_list* crypted_bios;
-    struct bio_async_io_context* io_ctx;
-    unsigned long flags;
-    DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
-
-    if (bio_list_empty(&this->bios)) 
+    data = bio_data_copy(bio);
+    if (IS_ERR_OR_NULL(data))
         return;
+    entry = cache_entry_create(pba, data, bio_get_data_len(bio), true);
+    if (IS_ERR_OR_NULL(entry))
+        return;
+    sworndisk->cache->set(sworndisk->cache, pba, entry);
 
-    bio_list_init(&bios);
-    spin_lock_irqsave(&this->lock, flags);
-	bio_list_merge(&bios, &this->bios);
-    bio_list_init(&this->bios);
-    spin_unlock_irqrestore(&this->lock, flags);
+    mv = mt_value_create(pba, NULL, NULL, NULL);
+    if (IS_ERR_OR_NULL(mv))
+        return;
+    sworndisk->memtable->put(sworndisk->memtable, lba, mv); 
 
-    nr_pending_segment = bio_list_size(&bios);
-    while(nr_pending_segment > 0) {
-        crypted_bios = kmalloc(sizeof(struct bio_list), GFP_KERNEL);
-        if (!crypted_bios)
-            goto bad;
-        bio_list_init(crypted_bios);
-        nr_allocted_segment = BIO_FLUSH_BATCH;
-        if (nr_pending_segment < nr_allocted_segment)
-            nr_allocted_segment = nr_pending_segment;
-        merged_bio = bio_alloc_bioset(GFP_KERNEL, nr_allocted_segment, this->bio_set);
-        if (IS_ERR_OR_NULL(merged_bio)) {
-            // DMINFO("merged_bio bio_alloc error");
-            goto bad;
-        }
-            
-        i = 0;
-        while (i < nr_allocted_segment && (bio = bio_list_pop(&bios))) {
-            bio_crypt(bio);
-            bio_list_add(crypted_bios, bio);
-            bio_add_page(merged_bio, bio_page(bio), bio_get_data_len(bio), bio_offset(bio));
-            ++i;
-        }
-        bio_set_dev(merged_bio, this->data_dev->bdev);
-        bio_set_sector(merged_bio, bio_get_sector(bio_list_peek(crypted_bios)));
-        merged_bio->bi_private = crypted_bios;
-        merged_bio->bi_end_io = segbuf_flush_bio_endio;
-        DMINFO("pba: %d, nr_sector: %d", bio_get_sector(merged_bio), bio_sectors(merged_bio));
-        generic_make_request(merged_bio);
+    bio_get_data(bio, this->buffer + this->cur_sector * SECTOR_SIZE);
+    this->cur_sector += 1;
+}
 
-        nr_pending_segment -= nr_allocted_segment;
-    }
-    return;
-bad:
-    while ((bio = bio_list_pop(&bios))) {
-        // DMINFO("flush bio, pba: %d", bio_get_sector(bio));
-        // async write work schedule
-        io_ctx = bio->bi_private;
-        queue_work(io_ctx->wq, &io_ctx->work);
-    }
+void segbuf_flush_endio(struct bio* bio) {
+    size_t shift;
+    struct segbuf_flush_context* ctx;
+
+    ctx = bio->bi_private;
+    bio->bi_iter = ctx->bi_iter;
+    for (shift=0; shift<SEC_PER_SEG; ++shift)
+        ctx->sworndisk->cache->delete(ctx->sworndisk->cache, bio_get_sector(bio) + shift);
+    bio_free_pages(bio);
+    bio_put(bio);
+    kfree(ctx);
+}
+
+void segbuf_flush_bios(struct segment_buffer* buf) {
+    char* data;
+    unsigned long sync_error_bits;
+    struct dm_io_request req;
+    struct dm_io_region region;
+    DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
+
+    data = kmalloc(SEGMENT_BUFFER_SIZE, GFP_KERNEL);
+    if (!data) 
+        return;
+    
+    memcpy(data, this->buffer, SEGMENT_BUFFER_SIZE);
+    
+    req.bi_op = req.bi_op_flags = REQ_OP_WRITE;
+    req.mem.type = DM_IO_KMEM;
+    req.mem.offset = 0;
+    req.mem.ptr.addr = data;
+    req.notify.fn = NULL;
+    req.client = this->io_client;
+
+    region.bdev = sworndisk->data_dev->bdev;
+    region.sector = this->cur_segment * SEC_PER_SEG;
+    region.count = SEC_PER_SEG;
+    
+    dm_io(&req, 1, &region, &sync_error_bits);
+    if (sync_error_bits) 
+        DMERR("segment buffer flush error\n");
+    
+    kfree(data);
+}
+
+// void segbuf_flush_bios(struct segment_buffer* buf) {
+//     size_t nr_segment;
+//     struct page* pages;
+//     struct bio* bio;
+//     struct segbuf_flush_context* ctx;
+//     DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
+
+//     ctx = kmalloc(sizeof(struct segbuf_flush_context), GFP_KERNEL);
+//     if (!ctx)
+//         return;
+
+//     nr_segment = SEGMENT_BUFFER_SIZE / PAGE_SIZE;
+//     bio = bio_alloc(GFP_KERNEL, nr_segment);
+//     if (IS_ERR_OR_NULL(bio))
+//         return;
+
+//     pages = alloc_pages(GFP_KERNEL, get_order(SEGMENT_BUFFER_SIZE));
+//     if (IS_ERR_OR_NULL(pages))
+//         return;
+
+//     memcpy(page_address(pages), this->buffer, SEGMENT_BUFFER_SIZE);
+//     bio_set_sector(bio, this->cur_segment * SEC_PER_SEG);
+
+//     bio->bi_opf |= REQ_OP_WRITE;
+//     bio_set_dev(bio, sworndisk->data_dev->bdev);
+//     bio_fill_pages(bio, pages, nr_segment);
+//     ctx->bi_iter = bio->bi_iter;
+//     ctx->sworndisk = this->sworndisk;
+//     bio->bi_private = ctx;
+//     bio->bi_end_io = segbuf_flush_endio;
+//     submit_bio_wait(bio);
+// }
+
+void segbuf_flush_work(struct work_struct* ws) {
+    struct default_segment_buffer* this;
+
+    this = container_of(ws, struct default_segment_buffer, flush_worker);
+    this->segment_buffer.flush_bios(&this->segment_buffer);
 }
 
 void* segbuf_implementer(struct segment_buffer* buf) {
@@ -124,43 +140,39 @@ void* segbuf_implementer(struct segment_buffer* buf) {
 void segbuf_destroy(struct segment_buffer* buf) {
     DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
 
-    if (this->sa)
-        this->sa->destroy(this->sa);
+    dm_io_client_destroy(this->io_client);
+    kfree(this->buffer);
     kfree(this);
 }
 
-void segbuf_flush_bio_work(struct work_struct* ws) {
-    struct default_segment_buffer* this;
+int segbuf_init(struct default_segment_buffer *buf, struct dm_sworndisk_target* sworndisk) {
+    buf->cur_segment = 0;
+    buf->cur_sector = 0;
+    buf->sworndisk = sworndisk;
 
-    this = container_of(ws, struct default_segment_buffer, flush_bio_work);
-    this->segment_buffer.flush_bios(&this->segment_buffer);
-}
-
-struct segment_buffer* segbuf_init(struct default_segment_buffer *buf,
-  struct dm_dev* data_dev, struct dm_sworndisk_metadata *metadata, size_t nr_segment) {
-    if (IS_ERR_OR_NULL(buf))
-        return NULL;
-
-    bio_list_init(&buf->bios);
-    buf->data_dev = data_dev;
-    buf->mt = hash_memtable_init(kmalloc(sizeof(struct hash_memtable), GFP_KERNEL));
-    if (!buf->mt)
-        return NULL;
-    buf->cipher = aes_gcm_cipher_init(kmalloc(sizeof(struct aes_gcm_cipher), GFP_KERNEL));
-    if (IS_ERR_OR_NULL(buf->cipher))
-        return NULL; 
-    buf->sa = sa_init(kmalloc(sizeof(struct default_segment_allocator), GFP_KERNEL), metadata, nr_segment);
-    if (IS_ERR_OR_NULL(buf->sa))
-        return NULL; 
-    buf->bio_set = bioset_create(BIO_POOL_SIZE, 0, BIOSET_NEED_BVECS);
-    if (IS_ERR_OR_NULL(buf->bio_set))
-        return NULL;
-
-    spin_lock_init(&buf->lock);
-    INIT_WORK(&buf->flush_bio_work, segbuf_flush_bio_work);
+    buf->buffer = kmalloc(SEGMENT_BUFFER_SIZE + SECTOR_SIZE, GFP_KERNEL);
+    if (!buf->buffer)
+        return -ENOMEM;
+    buf->io_client = dm_io_client_create();
+    INIT_WORK(&buf->flush_worker, segbuf_flush_work);
     buf->segment_buffer.push_bio = segbuf_push_bio;
     buf->segment_buffer.flush_bios = segbuf_flush_bios;
     buf->segment_buffer.implementer = segbuf_implementer;
     buf->segment_buffer.destroy = segbuf_destroy;
-    return &buf->segment_buffer;
+
+    return 0;
 };
+
+struct segment_buffer* segbuf_create(struct dm_sworndisk_target* sworndisk) {
+    int r;
+    struct default_segment_buffer* buf;
+
+    buf = kmalloc(sizeof(struct default_segment_allocator), GFP_KERNEL);
+    if (!buf)
+        return NULL;
+    
+    r = segbuf_init(buf, sworndisk);
+    if (r)
+        return NULL;
+    return &buf->segment_buffer;
+}
