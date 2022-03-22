@@ -22,8 +22,11 @@ struct cache_entry* cache_entry_create(uint32_t key, void* data, size_t data_len
 }
 
 void cache_entry_destroy(struct cache_entry* entry) {
-    kfree(entry->data);
-    kfree(entry);
+    if (!IS_ERR_OR_NULL(entry)) {
+        if (!IS_ERR_OR_NULL(entry->data))
+            kfree(entry->data);
+        kfree(entry);
+    }
 }
 
 #define FIFO_CACHE_POLICY_THIS_POINTER_DECLARE struct fifo_cache_policy* this; \
@@ -37,14 +40,14 @@ void __fifo_remove_entry(struct cache_policy* policy, uint32_t key) {
 
     // DMINFO("__fifo_remove_entry: %d", key);
     cache = this->base_cache;
-    node = hashmap_getval(&this->index_table, key);
+    node = radix_tree_lookup(&this->index_table, key);
     if (!node)
         return;
     list_del(node);
     entry = list_entry(node, struct cache_entry, node);
     if (!entry->locked)
         cache->size -= 1;
-    hashmap_delete(&this->index_table, key);
+    radix_tree_delete(&this->index_table, key);
     cache_entry_destroy(entry);
 }
 
@@ -59,6 +62,7 @@ void fifo_remove_entry(struct cache_policy* policy, uint32_t key) {
 }
 
 void fifo_add_entry(struct cache_policy* policy, uint32_t key, struct cache_entry* new_entry) {
+    list_node_t* node;
     struct cache_entry* entry;
     struct generic_cache* cache;
     struct list_head* entry_list;
@@ -76,7 +80,12 @@ void fifo_add_entry(struct cache_policy* policy, uint32_t key, struct cache_entr
         __fifo_remove_entry(policy, entry->key);
     }
     list_add_tail(&new_entry->node, new_entry->locked ? locked_entry_list : entry_list);
-    hashmap_add(&this->index_table, key, &new_entry->node);
+    node = radix_tree_delete(&this->index_table, key);
+    if (!IS_ERR_OR_NULL(node)) {
+        entry = list_entry(node, struct cache_entry, node);
+        cache_entry_destroy(entry);
+    }
+    radix_tree_insert(&this->index_table, key, &new_entry->node);
     if (!new_entry->locked)
         cache->size += 1;
     up_write(&cache->rwsem);
@@ -94,7 +103,7 @@ struct cache_entry* fifo_get_entry(struct cache_policy* policy, uint32_t key) {
     cache = this->base_cache;
     down_read(&cache->rwsem);
     entry_list = &cache->entry_list;
-    node = hashmap_getval(&this->index_table, key);
+    node = radix_tree_lookup(&this->index_table, key);
     if (!node)
         goto exit;
     entry = list_entry(node, struct cache_entry, node);
@@ -114,7 +123,7 @@ void fifo_unlock_entry(struct cache_policy* policy, uint32_t key) {
     cache = this->base_cache;
     down_write(&cache->rwsem);
     entry_list = &cache->entry_list;
-    node = hashmap_getval(&this->index_table, key);
+    node = radix_tree_lookup(&this->index_table, key);
     if (!node)
         goto exit;
     entry = list_entry(node, struct cache_entry, node);
@@ -132,12 +141,14 @@ exit:
 void fifo_destroy(struct cache_policy* policy) {
     FIFO_CACHE_POLICY_THIS_POINTER_DECLARE
 
-    hashmap_destroy(&this->index_table);
+    if (!IS_ERR_OR_NULL(policy)) {
+        kfree(policy);
+    }
 }
 
 void fifo_cache_policy_init(struct fifo_cache_policy* this, struct generic_cache* base_cache) {
     this->base_cache = base_cache;
-    hashmap_init(&this->index_table, get_order(DEFAULT_CACHE_CAPACITY));
+    INIT_RADIX_TREE(&this->index_table, GFP_KERNEL);
 
     this->cache_policy.add_entry = fifo_add_entry;
     this->cache_policy.remove_entry = fifo_remove_entry;

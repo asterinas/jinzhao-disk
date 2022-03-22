@@ -40,7 +40,7 @@ void process_deferred_bios(struct work_struct *ws) {
 	struct bio_list bios;
 	struct bio* bio;
     
-    struct cache_entry *entry;
+    // struct cache_entry *entry;
     struct mt_value* mv;
     struct dm_sworndisk_target *sworndisk;
 
@@ -56,14 +56,13 @@ void process_deferred_bios(struct work_struct *ws) {
             r = sworndisk->memtable->get(sworndisk->memtable, bio_get_sector(bio), &mv);
             if (r)
                 goto bad;
-            entry = sworndisk->cache->get(sworndisk->cache, mv->pba);
-            if (!IS_ERR_OR_NULL(entry)) {
-                bio_set_data(bio, entry->data, bio_get_data_len(bio));
+            bio_set_sector(bio, mv->pba);
+            r = sworndisk->seg_buffer->query_bio(sworndisk->seg_buffer, bio);
+            if (!r) {
                 bio_endio(bio);
                 goto next;
             }
-            bio_set_sector(bio, mv->pba);
-            generic_make_request(bio);
+            submit_bio(bio);
         }
 
         if (bio_op(bio) == REQ_OP_WRITE) {

@@ -19,8 +19,8 @@ struct hashmap_value {
 
 void hashmap_init(struct hashmap* map, uint32_t capacity_bits);
 void hashmap_destroy(struct hashmap* map);
-void hashmap_add(struct hashmap* map, uint32_t key, void* data);
-bool hashmap_delete(struct hashmap* map, uint32_t key);
+void* hashmap_add(struct hashmap* map, uint32_t key, void* data);
+void* hashmap_delete(struct hashmap* map, uint32_t key);
 bool hashmap_exists(struct hashmap* map, uint32_t key);
 void* hashmap_getval(struct hashmap* map, uint32_t key);
 #endif

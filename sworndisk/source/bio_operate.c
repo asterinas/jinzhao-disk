@@ -37,17 +37,6 @@ void page_set_data(struct page* page, char* data, size_t len, size_t offset) {
     kunmap_atomic(kaddr);
 }
 
-int bio_fill_pages(struct bio* bio, struct page* pages, size_t nr_segment) {
-    size_t i;
-
-    i = 0;
-    while (i < nr_segment) {
-        bio_add_page(bio, pages + i, PAGE_SIZE, 0);
-        i += 1;
-    }
-
-    return 0;
-}
 
 char* bio_data_copy(struct bio* bio) {
     size_t len;
@@ -81,10 +70,12 @@ int bio_set_data(struct bio* bio, char* buffer, size_t len) {
 
     offset = 0;
     bio_for_each_segment(bvec, bio, bi_iter) {
+        if (offset + bvec.bv_len > len)
+            return -EAGAIN;
         kaddr = kmap(bvec.bv_page);
         memcpy(kaddr+bvec.bv_offset, buffer+offset, bvec.bv_len);
-        offset += bvec.bv_len;
         kunmap(bvec.bv_page);
+        offset += bvec.bv_len;
     }
 
     return 0;

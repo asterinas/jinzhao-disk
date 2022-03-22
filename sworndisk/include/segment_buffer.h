@@ -15,6 +15,7 @@
 
 struct segment_buffer {
     void (*push_bio)(struct segment_buffer* buf, struct bio* bio);
+    int (*query_bio)(struct segment_buffer* buf, struct bio* bio);
     void (*flush_bios)(struct segment_buffer* buf);
     void (*destroy)(struct segment_buffer* buf);
     void* (*implementer)(struct segment_buffer* buf);
@@ -27,8 +28,6 @@ struct default_segment_buffer {
     char* buffer;
     size_t cur_segment;
     sector_t cur_sector;
-    struct completion comp;
-    struct work_struct flush_worker;
     struct dm_io_client* io_client;
     struct dm_sworndisk_target* sworndisk;
 };

@@ -1,6 +1,7 @@
 #include <linux/hash.h>
 #include <linux/slab.h>
 
+#include "../include/dm_sworndisk.h"
 #include "../include/hashmap.h"
 
 
@@ -19,13 +20,16 @@ void hashmap_destroy(struct hashmap* map) {
     kfree(map->hlists);
 }
 
-void hashmap_add(struct hashmap* map, uint32_t key, void* data) {
+void* hashmap_add(struct hashmap* map, uint32_t key, void* data) {
+    void* old;
     struct hashmap_value* value = (struct hashmap_value*)kmalloc(sizeof(struct hashmap_value), GFP_KERNEL);
 
-    hashmap_delete(map, key);
+    old = hashmap_delete(map, key);
     value->key = key;
     value->data = data;
     hlist_add_head(&value->node, &map->hlists[hash_64_generic(key, map->capacity_bits)]);
+
+    return old;
 }
 
 bool hashmap_exists(struct hashmap* map, uint32_t key) {
@@ -38,17 +42,17 @@ bool hashmap_exists(struct hashmap* map, uint32_t key) {
     return false;
 }
 
-bool hashmap_delete(struct hashmap* map, uint32_t key) {
+void* hashmap_delete(struct hashmap* map, uint32_t key) {
     struct hashmap_value* obj;
 
     hlist_for_each_entry(obj, &map->hlists[hash_64_generic(key, map->capacity_bits)], node) {
         if(obj->key == key) {
             hlist_del_init(&obj->node);
-            return true;
+            return obj->data;
         }
     }
 
-    return false;
+    return NULL;
 }
 
 void* hashmap_getval(struct hashmap* map, uint32_t key) {

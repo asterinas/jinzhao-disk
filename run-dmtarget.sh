@@ -45,8 +45,8 @@ do
 		make CONFIG_SWORNDISK=m CONFIG_DM_PERSISTENT_DATA=m M=drivers/md
 		make modules_install M=drivers/md
 		cd drivers/md
-		dmsetup remove sworndisk_dev_mapper
-		modprobe -r sworndisk dm-persistent-data 
+		# dmsetup remove sworndisk_dev_mapper
+		# modprobe -r sworndisk dm-persistent-data 
 		modprobe dm-persistent-data
 		modprobe sworndisk
 		# insmod persistent-data/dm-persistent-data.ko

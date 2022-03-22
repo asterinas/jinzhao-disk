@@ -31,17 +31,33 @@ struct mt_value* mt_value_create(uint32_t pba, char* key, char* iv, char* mac) {
     return val;
 }
 
+void mt_value_destroy(struct mt_value* mv) {
+    if (!IS_ERR_OR_NULL(mv)) {
+        if (!IS_ERR_OR_NULL(mv->key))
+            kfree(mv->key);
+        if (!IS_ERR_OR_NULL(mv->iv))
+            kfree(mv->iv);
+        if (!IS_ERR_OR_NULL(mv->mac))
+            kfree(mv->mac);
+        kfree(mv);
+    }
+}
+
 // hash memtable definition
 
 #define HASH_MEMTABLE_THIS_POINTER_DECLARE struct hash_memtable* this; \
         this = container_of(mt, struct hash_memtable, memtable);
 
 void hash_memtable_put(struct memtable* mt, uint32_t lba, struct mt_value* val) {
+    void* old;
     HASH_MEMTABLE_THIS_POINTER_DECLARE
 
     down_write(&this->rwsem);
-    hashmap_add(&this->map, lba, val);
+    old = hashmap_add(&this->map, lba, val);
     up_write(&this->rwsem);
+
+    if (!IS_ERR_OR_NULL(old))
+        mt_value_destroy(old);
 }
 
 int hash_memtable_get(struct memtable* mt, uint32_t lba, struct mt_value** p_mv) {
@@ -126,7 +142,7 @@ bool radix_tree_memtable_contains(struct memtable* mt, uint32_t lba) {
 void radix_tree_memtable_destroy(struct memtable* mt) {
     RADIX_TREE_MEMTABLE_THIS_POINTER_DECLARE
 
-    kfree(mt);
+    kfree(this);
 }
 
 struct memtable* radix_tree_memtable_init(struct radix_tree_memtable* this) {

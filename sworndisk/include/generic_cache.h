@@ -48,7 +48,7 @@ struct cache_policy {
 
 struct fifo_cache_policy {
     struct generic_cache* base_cache;
-    struct hashmap index_table;
+    struct radix_tree_root index_table;
     struct cache_policy cache_policy;
 };
 
