@@ -1,11 +1,130 @@
-/*
- * Copyright (C) 2012 Red Hat, Inc.
- *
- * This file is released under the GPL.
- */
-
 #include "../include/metadata.h"
 
+#define SUPERBLOCK_LOCATION 0
+#define SUPERBLOCK_MAGIC 0x22946
+#define SUPERBLOCK_CSUM_XOR 0x3828
+
+struct superblock {
+	// validation 
+	__le32 csum;
+	__le64 magic;
+	
+	// data region
+	__le32 nr_sector; // sector count within a segment
+	__le64 nr_segment; // segment count
+
+	// index region
+	__le32 common_ratio; // common ratio of adjacent disk levels
+	__le64 nr_disk_level; // lsm tree disk level count
+	__le64 max_disk_level_size;
+	__le64 index_region_sectors;
+
+	// journal region
+	__le32 journal_size; // sector aligned
+	__le64 nr_journal;
+	__le64 cur_journal;
+
+	// checkpoint region
+	__le64 svt_sectors;
+	__le64 dst_sectors;
+	__le64 rit_sectors;
+
+	int (*read)(struct superblock* sb);
+	int (*write)(struct superblock* sb);
+	int (*validate)(struct superblock* sb);
+} __packed;
+
+
+sector_t disk_array_entry_sector(struct disk_array* this, size_t index) {
+	return this->start + index * this->entry_size / SECTOR_SIZE;
+}
+
+size_t disk_array_entry_offset(struct disk_array* this, size_t index) {
+	return (index * this->entry_size) % SECTOR_SIZE;
+}
+
+int disk_array_set(struct disk_array* this, size_t index, void* entry) {
+	int r;
+	struct dm_block* block;
+	if (index < 0 || index >= this->nr_entry)
+		return -EINVAL;
+
+	r = dm_bm_write_lock(this->bm, disk_array_entry_sector(this, index), NULL, &block);
+	if (r)
+		return r;
+
+	memcpy(dm_block_data(block) + disk_array_entry_offset(this, index), entry, this->entry_size);
+	
+	dm_bm_unlock(block);
+	return 0;
+}
+
+void* disk_array_get(struct disk_array* this, size_t index) {
+	int r;
+	void* entry;
+	struct dm_block* block;
+
+	entry = kmalloc(this->entry_size, GFP_KERNEL);
+	if (!entry) 
+		return NULL;
+	
+	r = dm_bm_read_lock(this->bm, disk_array_entry_sector(this, index), NULL, &block);
+	if (r)
+		return NULL;
+
+	memcpy(entry, dm_block_data(block) + disk_array_entry_offset(this, index), this->entry_size);
+	dm_bm_unlock(block);
+
+	return entry;
+}
+
+#define SWORNDISK_MAX_CONCURRENT_LOCKS 3
+int disk_array_init(struct disk_array* this, struct block_device* bdev, sector_t start, size_t nr_entry, size_t entry_size) {
+	this->bdev = bdev;
+	this->start = start;
+	this->nr_entry = nr_entry;
+	this->entry_size = entry_size;
+
+	this->bm = dm_block_manager_create(bdev, SECTOR_SIZE, SWORNDISK_MAX_CONCURRENT_LOCKS);
+	if (IS_ERR_OR_NULL(this->bm))
+		return -ENOMEM;
+
+	this->set = disk_array_set;
+	this->get = disk_array_get;
+	
+	return 0;
+}
+
+struct disk_array* disk_array_create(struct block_device* bdev, sector_t start, size_t nr_entry, size_t entry_size) {
+	int r;
+	struct disk_array* this;
+
+	this = kmalloc(sizeof(struct disk_array), GFP_KERNEL);
+	if (!this)
+		return NULL;
+	
+	r = disk_array_init(this, bdev, start, nr_entry, entry_size);
+	if (r)
+		return NULL;
+	
+	return this;
+}
+
+struct checkpoint_region {
+	struct disk_array svt;
+	struct disk_array dst;
+	struct disk_array rit;
+	struct disk_array bitc;
+};
+
+struct metadata {
+	struct block_device* bdev;
+	struct dm_block_manager* bm;
+	struct superblock* superblock;
+};
+
+
+// deprecated, will be removed soon
 #include "../../persistent-data/dm-array.h"
 #include "../../persistent-data/dm-bitset.h"
 #include "../../persistent-data/dm-space-map.h"
@@ -32,7 +151,7 @@
  *  3 for btree insert +
  *  2 for btree lookup used within space map
  */
-#define SWORNDISK_MAX_CONCURRENT_LOCKS 5
+// #define SWORNDISK_MAX_CONCURRENT_LOCKS 5
 #define SPACE_MAP_ROOT_SIZE 128
 
 enum superblock_flag_bits {
@@ -117,7 +236,7 @@ struct dm_sworndisk_metadata {
  * superblock validator
  *-----------------------------------------------------------------*/
 
-#define SUPERBLOCK_CSUM_XOR 9031977
+// #define SUPERBLOCK_CSUM_XOR 9031977
 
 static void sb_prepare_for_write(struct dm_block_validator *v,
 				 struct dm_block *b,

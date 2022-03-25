@@ -1,16 +1,23 @@
-/*
- * Copyright (C) 2012 Red Hat, Inc.
- *
- * This file is released under the GPL.
- */
-
 #ifndef DM_SWORNDISK_METADATA_H
 #define DM_SWORNDISK_METADATA_H
 
+#include "../../persistent-data/dm-block-manager.h"
+
+struct disk_array {
+	sector_t start;
+	size_t nr_entry;
+	size_t entry_size;
+	struct block_device* bdev;
+	struct dm_block_manager* bm;
+
+	int (*set)(struct disk_array* this, size_t index, void* entry);
+	void* (*get)(struct disk_array* this, size_t index);
+};
+
+struct disk_array* disk_array_create(struct block_device* bdev, sector_t start, size_t nr_entry, size_t entry_size);
+
+// deprecated, will be removed soon
 #include "../../persistent-data/dm-space-map-metadata.h"
-
-/*----------------------------------------------------------------*/
-
 #define DM_SWORNDISK_METADATA_BLOCK_SIZE DM_SM_METADATA_BLOCK_SIZE
 
 /* FIXME: remove this restriction */
@@ -117,4 +124,10 @@ int dm_sworndisk_rit_insert(struct dm_sworndisk_metadata *cmd, sector_t pba, sec
 int dm_sworndisk_rit_get(struct dm_sworndisk_metadata *cmd, sector_t pba, sector_t *lba);
 int dm_sworndisk_reset_svt(struct dm_sworndisk_metadata *cmd);
 
-#endif /* DM_CACHE_METADATA_H */
+#endif
+
+
+
+
+
+
