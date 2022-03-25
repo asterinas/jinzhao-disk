@@ -38,6 +38,7 @@ struct aead_cipher {
 	 *  | (authenticated) | (auth+encryption) |              |
 	 *  | sector_LE |  IV |  sector in/out    |  tag in/out  |
 	 */
+     
 #define AEAD_MSG_NR_PART 4
 struct aes_gcm_cipher {
     struct aead_cipher interface;

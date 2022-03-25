@@ -12,7 +12,7 @@
 
 // assume bio has only one segment
 void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
-    struct mt_value* mv;
+    struct record* record;
     sector_t lba, pba;
     DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
 
@@ -25,10 +25,10 @@ void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
     lba = bio_get_sector(bio);
     pba = this->cur_segment * SEC_PER_SEG + this->cur_sector;
 
-    mv = mt_value_create(pba, NULL, NULL, NULL);
-    if (IS_ERR_OR_NULL(mv))
+    record = record_create(pba, NULL, NULL, NULL);
+    if (IS_ERR_OR_NULL(record))
         return;
-    sworndisk->memtable->put(sworndisk->memtable, lba, mv); 
+    sworndisk->memtable->put(sworndisk->memtable, lba, record); 
 
     bio_get_data(bio, this->buffer + this->cur_sector * SECTOR_SIZE);
     this->cur_sector += 1;

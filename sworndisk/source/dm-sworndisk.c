@@ -40,8 +40,7 @@ void process_deferred_bios(struct work_struct *ws) {
 	struct bio_list bios;
 	struct bio* bio;
     
-    // struct cache_entry *entry;
-    struct mt_value* mv;
+    struct record* record;
     struct dm_sworndisk_target *sworndisk;
 
     sworndisk = container_of(ws, struct dm_sworndisk_target, deferred_bio_worker);
@@ -53,10 +52,10 @@ void process_deferred_bios(struct work_struct *ws) {
 
 	while ((bio = bio_list_pop(&bios))) {
         if (bio_op(bio) == REQ_OP_READ) {
-            r = sworndisk->memtable->get(sworndisk->memtable, bio_get_sector(bio), &mv);
+            r = sworndisk->memtable->get(sworndisk->memtable, bio_get_sector(bio), (void**)&record);
             if (r)
                 goto bad;
-            bio_set_sector(bio, mv->pba);
+            bio_set_sector(bio, record->pba);
             r = sworndisk->seg_buffer->query_bio(sworndisk->seg_buffer, bio);
             if (!r) {
                 bio_endio(bio);
@@ -160,7 +159,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 		goto bad;
 	}
 
-    sworndisk->memtable = hash_memtable_init(kmalloc(sizeof(struct hash_memtable), GFP_KERNEL));
+    sworndisk->memtable = rbtree_memtable_init(kmalloc(sizeof(struct rbtree_memtable), GFP_KERNEL));
     if (!sworndisk->memtable) {
         target->error = "could not create sworndisk memtable";
         ret = -EAGAIN;
