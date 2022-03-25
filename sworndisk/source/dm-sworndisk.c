@@ -159,7 +159,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 		goto bad;
 	}
 
-    sworndisk->memtable = rbtree_memtable_init(kmalloc(sizeof(struct rbtree_memtable), GFP_KERNEL));
+    sworndisk->memtable = rbtree_memtable_create();
     if (!sworndisk->memtable) {
         target->error = "could not create sworndisk memtable";
         ret = -EAGAIN;

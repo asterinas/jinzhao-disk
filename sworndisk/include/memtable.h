@@ -54,6 +54,6 @@ struct rbtree_memtable {
     struct memtable memtable;
 };
 
-struct memtable* rbtree_memtable_init(struct rbtree_memtable* this);
+struct memtable* rbtree_memtable_create(void);
 
 #endif

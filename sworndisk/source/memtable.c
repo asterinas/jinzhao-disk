@@ -265,12 +265,22 @@ void rbtree_memtable_destroy(struct memtable* mt) {
         kfree(this);
 }
 
-struct memtable* rbtree_memtable_init(struct rbtree_memtable* this) {
+void rbtree_memtable_init(struct rbtree_memtable* this) {
     this->root = RB_ROOT;
     this->memtable.put = rbtree_memtable_put;
     this->memtable.get = rbtree_memtable_get;
     this->memtable.contains = rbtree_memtable_contains;
     this->memtable.destroy = rbtree_memtable_destroy;
+}
+
+struct memtable* rbtree_memtable_create(void) {
+    struct rbtree_memtable* this;
+
+    this = kmalloc(sizeof(struct rbtree_memtable), GFP_KERNEL);
+    if (!this)
+        return NULL;
+    
+    rbtree_memtable_init(this);
 
     return &this->memtable;
 }
