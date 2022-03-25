@@ -29,11 +29,12 @@ do
 		losetup /dev/loop1 disk1 
 		;;
 	w)
-		# dd if=/dev/urandom of=/dev/mapper/sworndisk_dev_mapper  bs=512 count=1
-		dd if=/dev/urandom of=/dev/mapper/sworndisk_dev_mapper  bs=64K count=1280
+		# dd if=/dev/urandom of=/dev/mapper/sworndisk_dev_mapper  bs=512 count=100
+		dd if=/home/lnhoo/kfpd.qlv of=/dev/mapper/sworndisk_dev_mapper bs=9833460 count=1
+		# dd if=/dev/urandom of=/dev/mapper/sworndisk_dev_mapper  bs=64K count=1280
 		;;
 	r)
-		dd if=/dev/mapper/sworndisk_dev_mapper of=out bs=4096 count=1280
+		dd if=/dev/mapper/sworndisk_dev_mapper of=out bs=9833460 count=1
 		;;
 	h)
 		;;
@@ -44,8 +45,8 @@ do
 		make CONFIG_SWORNDISK=m CONFIG_DM_PERSISTENT_DATA=m M=drivers/md
 		make modules_install M=drivers/md
 		cd drivers/md
-		dmsetup remove sworndisk_dev_mapper
-		modprobe -r sworndisk dm-persistent-data 
+		# dmsetup remove sworndisk_dev_mapper
+		# modprobe -r sworndisk dm-persistent-data 
 		modprobe dm-persistent-data
 		modprobe sworndisk
 		# insmod persistent-data/dm-persistent-data.ko
