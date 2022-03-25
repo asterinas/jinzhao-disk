@@ -19,7 +19,6 @@ struct dm_sworndisk_target {
     struct segment_allocator* seg_allocator;
     struct memtable* memtable;
     struct aead_cipher *cipher;
-    struct generic_cache* cache;
 };
 
 #endif

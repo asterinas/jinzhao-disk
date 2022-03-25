@@ -34,7 +34,7 @@ struct superblock {
 	int (*validate)(struct superblock* sb);
 } __packed;
 
-
+// disk array implememtation
 sector_t disk_array_entry_sector(struct disk_array* this, size_t index) {
 	return this->start + index * this->entry_size / SECTOR_SIZE;
 }
@@ -78,6 +78,30 @@ void* disk_array_get(struct disk_array* this, size_t index) {
 	return entry;
 }
 
+int disk_array_format(struct disk_array* this, bool value) {
+	int r;
+	size_t shift, total, cycle;
+	struct dm_block* block;
+
+	shift = 0;
+	total = this->nr_entry * this->entry_size;
+	while (total > 0) {
+		r = dm_bm_write_lock(this->bm, this->start + shift, NULL, &block);
+		if (r)
+			return r;
+		cycle = SECTOR_SIZE;
+		if (total < cycle)
+			cycle = total;
+		memset(dm_block_data(block), value ? -1 : 0, cycle);
+		dm_bm_unlock(block);
+
+		total -= cycle;
+		shift += 1;
+	}
+
+	return 0;
+}
+
 #define SWORNDISK_MAX_CONCURRENT_LOCKS 3
 int disk_array_init(struct disk_array* this, struct block_device* bdev, sector_t start, size_t nr_entry, size_t entry_size) {
 	this->bdev = bdev;
@@ -91,6 +115,7 @@ int disk_array_init(struct disk_array* this, struct block_device* bdev, sector_t
 
 	this->set = disk_array_set;
 	this->get = disk_array_get;
+	this->format = disk_array_format;
 	
 	return 0;
 }
@@ -108,6 +133,102 @@ struct disk_array* disk_array_create(struct block_device* bdev, sector_t start, 
 		return NULL;
 	
 	return this;
+}
+
+void disk_array_destroy(struct disk_array* this) {
+	if (!IS_ERR_OR_NULL(this)) {
+		if (!IS_ERR_OR_NULL(this->bm))
+			dm_block_manager_destroy(this->bm);
+		kfree(this);
+	}
+}
+
+// disk bitset implementation
+size_t __disk_bitset_group(size_t index) {
+	return index / BITS_PER_LONG;
+}
+
+size_t __disk_bitset_offset(size_t index) {
+	return index % BITS_PER_LONG;
+}
+
+size_t __disk_bitset_nr_group(size_t nr_bit) {
+	return nr_bit ? (nr_bit - 1) / BITS_PER_LONG + 1 : 0;
+}
+
+int __disk_bitset_operate(struct disk_bitset* this, size_t index, bool set) {
+	int r;
+	unsigned long* group;
+
+	if (index < 0 || index >= this->nr_bit)
+		return -EINVAL;
+	
+	r = 0;
+	group = this->array->get(this->array, __disk_bitset_group(index));
+	if (IS_ERR_OR_NULL(group))
+		return -ENODATA;
+	
+	(set ? set_bit : clear_bit)(__disk_bitset_offset(index), group);
+	r = this->array->set(this->array, __disk_bitset_group(index), group);
+	kfree(group);
+	return r;
+}
+
+int disk_bitset_set(struct disk_bitset* this, size_t index) {
+	return __disk_bitset_operate(this, index, true);
+}
+
+int disk_bitset_clear(struct disk_bitset* this, size_t index) {
+	return __disk_bitset_operate(this, index, false);
+}
+
+int disk_bitset_get(struct disk_bitset* this, size_t index, bool* result) {
+	unsigned long* group;
+
+	group = this->array->get(this->array, __disk_bitset_group(index));
+	if (IS_ERR_OR_NULL(group))
+		return -EINVAL;
+	
+	*result = test_bit(__disk_bitset_offset(index), group);
+	return 0;
+}
+
+int disk_bitset_format(struct disk_bitset* this, bool value) {
+	return this->array->format(this->array, value);
+}
+
+int disk_bitset_init(struct disk_bitset* this, struct block_device* bdev, sector_t start, size_t nr_bit) {
+	this->nr_bit = nr_bit;
+	this->array = disk_array_create(bdev, start, __disk_bitset_nr_group(nr_bit), sizeof(unsigned long));
+	if (IS_ERR_OR_NULL(this->array))
+		return -ENOMEM;
+
+	this->set = disk_bitset_set;
+	this->clear = disk_bitset_clear;
+	this->get = disk_bitset_get;
+	this->format = disk_bitset_format;
+
+	return 0;
+}
+
+struct disk_bitset* disk_bitset_create(struct block_device* bdev, sector_t start, size_t nr_bit) {
+	struct disk_bitset* this;
+
+	this = kmalloc(sizeof(struct disk_bitset), GFP_KERNEL);
+	if (!this)
+		return NULL;
+	
+	disk_bitset_init(this, bdev, start, nr_bit);
+
+	return this;
+}
+
+void disk_bitset_destroy(struct disk_bitset* this) {
+	if (!IS_ERR_OR_NULL(this)) {
+		if (!IS_ERR_OR_NULL(this->array))
+			disk_array_destroy(this->array);
+		kfree(this);
+	}
 }
 
 struct checkpoint_region {

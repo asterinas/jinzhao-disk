@@ -22,7 +22,6 @@
 #include "../include/memtable.h"
 #include "../include/bio_operate.h"
 #include "../include/segment_buffer.h"
-#include "../include/generic_cache.h"
 
 void defer_bio(struct dm_sworndisk_target *sworndisk, struct bio *bio) {
 	unsigned long flags;
@@ -186,13 +185,6 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
         goto bad;
     } 
 
-    sworndisk->cache = generic_cache_create(DEFAULT_CACHE_CAPACITY, DEFAULT_MAX_LOCKED_ENTRY);
-    if (IS_ERR_OR_NULL(sworndisk->cache)) {
-        target->error = "could not create sworndisk generic cache";
-        ret = -EAGAIN;
-        goto bad;
-    }
-
     INIT_WORK(&sworndisk->deferred_bio_worker, process_deferred_bios);
     target->private = sworndisk;
     return 0;
@@ -200,8 +192,6 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 bad:
     if (sworndisk->metadata)
         dm_sworndisk_metadata_close(sworndisk->metadata);
-    if (sworndisk->cache)
-        generic_cache_destroy(sworndisk->cache);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
     if (sworndisk->wq) 
@@ -227,8 +217,6 @@ static void dm_sworndisk_target_dtr(struct dm_target *ti)
         dm_sworndisk_metadata_close(sworndisk->metadata);
     dm_put_device(ti, sworndisk->data_dev);
     dm_put_device(ti, sworndisk->metadata_dev);
-    if (sworndisk->cache)
-        generic_cache_destroy(sworndisk->cache);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
     if (sworndisk->wq) 
