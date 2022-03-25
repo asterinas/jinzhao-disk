@@ -30,11 +30,6 @@ struct hash_memtable {
     struct memtable memtable;
 };
 
-
-void hash_memtable_put(struct memtable* mt, uint32_t key, void* val);
-int hash_memtable_get(struct memtable* mt, uint32_t key, void** p_val);
-bool hash_memtable_contains(struct memtable* mt, uint32_t key);
-void hash_memtable_destroy(struct memtable* mt);
 struct memtable* hash_memtable_init(struct hash_memtable* this);
 
 // radix tree memtable definition
@@ -44,16 +39,13 @@ struct radix_tree_memtable {
     struct memtable memtable; 
 };
 
-void radix_tree_memtable_put(struct memtable* mt, uint32_t key, void* val);
-int radix_tree_memtable_get(struct memtable* mt, uint32_t key, void** p_val);
-bool radix_tree_memtable_contains(struct memtable* mt, uint32_t key);
-void radix_tree_memtable_destroy(struct memtable* mt);
 struct memtable* radix_tree_memtable_init(struct radix_tree_memtable* this);
 
 // rbtree memtable definition
 struct memtable_rbnode {
     uint32_t key;
     void* val;
+    void (*dtr_fn)(void*);
     struct rb_node node;
 };
 

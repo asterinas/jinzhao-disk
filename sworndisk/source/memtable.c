@@ -31,7 +31,9 @@ struct record* record_create(uint32_t pba, char* key, char* iv, char* mac) {
     return val;
 }
 
-void record_destroy(struct record* record) {
+void record_destroy(void* val) {
+    struct record* record = val;
+
     if (!IS_ERR_OR_NULL(record)) {
         if (!IS_ERR_OR_NULL(record->key))
             kfree(record->key);
@@ -157,6 +159,28 @@ struct memtable* radix_tree_memtable_init(struct radix_tree_memtable* this) {
 }
 
 // rbtree memtable implementation
+struct memtable_rbnode* memtable_rbnode_create(uint32_t key, void* val, void (*dtr_fn)(void*)) {
+    struct memtable_rbnode* entry;
+
+    entry = kmalloc(sizeof(struct memtable_rbnode), GFP_KERNEL);
+    if (!entry)
+        return NULL;
+    
+    entry->key = key;
+    entry->val = val;
+    entry->dtr_fn = dtr_fn;
+    
+    return entry;
+}
+
+void memtable_rbnode_destroy(struct memtable_rbnode* entry) {
+    if (!IS_ERR_OR_NULL(entry)) {
+        if (!IS_ERR_OR_NULL(entry->val) && !IS_ERR_OR_NULL(entry->dtr_fn)) 
+            entry->dtr_fn(entry->val);
+        kfree(entry);
+    }
+}
+
 void* rbtree_memtable_search(struct rb_root* root, uint32_t key) {
     struct memtable_rbnode* cur;
     struct rb_node *node = root->rb_node;  /* top of the tree */
@@ -194,6 +218,7 @@ next:
 		    link = &(*link)->rb_right;
         else {
             rb_erase(*link, root);
+            memtable_rbnode_destroy(entry);
             goto next;
         }
 	}
@@ -206,24 +231,11 @@ next:
 #define RBTREE_MEMTABLE_THIS_POINTER_DECLARE struct rbtree_memtable* this; \
         this = container_of(mt, struct rbtree_memtable, memtable);
 
-struct memtable_rbnode* memtable_rbnode_create(uint32_t key, void* val) {
-    struct memtable_rbnode* entry;
-
-    entry = kmalloc(sizeof(struct memtable_rbnode), GFP_KERNEL);
-    if (!entry)
-        return NULL;
-    
-    entry->key = key;
-    entry->val = val;
-    
-    return entry;
-}
-
 void rbtree_memtable_put(struct memtable* mt, uint32_t key, void* val) {
     struct memtable_rbnode* entry;
     RBTREE_MEMTABLE_THIS_POINTER_DECLARE
 
-    entry = memtable_rbnode_create(key, val);
+    entry = memtable_rbnode_create(key, val, record_destroy);
     if (!entry)
         return;
 
