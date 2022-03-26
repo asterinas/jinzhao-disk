@@ -4,7 +4,7 @@
 #include "../include/metadata.h"
 
 #define NR_SEGMENT 4096
-#define SEC_PER_SEG 2048
+#define SECTOES_PER_SEG 2048
 
 struct segment_allocator {
     int (*get_next_free_segment)(struct segment_allocator* al, size_t *seg, size_t next_seg);

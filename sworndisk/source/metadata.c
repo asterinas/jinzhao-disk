@@ -4,35 +4,152 @@
 #define SUPERBLOCK_MAGIC 0x22946
 #define SUPERBLOCK_CSUM_XOR 0x3828
 
-struct superblock {
-	// validation 
-	__le32 csum;
-	__le64 magic;
+// superblock implementation
+int superblock_read(struct superblock* this) {
+	int r;
+	struct superblock* disk_super;
+	struct dm_block* block;
+
+	r = dm_bm_read_lock(this->bm, SUPERBLOCK_LOCATION, NULL, &block);
+	if (r)
+		return -ENODATA;
 	
-	// data region
-	__le32 nr_sector; // sector count within a segment
-	__le64 nr_segment; // segment count
+	disk_super = dm_block_data(block);
+	
+	this->magic = le64_to_cpu(disk_super->magic);
+	this->sectors_per_seg = le32_to_cpu(disk_super->sectors_per_seg);
+	this->nr_segment = le64_to_cpu(disk_super->nr_segment);
+	this->common_ratio = le32_to_cpu(disk_super->common_ratio);
+	this->nr_disk_level = le32_to_cpu(disk_super->nr_disk_level);
+	this->max_disk_level_size = le64_to_cpu(disk_super->max_disk_level_size);
+	this->index_region_start = le64_to_cpu(disk_super->index_region_start);
+	this->journal_size = le32_to_cpu(disk_super->journal_size);
+	this->nr_journal = le64_to_cpu(disk_super->nr_journal);
+	this->cur_journal = le64_to_cpu(disk_super->cur_journal);
+	this->journal_region_start = le64_to_cpu(disk_super->journal_region_start);
+	this->seg_validity_table_start = le64_to_cpu(disk_super->seg_validity_table_start);
+	this->data_seg_table_start = le64_to_cpu(disk_super->data_seg_table_start);
+	this->reverse_index_table_start = le64_to_cpu(disk_super->reverse_index_table_start);
 
-	// index region
-	__le32 common_ratio; // common ratio of adjacent disk levels
-	__le64 nr_disk_level; // lsm tree disk level count
-	__le64 max_disk_level_size;
-	__le64 index_region_sectors;
+	dm_bm_unlock(block);
+	return 0;
+}
 
-	// journal region
-	__le32 journal_size; // sector aligned
-	__le64 nr_journal;
-	__le64 cur_journal;
+int superblock_write(struct superblock* this) {
+	int r;
+	struct superblock* disk_super;
+	struct dm_block* block;
 
-	// checkpoint region
-	__le64 svt_sectors;
-	__le64 dst_sectors;
-	__le64 rit_sectors;
+	r = dm_bm_write_lock(this->bm, SUPERBLOCK_LOCATION, NULL, &block);
+	if (r)
+		return -EAGAIN;
 
-	int (*read)(struct superblock* sb);
-	int (*write)(struct superblock* sb);
-	int (*validate)(struct superblock* sb);
-} __packed;
+	disk_super = dm_block_data(block);
+
+	disk_super->magic = cpu_to_le64(this->magic);
+	disk_super->sectors_per_seg = cpu_to_le32(this->sectors_per_seg);
+	disk_super->nr_segment = cpu_to_le64(this->nr_segment);
+	disk_super->common_ratio = cpu_to_le32(this->common_ratio);
+	disk_super->nr_disk_level = cpu_to_le32(this->nr_disk_level);
+	disk_super->max_disk_level_size = cpu_to_le64(this->max_disk_level_size);
+	disk_super->index_region_start = cpu_to_le64(this->index_region_start);
+	disk_super->journal_size = cpu_to_le32(this->journal_size);
+	disk_super->nr_journal = cpu_to_le64(this->nr_journal);
+	disk_super->cur_journal = cpu_to_le64(this->cur_journal);
+	disk_super->journal_region_start = cpu_to_le64(this->journal_region_start);
+	disk_super->seg_validity_table_start = cpu_to_le64(this->seg_validity_table_start);
+	disk_super->data_seg_table_start = cpu_to_le64(this->data_seg_table_start);
+	disk_super->reverse_index_table_start = cpu_to_le64(this->reverse_index_table_start);
+	
+	dm_bm_unlock(block);
+	return 0;
+}
+
+#include "../include/segment_allocator.h"
+#define LSM_TREE_DISK_LEVEL_COMMON_RATIO 8
+
+size_t __index_region_sectors(size_t nr_disk_level, size_t common_ratio, size_t max_disk_level_size) {
+	size_t i, sectors, cur_size;
+
+	cur_size = max_disk_level_size;
+	for (i = 0; i < nr_disk_level; ++i) {
+		sectors += cur_size;
+		cur_size /= common_ratio;
+	}
+
+	return sectors;
+}
+
+size_t __journal_region_sectors(size_t nr_journal, size_t journal_size) {
+	size_t bytes;
+
+	bytes = nr_journal * journal_size;
+	if (!bytes)
+		return 0;
+	
+	return (bytes - 1) / SECTOR_SIZE + 1;
+}
+
+size_t __seg_validity_table_sectors(size_t nr_segment) {
+	if (!nr_segment)
+		return 0;
+	return (((nr_segment - 1) / BITS_PER_LONG + 1) * sizeof(unsigned long) - 1) / SECTOR_SIZE + 1;
+}
+
+size_t __data_seg_table_sectors(size_t nr_segment, size_t sectors_per_seg) {
+	return 0;
+}
+
+int superblock_init(struct superblock* this, struct block_device* bdev) {
+	this->bm = dm_block_manager_create(bdev, SECTOR_SIZE, SWORNDISK_MAX_CONCURRENT_LOCKS);
+	if (IS_ERR_OR_NULL(this->bm))
+		return -ENOMEM;
+
+	this->magic = SUPERBLOCK_MAGIC;
+	this->sectors_per_seg = SECTOES_PER_SEG;
+	this->nr_segment = NR_SEGMENT;
+	this->common_ratio = LSM_TREE_DISK_LEVEL_COMMON_RATIO;
+	this->nr_disk_level = 0;
+	this->max_disk_level_size = 0;
+	this->index_region_start = SUPERBLOCK_LOCATION + sizeof(struct superblock) / SECTOR_SIZE + 1;
+	this->journal_size = 0;
+	this->nr_journal = 0;
+	this->cur_journal = 0;
+	this->journal_region_start = this->index_region_start + __index_region_sectors(
+	  this->nr_disk_level, this->common_ratio, this->max_disk_level_size);
+	this->seg_validity_table_start = this->journal_region_start + __journal_region_sectors(this->nr_journal, this->journal_size);
+	this->data_seg_table_start = this->seg_validity_table_start + __seg_validity_table_sectors(this->nr_segment);
+	this->reverse_index_table_start = this->data_seg_table_start + __data_seg_table_sectors(this->nr_segment, this->sectors_per_seg);
+
+	this->read = superblock_read;
+	this->write = superblock_write;
+	this->validate = NULL;
+
+	return 0;
+}
+
+struct superblock* superblock_create(struct block_device* bdev) {
+	int r;
+	struct superblock* this;
+
+	this = kmalloc(sizeof(struct superblock), GFP_KERNEL);
+	if (!this)
+		return NULL;
+	
+	r = superblock_init(this, bdev);
+	if (r)
+		return NULL;
+	
+	return this;
+}
+
+void superblock_destroy(struct superblock* this) {
+	if (!IS_ERR_OR_NULL(this)) {
+		if (!IS_ERR_OR_NULL(this->bm))
+			dm_block_manager_destroy(this->bm);
+		kfree(this);
+	}
+}
 
 // disk array implememtation
 sector_t disk_array_entry_sector(struct disk_array* this, size_t index) {
@@ -102,7 +219,6 @@ int disk_array_format(struct disk_array* this, bool value) {
 	return 0;
 }
 
-#define SWORNDISK_MAX_CONCURRENT_LOCKS 3
 int disk_array_init(struct disk_array* this, struct block_device* bdev, sector_t start, size_t nr_entry, size_t entry_size) {
 	this->bdev = bdev;
 	this->start = start;
@@ -241,7 +357,7 @@ struct checkpoint_region {
 struct metadata {
 	struct block_device* bdev;
 	struct dm_block_manager* bm;
-	struct superblock* superblock;
+	struct superblock sb;
 };
 
 

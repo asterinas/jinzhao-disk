@@ -146,7 +146,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
     }
 
     may_format = false;
-    metadata = dm_sworndisk_metadata_open(sworndisk->metadata_dev->bdev, DM_SWORNDISK_METADATA_BLOCK_SIZE, may_format, 1, NR_SEGMENT, SEC_PER_SEG);
+    metadata = dm_sworndisk_metadata_open(sworndisk->metadata_dev->bdev, DM_SWORNDISK_METADATA_BLOCK_SIZE, may_format, 1, NR_SEGMENT, SECTOES_PER_SEG);
     if (IS_ERR_OR_NULL(metadata)) {
         target->error = "open metadata device error";
         goto bad;

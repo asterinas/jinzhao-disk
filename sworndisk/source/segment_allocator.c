@@ -35,7 +35,7 @@ int sa_alloc_sectors(struct segment_allocator* al, struct bio* bio, sector_t *pb
 
     next_seg = this->cur_segment + 1;
     nr_sector = bio_sectors(bio);
-    if (this->cur_sector + nr_sector >= SEC_PER_SEG) {
+    if (this->cur_sector + nr_sector >= SECTOES_PER_SEG) {
 try:
         r = al->get_next_free_segment(al, &seg, next_seg);
         if (r) {
@@ -50,7 +50,7 @@ try:
         this->cur_sector = 0;
     }
 
-    *pba = this->cur_segment*SEC_PER_SEG + this->cur_sector;
+    *pba = this->cur_segment*SECTOES_PER_SEG + this->cur_sector;
     this->cur_sector += nr_sector;
     return 0;
 }

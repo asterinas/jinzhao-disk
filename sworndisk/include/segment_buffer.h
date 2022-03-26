@@ -10,7 +10,7 @@
 #include "memtable.h"
 #include "crypto.h"
 
-#define SEGMENT_BUFFER_SIZE (SEC_PER_SEG * SECTOR_SIZE)
+#define SEGMENT_BUFFER_SIZE (SECTOES_PER_SEG * SECTOR_SIZE)
 
 
 struct segment_buffer {

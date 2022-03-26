@@ -3,6 +3,9 @@
 
 #include "../../persistent-data/dm-block-manager.h"
 
+#define SWORNDISK_MAX_CONCURRENT_LOCKS 3
+
+// disk array definition
 struct disk_array {
 	sector_t start;
 	size_t nr_entry;
@@ -18,6 +21,7 @@ struct disk_array {
 struct disk_array* disk_array_create(struct block_device* bdev, sector_t start, size_t nr_entry, size_t entry_size);
 void disk_array_destroy(struct disk_array* this);
 
+// disk bitset definition
 struct disk_bitset {
 	size_t nr_bit;
 	struct disk_array* array;
@@ -30,6 +34,44 @@ struct disk_bitset {
 
 struct disk_bitset* disk_bitset_create(struct block_device* bdev, sector_t start, size_t nr_bit);
 void disk_bitset_destroy(struct disk_bitset* this);
+
+// superblock definition
+struct superblock {
+	// validation 
+	uint32_t csum;
+	uint64_t magic;
+	
+	// data region
+	uint32_t sectors_per_seg; // sector count within a segment
+	uint64_t nr_segment; // segment count
+
+	// index region
+	uint32_t common_ratio; // common ratio of adjacent disk levels
+	uint32_t nr_disk_level; // lsm tree disk level count
+	uint64_t max_disk_level_size; // sector unit
+	uint64_t index_region_start;
+
+	// journal region
+	uint32_t journal_size; // sector aligned
+	uint64_t nr_journal;
+	uint64_t cur_journal;
+	uint64_t journal_region_start;
+
+	// checkpoint region
+	uint64_t seg_validity_table_start;
+	uint64_t data_seg_table_start;
+	uint64_t reverse_index_table_start;
+
+	// persistent client
+	struct dm_block_manager* bm;
+
+	int (*read)(struct superblock* this);
+	int (*write)(struct superblock* this);
+	int (*validate)(struct superblock* this);
+} __packed;
+
+struct superblock* superblock_create(struct block_device* bdev);
+void superblock_destroy(struct superblock* this);
 
 // deprecated, will be removed soon
 #include "../../persistent-data/dm-space-map-metadata.h"
