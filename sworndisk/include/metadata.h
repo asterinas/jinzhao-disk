@@ -73,6 +73,19 @@ struct superblock {
 struct superblock* superblock_create(struct block_device* bdev);
 void superblock_destroy(struct superblock* this);
 
+// segment validator definition
+struct seg_validator {
+	size_t nr_segment;
+	size_t cur_segment;
+	struct disk_bitset* seg_validity_table;
+
+	int (*take)(struct seg_validator* this, size_t seg);
+	int (*next)(struct seg_validator* this, size_t* next_seg);
+};
+
+struct seg_validator* seg_validator_create(struct block_device* bdev, sector_t start, size_t nr_segment);
+void seg_validator_destroy(struct seg_validator* this);
+
 // deprecated, will be removed soon
 #include "../../persistent-data/dm-space-map-metadata.h"
 #define DM_SWORNDISK_METADATA_BLOCK_SIZE DM_SM_METADATA_BLOCK_SIZE

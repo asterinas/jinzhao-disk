@@ -347,17 +347,82 @@ void disk_bitset_destroy(struct disk_bitset* this) {
 	}
 }
 
-struct checkpoint_region {
-	struct disk_array svt;
-	struct disk_array dst;
-	struct disk_array rit;
-	struct disk_array bitc;
-};
+
+int seg_validator_take(struct seg_validator* this, size_t seg) {
+	int r;
+
+	r = this->seg_validity_table->set(this->seg_validity_table, seg);
+	if (r)
+		return r;
+	
+	this->cur_segment += 1;
+	return 0;
+}
+
+int seg_validator_next(struct seg_validator* this, size_t* next_seg) {
+	int r;
+	bool valid;
+
+	while(this->cur_segment < this->nr_segment) {
+		r = this->seg_validity_table->get(this->seg_validity_table, this->cur_segment, &valid);
+		if (!r && !valid) {
+			*next_seg = this->cur_segment;
+			return 0;
+		}
+		this->cur_segment += 1;
+	}
+
+	return -ENODATA;
+}
+
+int seg_validator_init(struct seg_validator* this, struct block_device* bdev, sector_t start, size_t nr_segment) {
+	int r;
+
+	this->nr_segment = nr_segment;
+	this->cur_segment = 0;
+	this->seg_validity_table = disk_bitset_create(bdev, start, nr_segment);
+	if (IS_ERR_OR_NULL(this->seg_validity_table))
+		return -ENOMEM;
+
+	r = this->seg_validity_table->format(this->seg_validity_table, false);
+	if (r)
+		return r;
+
+	this->take = seg_validator_take;
+	this->next = seg_validator_next;
+
+	return 0;
+} 
+
+struct seg_validator* seg_validator_create(struct block_device* bdev, sector_t start, size_t nr_segment) {
+	int r;
+	struct seg_validator* this;
+
+	this = kmalloc(sizeof(struct seg_validator), GFP_KERNEL);
+	if (!this)
+		return NULL;
+	
+	r = seg_validator_init(this, bdev, start, nr_segment);
+	if (r)
+		return NULL;
+
+	return this;
+}
+
+void seg_validator_destroy(struct seg_validator* this) {
+	if (!IS_ERR_OR_NULL(this)) {
+		if (!IS_ERR_OR_NULL(this->seg_validity_table)) 
+			disk_bitset_destroy(this->seg_validity_table);
+		kfree(this);
+	}
+}
 
 struct metadata {
 	struct block_device* bdev;
-	struct dm_block_manager* bm;
+	// superblock
 	struct superblock sb;
+	// checkpoint region
+
 };
 
 
