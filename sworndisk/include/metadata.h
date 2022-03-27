@@ -11,6 +11,7 @@ struct disk_array {
 	sector_t start;
 	size_t nr_entry;
 	size_t entry_size;
+	size_t entries_per_sector;
 	struct block_device* bdev;
 	struct dm_block_manager* bm;
 
@@ -90,6 +91,21 @@ struct seg_validator {
 struct seg_validator* seg_validator_create(struct block_device* bdev, sector_t start, size_t nr_segment);
 void seg_validator_destroy(struct seg_validator* this);
 
+// reverse index table definition
+struct reverse_index_entry {
+	bool valid: 1;
+	sector_t lba;
+} __packed;
+
+struct reverse_index_table {
+	size_t nr_block;
+	struct disk_array* array;
+
+	int (*format)(struct reverse_index_table* this);
+	int (*set)(struct reverse_index_table* this, sector_t pba, sector_t lba);
+	int (*get)(struct reverse_index_table* this, sector_t pba, sector_t *lba);
+};
+
 // metadata definition
 struct metadata {
 	struct block_device* bdev;
@@ -97,6 +113,7 @@ struct metadata {
 	struct superblock* superblock;
 	// checkpoint region
 	struct seg_validator* seg_validator;
+	struct reverse_index_table* reverse_index_table;
 };
 
 struct metadata* metadata_create(struct block_device* bdev);
