@@ -12,13 +12,16 @@
 
 // assume bio has only one segment
 void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
+    int r;
     struct record* record;
     sector_t lba, pba;
     DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
 
     if (this->cur_sector + bio_sectors(bio) >= SECTOES_PER_SEG) {
         buf->flush_bios(buf);
-        this->cur_segment += 1;
+        r = sworndisk->seg_allocator->get_next_free_segment(sworndisk->seg_allocator, &this->cur_segment);
+        if (r)
+            return;
         this->cur_sector = 0;
     }
     
@@ -58,6 +61,7 @@ void segbuf_flush_bios(struct segment_buffer* buf) {
     region.sector = this->cur_segment * SECTOES_PER_SEG;
     region.count = SECTOES_PER_SEG;
     
+    DMINFO("segment buffer flush: %ld", region.sector);
     dm_io(&req, 1, &region, &sync_error_bits);
     if (sync_error_bits) 
         DMERR("segment buffer flush error\n");
@@ -96,7 +100,12 @@ void segbuf_destroy(struct segment_buffer* buf) {
 }
 
 int segbuf_init(struct default_segment_buffer *buf, struct dm_sworndisk_target* sworndisk) {
-    buf->cur_segment = 0;
+    int r;
+
+    r = sworndisk->seg_allocator->get_next_free_segment(sworndisk->seg_allocator, &buf->cur_segment);
+    if (r)
+        return r;
+
     buf->cur_sector = 0;
     buf->sworndisk = sworndisk;
 

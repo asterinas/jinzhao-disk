@@ -14,7 +14,7 @@ struct dm_sworndisk_target {
     struct workqueue_struct* wq;
     struct work_struct deferred_bio_worker;
     struct bio_list deferred_bios;
-	struct dm_sworndisk_metadata* metadata;
+	struct metadata* metadata;
     struct segment_buffer* seg_buffer;
     struct segment_allocator* seg_allocator;
     struct memtable* memtable;

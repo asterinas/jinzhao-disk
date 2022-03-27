@@ -106,12 +106,10 @@ exit:
 static int dm_sworndisk_target_ctr(struct dm_target *target,
 			    unsigned int argc, char **argv)
 {
-    bool may_format;
     struct dm_sworndisk_target *sworndisk;
     unsigned long long start;
     char dummy;
     int ret;
-    struct dm_sworndisk_metadata *metadata;
 
     if (argc != 3) {
         DMERR("Invalid no. of arguments.");
@@ -145,16 +143,15 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
             goto bad;
     }
 
-    may_format = false;
-    // metadata = dm_sworndisk_metadata_open(sworndisk->metadata_dev->bdev, DM_SWORNDISK_METADATA_BLOCK_SIZE, may_format, 1, NR_SEGMENT, SECTOES_PER_SEG);
-    // if (IS_ERR_OR_NULL(metadata)) {
-    //     target->error = "open metadata device error";
-    //     goto bad;
-    // }
-    // sworndisk->metadata = metadata;
+    sworndisk->metadata = metadata_create(sworndisk->metadata_dev->bdev);
+    if (!sworndisk->metadata) {
+        target->error = "could not create sworndisk metadata";
+		goto bad;
+    }
+
     sworndisk->wq = alloc_workqueue("dm-" DM_MSG_PREFIX, WQ_MEM_RECLAIM, 0);
 	if (!sworndisk->wq) {
-		target->error = "could not create workqueue for metadata object";
+		target->error = "could not create workqueue for sworndisk";
 		goto bad;
 	}
 
@@ -169,12 +166,12 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
         target->error = "could not create sworndisk cipher";
 		goto bad;
     }
-    // sworndisk->seg_allocator = sa_create(sworndisk);
-    // if (!sworndisk->seg_allocator) {
-    //     target->error = "could not create sworndisk segment allocator";
-    //     ret = -EAGAIN;
-	// 	goto bad;
-    // }
+    sworndisk->seg_allocator = sa_create(sworndisk);
+    if (!sworndisk->seg_allocator) {
+        target->error = "could not create sworndisk segment allocator";
+        ret = -EAGAIN;
+		goto bad;
+    }
 
     spin_lock_init(&sworndisk->lock);
 	bio_list_init(&sworndisk->deferred_bios);
@@ -191,7 +188,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 
 bad:
     if (sworndisk->metadata)
-        dm_sworndisk_metadata_close(sworndisk->metadata);
+        metadata_destroy(sworndisk->metadata);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
     if (sworndisk->wq) 
@@ -214,7 +211,7 @@ static void dm_sworndisk_target_dtr(struct dm_target *ti)
 {
     struct dm_sworndisk_target *sworndisk = (struct dm_sworndisk_target *) ti->private;
     if (sworndisk->metadata)
-        dm_sworndisk_metadata_close(sworndisk->metadata);
+        metadata_destroy(sworndisk->metadata);
     dm_put_device(ti, sworndisk->data_dev);
     dm_put_device(ti, sworndisk->metadata_dev);
     if (sworndisk->seg_buffer)
