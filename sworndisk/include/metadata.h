@@ -1,6 +1,7 @@
 #ifndef DM_SWORNDISK_METADATA_H
 #define DM_SWORNDISK_METADATA_H
 
+#include "../include/dm_sworndisk.h"
 #include "../../persistent-data/dm-block-manager.h"
 
 #define SWORNDISK_MAX_CONCURRENT_LOCKS 3
@@ -36,6 +37,7 @@ struct disk_bitset* disk_bitset_create(struct block_device* bdev, sector_t start
 void disk_bitset_destroy(struct disk_bitset* this);
 
 // superblock definition
+#define SUPERBLOCK_ON_DISK_SIZE (sizeof(struct superblock) - 5 * sizeof(void*) - sizeof(uint32_t))
 struct superblock {
 	// validation 
 	uint32_t csum;
@@ -65,11 +67,13 @@ struct superblock {
 	// persistent client
 	struct dm_block_manager* bm;
 
+	void (*print)(struct superblock* this);
 	int (*read)(struct superblock* this);
 	int (*write)(struct superblock* this);
-	int (*validate)(struct superblock* this);
+	bool (*validate)(struct superblock* this);
 } __packed;
 
+int superblock_init(struct superblock* this, struct block_device* bdev);
 struct superblock* superblock_create(struct block_device* bdev);
 void superblock_destroy(struct superblock* this);
 

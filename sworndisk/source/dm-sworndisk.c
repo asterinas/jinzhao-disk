@@ -146,12 +146,12 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
     }
 
     may_format = false;
-    metadata = dm_sworndisk_metadata_open(sworndisk->metadata_dev->bdev, DM_SWORNDISK_METADATA_BLOCK_SIZE, may_format, 1, NR_SEGMENT, SECTOES_PER_SEG);
-    if (IS_ERR_OR_NULL(metadata)) {
-        target->error = "open metadata device error";
-        goto bad;
-    }
-    sworndisk->metadata = metadata;
+    // metadata = dm_sworndisk_metadata_open(sworndisk->metadata_dev->bdev, DM_SWORNDISK_METADATA_BLOCK_SIZE, may_format, 1, NR_SEGMENT, SECTOES_PER_SEG);
+    // if (IS_ERR_OR_NULL(metadata)) {
+    //     target->error = "open metadata device error";
+    //     goto bad;
+    // }
+    // sworndisk->metadata = metadata;
     sworndisk->wq = alloc_workqueue("dm-" DM_MSG_PREFIX, WQ_MEM_RECLAIM, 0);
 	if (!sworndisk->wq) {
 		target->error = "could not create workqueue for metadata object";
@@ -169,12 +169,12 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
         target->error = "could not create sworndisk cipher";
 		goto bad;
     }
-    sworndisk->seg_allocator = sa_create(sworndisk);
-    if (!sworndisk->seg_allocator) {
-        target->error = "could not create sworndisk segment allocator";
-        ret = -EAGAIN;
-		goto bad;
-    }
+    // sworndisk->seg_allocator = sa_create(sworndisk);
+    // if (!sworndisk->seg_allocator) {
+    //     target->error = "could not create sworndisk segment allocator";
+    //     ret = -EAGAIN;
+	// 	goto bad;
+    // }
 
     spin_lock_init(&sworndisk->lock);
 	bio_list_init(&sworndisk->deferred_bios);

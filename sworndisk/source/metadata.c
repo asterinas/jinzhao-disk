@@ -11,11 +11,12 @@ int superblock_read(struct superblock* this) {
 	struct dm_block* block;
 
 	r = dm_bm_read_lock(this->bm, SUPERBLOCK_LOCATION, NULL, &block);
-	if (r)
+	if (r) 
 		return -ENODATA;
 	
 	disk_super = dm_block_data(block);
 	
+	this->csum = le32_to_cpu(disk_super->csum);
 	this->magic = le64_to_cpu(disk_super->magic);
 	this->sectors_per_seg = le32_to_cpu(disk_super->sectors_per_seg);
 	this->nr_segment = le64_to_cpu(disk_super->nr_segment);
@@ -41,11 +42,15 @@ int superblock_write(struct superblock* this) {
 	struct dm_block* block;
 
 	r = dm_bm_write_lock(this->bm, SUPERBLOCK_LOCATION, NULL, &block);
-	if (r)
+	if (r) {
+		DMERR("dm bm write lock error\n");
 		return -EAGAIN;
+	}
+		
 
 	disk_super = dm_block_data(block);
 
+	disk_super->csum = cpu_to_le32(dm_bm_checksum(&this->magic, SUPERBLOCK_ON_DISK_SIZE, SUPERBLOCK_CSUM_XOR));
 	disk_super->magic = cpu_to_le64(this->magic);
 	disk_super->sectors_per_seg = cpu_to_le32(this->sectors_per_seg);
 	disk_super->nr_segment = cpu_to_le64(this->nr_segment);
@@ -62,7 +67,38 @@ int superblock_write(struct superblock* this) {
 	disk_super->reverse_index_table_start = cpu_to_le64(this->reverse_index_table_start);
 	
 	dm_bm_unlock(block);
-	return 0;
+	return dm_bm_flush(this->bm);
+}
+
+bool superblock_validate(struct superblock* this) {
+	uint32_t csum;
+
+	if (this->magic != SUPERBLOCK_MAGIC)
+		return false;
+
+	csum = dm_bm_checksum(&this->magic, SUPERBLOCK_ON_DISK_SIZE, SUPERBLOCK_CSUM_XOR);
+	if (csum != this->csum)
+		return false;
+
+	return true;
+}
+
+void superblock_print(struct superblock* this) {
+	DMINFO("superblock: ");
+	DMINFO("\tmagic: %lld", this->magic);
+	DMINFO("\tsectors_per_seg: %d", this->sectors_per_seg);
+	DMINFO("\tnr_segment: %lld", this->nr_segment);
+	DMINFO("\tcommon ratio: %d", this->common_ratio);
+	DMINFO("\tnr_disk_level: %d", this->nr_disk_level);
+	DMINFO("\tmax_disk_level_size: %lld", this->max_disk_level_size);
+	DMINFO("\tindex_region_start: %lld", this->index_region_start);
+	DMINFO("\tjournal_size: %d", this->journal_size);
+	DMINFO("\tnr_journal: %lld", this->nr_journal);
+	DMINFO("\tcur_journal: %lld", this->cur_journal);
+	DMINFO("\tjournal_region_start: %lld", this->journal_region_start);
+	DMINFO("\tseg_validity_table_start: %lld", this->seg_validity_table_start);
+	DMINFO("\tdata_seg_table_start: %lld", this->data_seg_table_start);
+	DMINFO("\treverse_index_table_start: %lld", this->reverse_index_table_start);
 }
 
 #include "../include/segment_allocator.h"
@@ -123,7 +159,8 @@ int superblock_init(struct superblock* this, struct block_device* bdev) {
 
 	this->read = superblock_read;
 	this->write = superblock_write;
-	this->validate = NULL;
+	this->validate = superblock_validate;
+	this->print = superblock_print;
 
 	return 0;
 }
@@ -173,7 +210,7 @@ int disk_array_set(struct disk_array* this, size_t index, void* entry) {
 	memcpy(dm_block_data(block) + disk_array_entry_offset(this, index), entry, this->entry_size);
 	
 	dm_bm_unlock(block);
-	return 0;
+	return dm_bm_flush(this->bm);
 }
 
 void* disk_array_get(struct disk_array* this, size_t index) {
@@ -216,7 +253,7 @@ int disk_array_format(struct disk_array* this, bool value) {
 		shift += 1;
 	}
 
-	return 0;
+	return dm_bm_flush(this->bm);
 }
 
 int disk_array_init(struct disk_array* this, struct block_device* bdev, sector_t start, size_t nr_entry, size_t entry_size) {
@@ -422,8 +459,12 @@ struct metadata {
 	// superblock
 	struct superblock sb;
 	// checkpoint region
-
+	int (*open)(struct metadata* this);
 };
+
+// int metadata_open(struct metadata* this) {
+
+// }
 
 
 // deprecated, will be removed soon
@@ -438,7 +479,7 @@ struct metadata {
 
 /*----------------------------------------------------------------*/
 
-#define DM_MSG_PREFIX   "sworndisk metadata"
+// #define DM_MSG_PREFIX   "sworndisk metadata"
 
 #define SWORNDISK_SUPERBLOCK_MAGIC 06142003
 #define SWORNDISK_SUPERBLOCK_LOCATION 0
