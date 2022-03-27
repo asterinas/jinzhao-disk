@@ -220,7 +220,8 @@ int disk_array_set(struct disk_array* this, size_t index, void* entry) {
 	memcpy(dm_block_data(block) + disk_array_entry_offset(this, index), entry, this->entry_size);
 	
 	dm_bm_unlock(block);
-	return dm_bm_flush(this->bm);
+	// return dm_bm_flush(this->bm);
+	return 0;
 }
 
 void* disk_array_get(struct disk_array* this, size_t index) {
@@ -300,8 +301,10 @@ struct disk_array* disk_array_create(struct block_device* bdev, sector_t start, 
 
 void disk_array_destroy(struct disk_array* this) {
 	if (!IS_ERR_OR_NULL(this)) {
-		if (!IS_ERR_OR_NULL(this->bm))
+		if (!IS_ERR_OR_NULL(this->bm)) {
+			dm_bm_flush(this->bm);
 			dm_block_manager_destroy(this->bm);
+		}
 		kfree(this);
 	}
 }

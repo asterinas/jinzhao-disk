@@ -60,8 +60,7 @@ void segbuf_flush_bios(struct segment_buffer* buf) {
     region.bdev = sworndisk->data_dev->bdev;
     region.sector = this->cur_segment * SECTOES_PER_SEG;
     region.count = SECTOES_PER_SEG;
-    
-    DMINFO("segment buffer flush: %ld", region.sector);
+
     dm_io(&req, 1, &region, &sync_error_bits);
     if (sync_error_bits) 
         DMERR("segment buffer flush error\n");
