@@ -199,12 +199,12 @@ void superblock_destroy(struct superblock* this) {
 }
 
 // disk array implememtation
-sector_t disk_array_entry_sector(struct disk_array* this, size_t index) {
-	return this->start + index / this->entries_per_sector;
+sector_t disk_array_entry_block(struct disk_array* this, size_t index) {
+	return this->start + index / this->entries_per_block;
 }
 
 size_t disk_array_entry_offset(struct disk_array* this, size_t index) {
-	return (index % this->entries_per_sector) * this->entry_size;
+	return (index % this->entries_per_block) * this->entry_size;
 }
 
 int disk_array_set(struct disk_array* this, size_t index, void* entry) {
@@ -213,7 +213,7 @@ int disk_array_set(struct disk_array* this, size_t index, void* entry) {
 	if (index < 0 || index >= this->nr_entry)
 		return -EINVAL;
 
-	r = dm_bm_write_lock(this->bm, disk_array_entry_sector(this, index), NULL, &block);
+	r = dm_bm_write_lock(this->bm, disk_array_entry_block(this, index), NULL, &block);
 	if (r)
 		return r;
 
@@ -233,7 +233,7 @@ void* disk_array_get(struct disk_array* this, size_t index) {
 	if (!entry) 
 		return NULL;
 	
-	r = dm_bm_read_lock(this->bm, disk_array_entry_sector(this, index), NULL, &block);
+	r = dm_bm_read_lock(this->bm, disk_array_entry_block(this, index), NULL, &block);
 	if (r)
 		return NULL;
 
@@ -267,14 +267,15 @@ int disk_array_format(struct disk_array* this, bool value) {
 	return dm_bm_flush(this->bm);
 }
 
+
 int disk_array_init(struct disk_array* this, struct block_device* bdev, sector_t start, size_t nr_entry, size_t entry_size) {
 	this->bdev = bdev;
 	this->start = start;
 	this->nr_entry = nr_entry;
 	this->entry_size = entry_size;
-	this->entries_per_sector = SECTOR_SIZE / this->entry_size;
+	this->entries_per_block = DISK_ARRAY_BLOCK_SIZE / this->entry_size;
 
-	this->bm = dm_block_manager_create(bdev, SECTOR_SIZE, SWORNDISK_MAX_CONCURRENT_LOCKS);
+	this->bm = dm_block_manager_create(bdev, DISK_ARRAY_BLOCK_SIZE, SWORNDISK_MAX_CONCURRENT_LOCKS);
 	if (IS_ERR_OR_NULL(this->bm))
 		return -ENOMEM;
 
@@ -471,16 +472,12 @@ int __reverse_index_table_set_entry(struct reverse_index_table* this, sector_t p
 
 int reverse_index_table_set(struct reverse_index_table* this, sector_t pba, sector_t lba) {
 	int r;
-	struct reverse_index_entry* entry;
+	struct reverse_index_entry entry = {
+		.valid = true,
+		.lba = lba
+	};
 
-	entry = kmalloc(sizeof(struct reverse_index_entry), GFP_KERNEL);
-	if (!entry)
-		return -ENOMEM;
-	
-	entry->valid = true;
-	entry->lba = lba;
-
-	r = __reverse_index_table_set_entry(this, pba, entry);
+	r = __reverse_index_table_set_entry(this, pba, &entry);
 	if (r)
 		return r;
 	

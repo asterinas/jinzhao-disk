@@ -7,11 +7,13 @@
 #define SWORNDISK_MAX_CONCURRENT_LOCKS 3
 
 // disk array definition
+#define DISK_ARRAY_BLOCK_SIZE (16 * SECTOR_SIZE)
+
 struct disk_array {
 	sector_t start;
 	size_t nr_entry;
 	size_t entry_size;
-	size_t entries_per_sector;
+	size_t entries_per_block;
 	struct block_device* bdev;
 	struct dm_block_manager* bm;
 
