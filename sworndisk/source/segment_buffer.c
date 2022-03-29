@@ -34,7 +34,7 @@ void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
     sworndisk->memtable->put(sworndisk->memtable, lba, record);
     sworndisk->metadata->reverse_index_table->set(sworndisk->metadata->reverse_index_table, pba, lba);
 
-    bio_get_data(bio, this->buffer + this->cur_sector * SECTOR_SIZE);
+    bio_get_data(bio, this->buffer + this->cur_sector * SECTOR_SIZE, bio_get_data_len(bio));
     this->cur_sector += 1;
 }
 

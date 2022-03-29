@@ -7,7 +7,7 @@
 #define SWORNDISK_MAX_CONCURRENT_LOCKS 3
 
 // disk array definition
-#define DISK_ARRAY_BLOCK_SIZE (16 * SECTOR_SIZE)
+#define DISK_ARRAY_BLOCK_SIZE (8 * SECTOR_SIZE)
 
 struct disk_array {
 	sector_t start;
@@ -47,7 +47,7 @@ struct superblock {
 	uint64_t magic;
 	
 	// data region
-	uint32_t sectors_per_seg; // sector count within a segment
+	uint32_t blocks_per_seg; // sector count within a segment
 	uint64_t nr_segment; // segment count
 
 	// index region

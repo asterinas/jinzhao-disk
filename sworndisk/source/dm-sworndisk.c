@@ -81,8 +81,8 @@ static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
 
     sworndisk = target->private;
     bio_set_dev(bio, sworndisk->data_dev->bdev);
-    if (bio_sectors(bio) > BIO_CRYPT_SECTOR_LIMIT)
-        dm_accept_partial_bio(bio, BIO_CRYPT_SECTOR_LIMIT);
+    if (bio_sectors(bio) > SECTORS_PER_BLOCK)
+        dm_accept_partial_bio(bio, SECTORS_PER_BLOCK);
 
     switch (bio_op(bio)) {
         case REQ_OP_READ:

@@ -18,7 +18,7 @@ int superblock_read(struct superblock* this) {
 	
 	this->csum = le32_to_cpu(disk_super->csum);
 	this->magic = le64_to_cpu(disk_super->magic);
-	this->sectors_per_seg = le32_to_cpu(disk_super->sectors_per_seg);
+	this->blocks_per_seg = le32_to_cpu(disk_super->blocks_per_seg);
 	this->nr_segment = le64_to_cpu(disk_super->nr_segment);
 	this->common_ratio = le32_to_cpu(disk_super->common_ratio);
 	this->nr_disk_level = le32_to_cpu(disk_super->nr_disk_level);
@@ -52,7 +52,7 @@ int superblock_write(struct superblock* this) {
 
 	disk_super->csum = cpu_to_le32(dm_bm_checksum(&this->magic, SUPERBLOCK_ON_DISK_SIZE, SUPERBLOCK_CSUM_XOR));
 	disk_super->magic = cpu_to_le64(this->magic);
-	disk_super->sectors_per_seg = cpu_to_le32(this->sectors_per_seg);
+	disk_super->blocks_per_seg = cpu_to_le32(this->blocks_per_seg);
 	disk_super->nr_segment = cpu_to_le64(this->nr_segment);
 	disk_super->common_ratio = cpu_to_le32(this->common_ratio);
 	disk_super->nr_disk_level = cpu_to_le32(this->nr_disk_level);
@@ -86,7 +86,7 @@ bool superblock_validate(struct superblock* this) {
 void superblock_print(struct superblock* this) {
 	DMINFO("superblock: ");
 	DMINFO("\tmagic: %lld", this->magic);
-	DMINFO("\tsectors_per_seg: %d", this->sectors_per_seg);
+	DMINFO("\tblocks_per_seg: %d", this->blocks_per_seg);
 	DMINFO("\tnr_segment: %lld", this->nr_segment);
 	DMINFO("\tcommon ratio: %d", this->common_ratio);
 	DMINFO("\tnr_disk_level: %d", this->nr_disk_level);
@@ -132,7 +132,7 @@ size_t __seg_validity_table_sectors(size_t nr_segment) {
 	return (((nr_segment - 1) / BITS_PER_LONG + 1) * sizeof(unsigned long) - 1) / SECTOR_SIZE + 1;
 }
 
-size_t __data_seg_table_sectors(size_t nr_segment, size_t sectors_per_seg) {
+size_t __data_seg_table_sectors(size_t nr_segment, size_t blocks_per_seg) {
 	return 0;
 }
 
@@ -156,7 +156,7 @@ int superblock_init(struct superblock* this, struct block_device* bdev) {
 		return 0;
 
 	this->magic = SUPERBLOCK_MAGIC;
-	this->sectors_per_seg = SECTOES_PER_SEG;
+	this->blocks_per_seg = SECTOES_PER_SEG;
 	this->nr_segment = NR_SEGMENT;
 	this->common_ratio = LSM_TREE_DISK_LEVEL_COMMON_RATIO;
 	this->nr_disk_level = 0;
@@ -169,7 +169,7 @@ int superblock_init(struct superblock* this, struct block_device* bdev) {
 	  this->nr_disk_level, this->common_ratio, this->max_disk_level_size);
 	this->seg_validity_table_start = this->journal_region_start + __journal_region_sectors(this->nr_journal, this->journal_size);
 	this->data_seg_table_start = this->seg_validity_table_start + __seg_validity_table_sectors(this->nr_segment);
-	this->reverse_index_table_start = this->data_seg_table_start + __data_seg_table_sectors(this->nr_segment, this->sectors_per_seg);
+	this->reverse_index_table_start = this->data_seg_table_start + __data_seg_table_sectors(this->nr_segment, this->blocks_per_seg);
 
 	this->write(this);
 	return 0;
@@ -559,7 +559,7 @@ int metadata_init(struct metadata* this, struct block_device* bdev) {
 		goto bad;
 
 	this->reverse_index_table = reverse_index_table_create(bdev, 
-	  this->superblock->reverse_index_table_start, this->superblock->nr_segment * this->superblock->sectors_per_seg);
+	  this->superblock->reverse_index_table_start, this->superblock->nr_segment * this->superblock->blocks_per_seg);
 	if (IS_ERR_OR_NULL(this->reverse_index_table))
 		goto bad;
 	

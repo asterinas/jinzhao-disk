@@ -4,6 +4,7 @@
 #include "../include/metadata.h"
 
 #define NR_SEGMENT 4096
+#define SECTORS_PER_BLOCK 1
 #define SECTOES_PER_SEG 2048
 
 struct segment_allocator {
