@@ -32,7 +32,6 @@ void defer_bio(struct dm_sworndisk_target *sworndisk, struct bio *bio) {
     queue_work(sworndisk->wq, &sworndisk->deferred_bio_worker);
 }
 
-
 void process_deferred_bios(struct work_struct *ws) {
     int r; 
 	unsigned long flags;
@@ -51,10 +50,10 @@ void process_deferred_bios(struct work_struct *ws) {
 
 	while ((bio = bio_list_pop(&bios))) {
         if (bio_op(bio) == REQ_OP_READ) {
-            r = sworndisk->memtable->get(sworndisk->memtable, bio_get_sector(bio), (void**)&record);
+            r = sworndisk->memtable->get(sworndisk->memtable, bio_get_block_address(bio), (void**)&record);
             if (r)
                 goto bad;
-            bio_set_sector(bio, record->pba);
+            bio_set_sector(bio, record->pba * SECTORS_PER_BLOCK + bio_block_sector_offset(bio));
             r = sworndisk->seg_buffer->query_bio(sworndisk->seg_buffer, bio);
             if (!r) {
                 bio_endio(bio);

@@ -5,7 +5,7 @@
 
 #include "../include/crypto.h"
 #include "../include/memtable.h"
-#include "../include/generic_cache.h"
+#include "../include/segment_allocator.h"
 
 struct bio_crypt_context {
 	sector_t lba;

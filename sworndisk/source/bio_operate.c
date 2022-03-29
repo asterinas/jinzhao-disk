@@ -20,13 +20,13 @@ void bio_set_data_len(struct bio* bio, unsigned int len) {
     bio->bi_iter.bi_size = len;
 }
 
-// size_t bio_get_block_address(struct bio* bio) {
-//     return bio_get_sector(bio) / SECTORS_PER_BLOCK;
-// }
+size_t bio_get_block_address(struct bio* bio) {
+    return bio_get_sector(bio) / SECTORS_PER_BLOCK;
+}
 
-// sector_t bio_block_sector_offset(struct bio* bio) {
-//     return bio_get_sector(bio) % SECTORS_PER_BLOCK;
-// }
+sector_t bio_block_sector_offset(struct bio* bio) {
+    return bio_get_sector(bio) % SECTORS_PER_BLOCK;
+}
 
 void __bio_data_transfer(struct bio* bio, char* buffer, size_t len) {
     bool has_next;

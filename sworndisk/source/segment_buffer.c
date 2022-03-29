@@ -17,7 +17,7 @@ void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
     sector_t lba, pba;
     DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
 
-    if (this->cur_sector + bio_sectors(bio) >= SECTOES_PER_SEG) {
+    if (this->cur_sector + bio_sectors(bio) >= SECTOES_PER_SEGMENT) {
         buf->flush_bios(buf);
         r = sworndisk->seg_allocator->get_next_free_segment(sworndisk->seg_allocator, &this->cur_segment);
         if (r)
@@ -25,17 +25,17 @@ void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
         this->cur_sector = 0;
     }
     
-    lba = bio_get_sector(bio);
-    pba = this->cur_segment * SECTOES_PER_SEG + this->cur_sector;
+    lba = bio_get_block_address(bio);
+    pba = (this->cur_segment * SECTOES_PER_SEGMENT + this->cur_sector) / SECTORS_PER_BLOCK;
 
     record = record_create(pba, NULL, NULL, NULL);
     if (IS_ERR_OR_NULL(record))
         return;
     sworndisk->memtable->put(sworndisk->memtable, lba, record);
-    sworndisk->metadata->reverse_index_table->set(sworndisk->metadata->reverse_index_table, pba, lba);
+    // sworndisk->metadata->reverse_index_table->set(sworndisk->metadata->reverse_index_table, pba, lba);
 
-    bio_get_data(bio, this->buffer + this->cur_sector * SECTOR_SIZE, bio_get_data_len(bio));
-    this->cur_sector += 1;
+    bio_get_data(bio, this->buffer + (this->cur_sector + bio_block_sector_offset(bio)) * SECTOR_SIZE, bio_get_data_len(bio));
+    this->cur_sector += SECTORS_PER_BLOCK;
 }
 
 void segbuf_flush_bios(struct segment_buffer* buf) {
@@ -59,8 +59,8 @@ void segbuf_flush_bios(struct segment_buffer* buf) {
     req.client = this->io_client;
 
     region.bdev = sworndisk->data_dev->bdev;
-    region.sector = this->cur_segment * SECTOES_PER_SEG;
-    region.count = SECTOES_PER_SEG;
+    region.sector = this->cur_segment * SECTOES_PER_SEGMENT;
+    region.count = SECTOES_PER_SEGMENT;
 
     dm_io(&req, 1, &region, &sync_error_bits);
     if (sync_error_bits) 
@@ -70,18 +70,18 @@ void segbuf_flush_bios(struct segment_buffer* buf) {
 }
 
 int segbuf_query_bio(struct segment_buffer* buf, struct bio* bio) {
-    sector_t pba;
+    sector_t bi_sector;
     sector_t begin, end;
     DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
 
-    pba = bio_get_sector(bio);
-    begin = this->cur_segment * SECTOES_PER_SEG;
+    bi_sector = bio_get_sector(bio);
+    begin = this->cur_segment * SECTOES_PER_SEGMENT;
     end = begin + this->cur_sector;
 
-    if (pba < begin || pba >= end)
+    if (bi_sector < begin || bi_sector + bio_sectors(bio) > end)
         return -ENODATA;
     
-    bio_set_data(bio, this->buffer + (pba - begin)*SECTOR_SIZE, bio_get_data_len(bio));
+    bio_set_data(bio, this->buffer + (bi_sector - begin)*SECTOR_SIZE, bio_get_data_len(bio));
     return 0;
 }
 

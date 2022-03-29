@@ -4,8 +4,11 @@
 #include "../include/metadata.h"
 
 #define NR_SEGMENT 4096
-#define SECTORS_PER_BLOCK 1
-#define SECTOES_PER_SEG 2048
+#define SECTORS_PER_BLOCK 8
+#define BLOCKS_PER_SEGMENT 256
+#define SECTOES_PER_SEGMENT (SECTORS_PER_BLOCK * BLOCKS_PER_SEGMENT)
+
+#define DATA_BLOCK_SIZE (SECTORS_PER_BLOCK * SECTOR_SIZE)
 
 struct segment_allocator {
     int (*get_next_free_segment)(struct segment_allocator* al, size_t *seg);

@@ -156,7 +156,7 @@ int superblock_init(struct superblock* this, struct block_device* bdev) {
 		return 0;
 
 	this->magic = SUPERBLOCK_MAGIC;
-	this->blocks_per_seg = SECTOES_PER_SEG;
+	this->blocks_per_seg = BLOCKS_PER_SEGMENT;
 	this->nr_segment = NR_SEGMENT;
 	this->common_ratio = LSM_TREE_DISK_LEVEL_COMMON_RATIO;
 	this->nr_disk_level = 0;
