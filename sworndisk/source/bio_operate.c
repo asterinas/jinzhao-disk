@@ -34,7 +34,7 @@ void __bio_data_transfer(struct bio* bio, char* buffer, size_t len) {
     size_t offset;
     struct bio *total, *split;
 
-    total = bio_clone_fast(bio, GFP_NOIO, NULL);
+    total = bio_clone_fast(bio, GFP_NOIO, &fs_bio_set);
     if (IS_ERR_OR_NULL(total))
         return;
     
@@ -42,7 +42,7 @@ void __bio_data_transfer(struct bio* bio, char* buffer, size_t len) {
     has_next = true;
 next:
     if (bio_sectors(total) > 1) {
-        split = bio_split(total, 1, GFP_NOIO, NULL);
+        split = bio_split(total, 1, GFP_NOIO, &fs_bio_set);
         if (IS_ERR_OR_NULL(split))
             return;
     } else {
