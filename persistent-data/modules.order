@@ -1,1 +1,1 @@
-kernel/drivers/md/persistent-data/dm-persistent-data.ko
+drivers/md/persistent-data/dm-persistent-data.ko

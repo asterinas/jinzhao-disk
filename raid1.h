@@ -118,10 +118,10 @@ struct r1conf {
 	 * mempools - it changes when the array grows or shrinks
 	 */
 	struct pool_info	*poolinfo;
-	mempool_t		*r1bio_pool;
-	mempool_t		*r1buf_pool;
+	mempool_t		r1bio_pool;
+	mempool_t		r1buf_pool;
 
-	struct bio_set		*bio_split;
+	struct bio_set		bio_split;
 
 	/* temporary buffer to synchronous IO when attempting to repair
 	 * a read error.
@@ -158,6 +158,7 @@ struct r1bio {
 	sector_t		sector;
 	int			sectors;
 	unsigned long		state;
+	unsigned long		start_time;
 	struct mddev		*mddev;
 	/*
 	 * original bio going to /dev/mdx
@@ -180,7 +181,7 @@ struct r1bio {
 	 * if the IO is in WRITE direction, then multiple bios are used.
 	 * We choose the number when they are allocated.
 	 */
-	struct bio		*bios[0];
+	struct bio		*bios[];
 	/* DO NOT PUT ANY NEW FIELDS HERE - bios array is contiguously alloced*/
 };
 

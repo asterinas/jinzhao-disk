@@ -22,7 +22,6 @@
 #include "../include/memtable.h"
 #include "../include/bio_operate.h"
 #include "../include/segment_buffer.h"
-#include "../include/generic_cache.h"
 
 void defer_bio(struct dm_sworndisk_target *sworndisk, struct bio *bio) {
 	unsigned long flags;
@@ -32,7 +31,6 @@ void defer_bio(struct dm_sworndisk_target *sworndisk, struct bio *bio) {
     spin_unlock_irqrestore(&sworndisk->lock, flags);
     queue_work(sworndisk->wq, &sworndisk->deferred_bio_worker);
 }
-
 
 void process_deferred_bios(struct work_struct *ws) {
     int r; 
@@ -52,10 +50,10 @@ void process_deferred_bios(struct work_struct *ws) {
 
 	while ((bio = bio_list_pop(&bios))) {
         if (bio_op(bio) == REQ_OP_READ) {
-            r = sworndisk->memtable->get(sworndisk->memtable, bio_get_sector(bio), (void**)&record);
+            r = sworndisk->memtable->get(sworndisk->memtable, bio_get_block_address(bio), (void**)&record);
             if (r)
                 goto bad;
-            bio_set_sector(bio, record->pba);
+            bio_set_sector(bio, record->pba * SECTORS_PER_BLOCK + bio_block_sector_offset(bio));
             r = sworndisk->seg_buffer->query_bio(sworndisk->seg_buffer, bio);
             if (!r) {
                 bio_endio(bio);
@@ -82,8 +80,8 @@ static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
 
     sworndisk = target->private;
     bio_set_dev(bio, sworndisk->data_dev->bdev);
-    if (bio_sectors(bio) > BIO_CRYPT_SECTOR_LIMIT)
-        dm_accept_partial_bio(bio, BIO_CRYPT_SECTOR_LIMIT);
+    if (bio_sectors(bio) > SECTORS_PER_BLOCK)
+        dm_accept_partial_bio(bio, SECTORS_PER_BLOCK);
 
     switch (bio_op(bio)) {
         case REQ_OP_READ:
@@ -107,12 +105,10 @@ exit:
 static int dm_sworndisk_target_ctr(struct dm_target *target,
 			    unsigned int argc, char **argv)
 {
-    bool may_format;
     struct dm_sworndisk_target *sworndisk;
     unsigned long long start;
     char dummy;
     int ret;
-    struct dm_sworndisk_metadata *metadata;
 
     if (argc != 3) {
         DMERR("Invalid no. of arguments.");
@@ -146,16 +142,15 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
             goto bad;
     }
 
-    may_format = false;
-    metadata = dm_sworndisk_metadata_open(sworndisk->metadata_dev->bdev, DM_SWORNDISK_METADATA_BLOCK_SIZE, may_format, 1, NR_SEGMENT, SEC_PER_SEG);
-    if (IS_ERR_OR_NULL(metadata)) {
-        target->error = "open metadata device error";
-        goto bad;
+    sworndisk->metadata = metadata_create(sworndisk->metadata_dev->bdev);
+    if (!sworndisk->metadata) {
+        target->error = "could not create sworndisk metadata";
+		goto bad;
     }
-    sworndisk->metadata = metadata;
+
     sworndisk->wq = alloc_workqueue("dm-" DM_MSG_PREFIX, WQ_MEM_RECLAIM, 0);
 	if (!sworndisk->wq) {
-		target->error = "could not create workqueue for metadata object";
+		target->error = "could not create workqueue for sworndisk";
 		goto bad;
 	}
 
@@ -186,22 +181,13 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
         goto bad;
     } 
 
-    sworndisk->cache = generic_cache_create(DEFAULT_CACHE_CAPACITY, DEFAULT_MAX_LOCKED_ENTRY);
-    if (IS_ERR_OR_NULL(sworndisk->cache)) {
-        target->error = "could not create sworndisk generic cache";
-        ret = -EAGAIN;
-        goto bad;
-    }
-
     INIT_WORK(&sworndisk->deferred_bio_worker, process_deferred_bios);
     target->private = sworndisk;
     return 0;
 
 bad:
     if (sworndisk->metadata)
-        dm_sworndisk_metadata_close(sworndisk->metadata);
-    if (sworndisk->cache)
-        generic_cache_destroy(sworndisk->cache);
+        metadata_destroy(sworndisk->metadata);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
     if (sworndisk->wq) 
@@ -224,11 +210,9 @@ static void dm_sworndisk_target_dtr(struct dm_target *ti)
 {
     struct dm_sworndisk_target *sworndisk = (struct dm_sworndisk_target *) ti->private;
     if (sworndisk->metadata)
-        dm_sworndisk_metadata_close(sworndisk->metadata);
+        metadata_destroy(sworndisk->metadata);
     dm_put_device(ti, sworndisk->data_dev);
     dm_put_device(ti, sworndisk->metadata_dev);
-    if (sworndisk->cache)
-        generic_cache_destroy(sworndisk->cache);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
     if (sworndisk->wq) 

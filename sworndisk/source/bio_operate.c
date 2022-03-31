@@ -20,63 +20,58 @@ void bio_set_data_len(struct bio* bio, unsigned int len) {
     bio->bi_iter.bi_size = len;
 }
 
-// assume this bio has only one page
-void bio_get_data(struct bio* bio, char* buffer) {
-    char* kaddr;
-
-    kaddr = kmap_atomic(bio_page(bio));
-    memcpy(buffer, kaddr + bio_offset(bio), bio_get_data_len(bio));
-    kunmap_atomic(kaddr);
+size_t bio_get_block_address(struct bio* bio) {
+    return bio_get_sector(bio) / SECTORS_PER_BLOCK;
 }
 
-void page_set_data(struct page* page, char* data, size_t len, size_t offset) {
-    char* kaddr;
-
-    kaddr = kmap_atomic(page);
-    memcpy(kaddr + offset, data, len);
-    kunmap_atomic(kaddr);
+sector_t bio_block_sector_offset(struct bio* bio) {
+    return bio_get_sector(bio) % SECTORS_PER_BLOCK;
 }
 
-
-char* bio_data_copy(struct bio* bio) {
-    size_t len;
-    char* buffer;
+void __bio_data_transfer(struct bio* bio, char* buffer, size_t len) {
+    bool has_next;
     char* kaddr;
     size_t offset;
-    struct bio_vec bvec;
-    struct bvec_iter bi_iter;
+    struct bio *total, *split;
 
-    len = bio_get_data_len(bio);
-    buffer = kmalloc(len, GFP_KERNEL);
-    if (!buffer)
-        return NULL;
+    total = bio_clone_fast(bio, GFP_NOIO, &fs_bio_set);
+    if (IS_ERR_OR_NULL(total))
+        return;
     
     offset = 0;
-    bio_for_each_segment(bvec, bio, bi_iter) {
-        kaddr = kmap_atomic(bvec.bv_page);
-        memcpy(buffer+offset, kaddr+bvec.bv_offset, bvec.bv_len);
-        kunmap_atomic(kaddr);
-        offset += bvec.bv_len;
+    has_next = true;
+next:
+    if (bio_sectors(total) > 1) {
+        split = bio_split(total, 1, GFP_NOIO, &fs_bio_set);
+        if (IS_ERR_OR_NULL(split))
+            return;
+    } else {
+        split = total;
+        has_next = false;
     }
 
-    return buffer;
+    if (offset + bio_get_data_len(split) > len)
+        return;
+
+    kaddr = kmap_atomic(bio_page(split));
+    if (bio_op(bio) == REQ_OP_WRITE)
+        memcpy(buffer + offset, kaddr + bio_offset(split), bio_get_data_len(split));
+    else if(bio_op(bio) == REQ_OP_READ)
+        memcpy(kaddr + bio_offset(split), buffer + offset, bio_get_data_len(split));
+    kunmap_atomic(kaddr);
+
+    offset += bio_get_data_len(split);
+    bio_put(split);
+
+    if (has_next)
+        goto next;
 }
 
-int bio_set_data(struct bio* bio, char* buffer, size_t len) {
-    char* kaddr;
-    size_t offset;
-    struct bio_vec bvec;
-    struct bvec_iter bi_iter;
+void bio_get_data(struct bio* bio, char* buffer, size_t len) {
+   __bio_data_transfer(bio, buffer, len);
+}
 
-    offset = 0;
-    bio_for_each_segment(bvec, bio, bi_iter) {
-        if (offset + bvec.bv_len > len)
-            return -EAGAIN;
-        kaddr = kmap(bvec.bv_page);
-        memcpy(kaddr+bvec.bv_offset, buffer+offset, bvec.bv_len);
-        kunmap(bvec.bv_page);
-        offset += bvec.bv_len;
-    }
 
-    return 0;
+void bio_set_data(struct bio* bio, char* buffer, size_t len) {
+    __bio_data_transfer(bio, buffer, len);
 }

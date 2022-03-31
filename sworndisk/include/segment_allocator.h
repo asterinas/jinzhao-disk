@@ -4,12 +4,14 @@
 #include "../include/metadata.h"
 
 #define NR_SEGMENT 4096
-#define SEC_PER_SEG 2048
+#define SECTORS_PER_BLOCK 8
+#define BLOCKS_PER_SEGMENT 256
+#define SECTOES_PER_SEGMENT (SECTORS_PER_BLOCK * BLOCKS_PER_SEGMENT)
+
+#define DATA_BLOCK_SIZE (SECTORS_PER_BLOCK * SECTOR_SIZE)
 
 struct segment_allocator {
-    int (*get_next_free_segment)(struct segment_allocator* al, size_t *seg, size_t next_seg);
-    int (*alloc_sectors)(struct segment_allocator* al, struct bio* bio, sector_t *pba);
-    int (*write_reverse_index_table)(struct segment_allocator* al, sector_t pba, sector_t lba);
+    int (*get_next_free_segment)(struct segment_allocator* al, size_t *seg);
     void (*clean)(struct segment_allocator* al);
     void (*destroy)(struct segment_allocator* al);
 };
@@ -18,8 +20,6 @@ struct default_segment_allocator {
     struct segment_allocator segment_allocator;
     struct dm_sworndisk_target* sworndisk;
     size_t nr_segment;
-    size_t cur_segment;
-    size_t cur_sector;
 };
 
 struct segment_allocator* sa_create(struct dm_sworndisk_target *sworndisk);

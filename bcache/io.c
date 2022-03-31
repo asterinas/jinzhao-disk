@@ -17,15 +17,16 @@
 void bch_bbio_free(struct bio *bio, struct cache_set *c)
 {
 	struct bbio *b = container_of(bio, struct bbio, bio);
-	mempool_free(b, c->bio_meta);
+
+	mempool_free(b, &c->bio_meta);
 }
 
 struct bio *bch_bbio_alloc(struct cache_set *c)
 {
-	struct bbio *b = mempool_alloc(c->bio_meta, GFP_NOIO);
+	struct bbio *b = mempool_alloc(&c->bio_meta, GFP_NOIO);
 	struct bio *bio = &b->bio;
 
-	bio_init(bio, bio->bi_inline_vecs, bucket_pages(c));
+	bio_init(bio, bio->bi_inline_vecs, meta_bucket_pages(&c->cache->sb));
 
 	return bio;
 }
@@ -35,16 +36,17 @@ void __bch_submit_bbio(struct bio *bio, struct cache_set *c)
 	struct bbio *b = container_of(bio, struct bbio, bio);
 
 	bio->bi_iter.bi_sector	= PTR_OFFSET(&b->key, 0);
-	bio_set_dev(bio, PTR_CACHE(c, &b->key, 0)->bdev);
+	bio_set_dev(bio, c->cache->bdev);
 
 	b->submit_time_us = local_clock_us();
 	closure_bio_submit(c, bio, bio->bi_private);
 }
 
 void bch_submit_bbio(struct bio *bio, struct cache_set *c,
-		     struct bkey *k, unsigned ptr)
+		     struct bkey *k, unsigned int ptr)
 {
 	struct bbio *b = container_of(bio, struct bbio, bio);
+
 	bch_bkey_copy_single_ptr(&b->key, k, ptr);
 	__bch_submit_bbio(bio, c);
 }
@@ -52,7 +54,7 @@ void bch_submit_bbio(struct bio *bio, struct cache_set *c,
 /* IO errors */
 void bch_count_backing_io_errors(struct cached_dev *dc, struct bio *bio)
 {
-	unsigned errors;
+	unsigned int errors;
 
 	WARN_ONCE(!dc, "NULL pointer of struct cached_dev");
 
@@ -63,20 +65,23 @@ void bch_count_backing_io_errors(struct cached_dev *dc, struct bio *bio)
 	 * we shouldn't count failed REQ_RAHEAD bio to dc->io_errors.
 	 */
 	if (bio->bi_opf & REQ_RAHEAD) {
-		pr_warn_ratelimited("%s: Read-ahead I/O failed on backing device, ignore",
-				    dc->backing_dev_name);
+		pr_warn_ratelimited("%pg: Read-ahead I/O failed on backing device, ignore\n",
+				    dc->bdev);
 		return;
 	}
 
 	errors = atomic_add_return(1, &dc->io_errors);
 	if (errors < dc->error_limit)
-		pr_err("%s: IO error on backing device, unrecoverable",
-			dc->backing_dev_name);
+		pr_err("%pg: IO error on backing device, unrecoverable\n",
+			dc->bdev);
 	else
 		bch_cached_dev_error(dc);
 }
 
-void bch_count_io_errors(struct cache *ca, blk_status_t error, const char *m)
+void bch_count_io_errors(struct cache *ca,
+			 blk_status_t error,
+			 int is_read,
+			 const char *m)
 {
 	/*
 	 * The halflife of an error is:
@@ -84,16 +89,16 @@ void bch_count_io_errors(struct cache *ca, blk_status_t error, const char *m)
 	 */
 
 	if (ca->set->error_decay) {
-		unsigned count = atomic_inc_return(&ca->io_count);
+		unsigned int count = atomic_inc_return(&ca->io_count);
 
 		while (count > ca->set->error_decay) {
-			unsigned errors;
-			unsigned old = count;
-			unsigned new = count - ca->set->error_decay;
+			unsigned int errors;
+			unsigned int old = count;
+			unsigned int new = count - ca->set->error_decay;
 
 			/*
 			 * First we subtract refresh from count; each time we
-			 * succesfully do so, we rescale the errors once:
+			 * successfully do so, we rescale the errors once:
 			 */
 
 			count = atomic_cmpxchg(&ca->io_count, old, new);
@@ -113,17 +118,18 @@ void bch_count_io_errors(struct cache *ca, blk_status_t error, const char *m)
 	}
 
 	if (error) {
-		unsigned errors = atomic_add_return(1 << IO_ERROR_SHIFT,
+		unsigned int errors = atomic_add_return(1 << IO_ERROR_SHIFT,
 						    &ca->io_errors);
 		errors >>= IO_ERROR_SHIFT;
 
 		if (errors < ca->set->error_limit)
-			pr_err("%s: IO error on %s, recovering",
-			       ca->cache_dev_name, m);
+			pr_err("%pg: IO error on %s%s\n",
+			       ca->bdev, m,
+			       is_read ? ", recovering." : ".");
 		else
 			bch_cache_set_error(ca->set,
-					    "%s: too many IO errors %s",
-					    ca->cache_dev_name, m);
+					    "%pg: too many IO errors %s\n",
+					    ca->bdev, m);
 	}
 }
 
@@ -131,20 +137,21 @@ void bch_bbio_count_io_errors(struct cache_set *c, struct bio *bio,
 			      blk_status_t error, const char *m)
 {
 	struct bbio *b = container_of(bio, struct bbio, bio);
-	struct cache *ca = PTR_CACHE(c, &b->key, 0);
+	struct cache *ca = c->cache;
+	int is_read = (bio_data_dir(bio) == READ ? 1 : 0);
 
-	unsigned threshold = op_is_write(bio_op(bio))
+	unsigned int threshold = op_is_write(bio_op(bio))
 		? c->congested_write_threshold_us
 		: c->congested_read_threshold_us;
 
 	if (threshold) {
-		unsigned t = local_clock_us();
-
+		unsigned int t = local_clock_us();
 		int us = t - b->submit_time_us;
 		int congested = atomic_read(&c->congested);
 
 		if (us > (int) threshold) {
 			int ms = us / 1024;
+
 			c->congested_last_us = t;
 
 			ms = min(ms, CONGESTED_MAX + congested);
@@ -153,7 +160,7 @@ void bch_bbio_count_io_errors(struct cache_set *c, struct bio *bio,
 			atomic_inc(&c->congested);
 	}
 
-	bch_count_io_errors(ca, error, m);
+	bch_count_io_errors(ca, error, is_read, m);
 }
 
 void bch_bbio_endio(struct cache_set *c, struct bio *bio,

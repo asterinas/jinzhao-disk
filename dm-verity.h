@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2012 Red Hat, Inc.
  * Copyright (C) 2015 Google, Inc.
@@ -5,14 +6,12 @@
  * Author: Mikulas Patocka <mpatocka@redhat.com>
  *
  * Based on Chromium dm-verity driver (C) 2011 The Chromium OS Authors
- *
- * This file is released under the GPLv2.
  */
 
 #ifndef DM_VERITY_H
 #define DM_VERITY_H
 
-#include "dm-bufio.h"
+#include <linux/dm-bufio.h>
 #include <linux/device-mapper.h>
 #include <crypto/hash.h>
 
@@ -21,7 +20,8 @@
 enum verity_mode {
 	DM_VERITY_MODE_EIO,
 	DM_VERITY_MODE_LOGGING,
-	DM_VERITY_MODE_RESTART
+	DM_VERITY_MODE_RESTART,
+	DM_VERITY_MODE_PANIC
 };
 
 enum verity_block_type {
@@ -63,6 +63,9 @@ struct dm_verity {
 	sector_t hash_level_block[DM_VERITY_MAX_LEVELS];
 
 	struct dm_verity_fec *fec;	/* forward error correction */
+	unsigned long *validated_blocks; /* bitset blocks validated */
+
+	char *signature_key_desc; /* signature keyring reference */
 };
 
 struct dm_verity_io {

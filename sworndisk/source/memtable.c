@@ -173,6 +173,14 @@ struct memtable_rbnode* memtable_rbnode_create(uint32_t key, void* val, void (*d
     return entry;
 }
 
+int memtable_rbnode_cmp(struct rb_node* node1, const struct rb_node* node2) {
+    struct memtable_rbnode *entry1, *entry2;
+
+    entry1 = rb_entry(node1, struct memtable_rbnode, node);
+    entry2 = rb_entry(node2, struct memtable_rbnode, node);
+    return (int64_t)entry1->key - (int64_t)entry2->key;
+}
+
 void memtable_rbnode_destroy(struct memtable_rbnode* entry) {
     if (!IS_ERR_OR_NULL(entry)) {
         if (!IS_ERR_OR_NULL(entry->val) && !IS_ERR_OR_NULL(entry->dtr_fn)) 
@@ -181,7 +189,11 @@ void memtable_rbnode_destroy(struct memtable_rbnode* entry) {
     }
 }
 
-void* rbtree_memtable_search(struct rb_root* root, uint32_t key) {
+
+#define RBTREE_MEMTABLE_THIS_POINTER_DECLARE struct rbtree_memtable* this; \
+        this = container_of(mt, struct rbtree_memtable, memtable);
+
+void* __rbtree_memtable_search(struct rb_root* root, uint32_t key) {
     struct memtable_rbnode* cur;
     struct rb_node *node = root->rb_node;  /* top of the tree */
 
@@ -199,53 +211,29 @@ void* rbtree_memtable_search(struct rb_root* root, uint32_t key) {
 	return NULL;
 }
 
-void rbtree_memtable_insert(struct rb_root* root, struct memtable_rbnode* new) {
-    struct rb_node **link, *parent;
-    struct memtable_rbnode *entry;
-
-next:
-    parent = NULL;
-    link = &root->rb_node;
-	/* Go to the bottom of the tree */
-	while (*link)
-	{
-	    parent = *link;
-	    entry = rb_entry(parent, struct memtable_rbnode, node);
-
-	    if (entry->key > new->key)
-		    link = &(*link)->rb_left;
-	    else if (entry->key < new->key)
-		    link = &(*link)->rb_right;
-        else {
-            rb_erase(*link, root);
-            memtable_rbnode_destroy(entry);
-            goto next;
-        }
-	}
-
-	/* Put the new node there */
-	rb_link_node(&new->node, parent, link);
-	rb_insert_color(&new->node, root);
-}
-
-#define RBTREE_MEMTABLE_THIS_POINTER_DECLARE struct rbtree_memtable* this; \
-        this = container_of(mt, struct rbtree_memtable, memtable);
-
 void rbtree_memtable_put(struct memtable* mt, uint32_t key, void* val) {
-    struct memtable_rbnode* entry;
+    struct rb_node* node;
+    struct memtable_rbnode *old, *new;
     RBTREE_MEMTABLE_THIS_POINTER_DECLARE
 
-    entry = memtable_rbnode_create(key, val, record_destroy);
-    if (!entry)
+    new = memtable_rbnode_create(key, val, record_destroy);
+    if (!new)
         return;
 
-    rbtree_memtable_insert(&this->root, entry);
+next:
+    node = rb_find_add(&new->node, &this->root, memtable_rbnode_cmp);
+    if (node) {
+        rb_erase(node, &this->root);
+        old = rb_entry(node, struct memtable_rbnode, node);
+        memtable_rbnode_destroy(old);
+        goto next;
+    }
 }
 
 int rbtree_memtable_get(struct memtable* mt, uint32_t key, void** p_val) {
     RBTREE_MEMTABLE_THIS_POINTER_DECLARE
 
-    *p_val = rbtree_memtable_search(&this->root, key);
+    *p_val = __rbtree_memtable_search(&this->root, key);
     if (*p_val)
         return 0;
     
@@ -255,7 +243,7 @@ int rbtree_memtable_get(struct memtable* mt, uint32_t key, void** p_val) {
 bool rbtree_memtable_contains(struct memtable* mt, uint32_t key) {
     RBTREE_MEMTABLE_THIS_POINTER_DECLARE
 
-    return rbtree_memtable_search(&this->root, key);
+    return __rbtree_memtable_search(&this->root, key);
 }
 
 void rbtree_memtable_destroy(struct memtable* mt) {

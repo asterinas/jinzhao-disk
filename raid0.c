@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
    raid0.c : Multiple Devices driver for Linux
 	     Copyright (C) 1994-96 Marc ZYNGIER
@@ -7,14 +8,6 @@
 
    RAID-0 management functions.
 
-   This program is free software; you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2, or (at your option)
-   any later version.
-
-   You should have received a copy of the GNU General Public License
-   (for example /usr/src/linux/COPYING); if not, write to the Free
-   Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 */
 
 #include <linux/blkdev.h>
@@ -35,21 +28,6 @@ module_param(default_layout, int, 0644);
 	 (1L << MD_FAILFAST_SUPPORTED) |\
 	 (1L << MD_HAS_PPL) |		\
 	 (1L << MD_HAS_MULTIPLE_PPLS))
-
-static int raid0_congested(struct mddev *mddev, int bits)
-{
-	struct r0conf *conf = mddev->private;
-	struct md_rdev **devlist = conf->devlist;
-	int raid_disks = conf->strip_zone[0].nb_dev;
-	int i, ret = 0;
-
-	for (i = 0; i < raid_disks && !ret ; i++) {
-		struct request_queue *q = bdev_get_queue(devlist[i]->bdev);
-
-		ret |= bdi_congested(q->backing_dev_info, bits);
-	}
-	return ret;
-}
 
 /*
  * inform the user of the raid configuration
@@ -159,12 +137,11 @@ static int create_strip_zones(struct mddev *mddev, struct r0conf **private_conf)
 		   default_layout == RAID0_ALT_MULTIZONE_LAYOUT) {
 		conf->layout = default_layout;
 	} else {
-		conf->layout = RAID0_ALT_MULTIZONE_LAYOUT;
-		pr_warn("md/raid0:%s: !!! DEFAULTING TO ALTERNATE LAYOUT !!!\n",
+		pr_err("md/raid0:%s: cannot assemble multi-zone RAID0 with default_layout setting\n",
 		       mdname(mddev));
-		pr_warn("md/raid0: Please set raid0.default_layout to 1 or 2\n");
-		pr_warn("md/raid0: Read the following page for more information:\n");
-		pr_warn("md/raid0: https://wiki.ubuntu.com/Kernel/Raid0LayoutMigration\n");
+		pr_err("md/raid0: please set raid0.default_layout to 1 or 2\n");
+		err = -ENOTSUPP;
+		goto abort;
 	}
 	/*
 	 * now since we have the hard sector sizes, we can make sure
@@ -179,12 +156,14 @@ static int create_strip_zones(struct mddev *mddev, struct r0conf **private_conf)
 	}
 
 	err = -ENOMEM;
-	conf->strip_zone = kzalloc(sizeof(struct strip_zone)*
-				conf->nr_strip_zones, GFP_KERNEL);
+	conf->strip_zone = kcalloc(conf->nr_strip_zones,
+				   sizeof(struct strip_zone),
+				   GFP_KERNEL);
 	if (!conf->strip_zone)
 		goto abort;
-	conf->devlist = kzalloc(sizeof(struct md_rdev*)*
-				conf->nr_strip_zones*mddev->raid_disks,
+	conf->devlist = kzalloc(array3_size(sizeof(struct md_rdev *),
+					    conf->nr_strip_zones,
+					    mddev->raid_disks),
 				GFP_KERNEL);
 	if (!conf->devlist)
 		goto abort;
@@ -377,7 +356,21 @@ static sector_t raid0_size(struct mddev *mddev, sector_t sectors, int raid_disks
 	return array_sectors;
 }
 
-static void raid0_free(struct mddev *mddev, void *priv);
+static void free_conf(struct mddev *mddev, struct r0conf *conf)
+{
+	kfree(conf->strip_zone);
+	kfree(conf->devlist);
+	kfree(conf);
+	mddev->private = NULL;
+}
+
+static void raid0_free(struct mddev *mddev, void *priv)
+{
+	struct r0conf *conf = priv;
+
+	free_conf(mddev, conf);
+	acct_bioset_exit(mddev);
+}
 
 static int raid0_run(struct mddev *mddev)
 {
@@ -391,11 +384,16 @@ static int raid0_run(struct mddev *mddev)
 	if (md_check_no_bitmap(mddev))
 		return -EINVAL;
 
+	if (acct_bioset_init(mddev)) {
+		pr_err("md/raid0:%s: alloc acct bioset failed.\n", mdname(mddev));
+		return -ENOMEM;
+	}
+
 	/* if private is not null, we are here after takeover */
 	if (mddev->private == NULL) {
 		ret = create_strip_zones(mddev, &conf);
 		if (ret < 0)
-			return ret;
+			goto exit_acct_set;
 		mddev->private = conf;
 	}
 	conf = mddev->private;
@@ -419,9 +417,9 @@ static int raid0_run(struct mddev *mddev)
 				discard_supported = true;
 		}
 		if (!discard_supported)
-			queue_flag_clear_unlocked(QUEUE_FLAG_DISCARD, mddev->queue);
+			blk_queue_flag_clear(QUEUE_FLAG_DISCARD, mddev->queue);
 		else
-			queue_flag_set_unlocked(QUEUE_FLAG_DISCARD, mddev->queue);
+			blk_queue_flag_set(QUEUE_FLAG_DISCARD, mddev->queue);
 	}
 
 	/* calculate array device size */
@@ -431,53 +429,19 @@ static int raid0_run(struct mddev *mddev)
 		 mdname(mddev),
 		 (unsigned long long)mddev->array_sectors);
 
-	if (mddev->queue) {
-		/* calculate the max read-ahead size.
-		 * For read-ahead of large files to be effective, we need to
-		 * readahead at least twice a whole stripe. i.e. number of devices
-		 * multiplied by chunk size times 2.
-		 * If an individual device has an ra_pages greater than the
-		 * chunk size, then we will not drive that device as hard as it
-		 * wants.  We consider this a configuration error: a larger
-		 * chunksize should be used in that case.
-		 */
-		int stripe = mddev->raid_disks *
-			(mddev->chunk_sectors << 9) / PAGE_SIZE;
-		if (mddev->queue->backing_dev_info->ra_pages < 2* stripe)
-			mddev->queue->backing_dev_info->ra_pages = 2* stripe;
-	}
-
 	dump_zones(mddev);
 
 	ret = md_integrity_register(mddev);
+	if (ret)
+		goto free;
 
 	return ret;
-}
 
-static void raid0_free(struct mddev *mddev, void *priv)
-{
-	struct r0conf *conf = priv;
-
-	kfree(conf->strip_zone);
-	kfree(conf->devlist);
-	kfree(conf);
-}
-
-/*
- * Is io distribute over 1 or more chunks ?
-*/
-static inline int is_io_in_chunk_boundary(struct mddev *mddev,
-			unsigned int chunk_sects, struct bio *bio)
-{
-	if (likely(is_power_of_2(chunk_sects))) {
-		return chunk_sects >=
-			((bio->bi_iter.bi_sector & (chunk_sects-1))
-					+ bio_sectors(bio));
-	} else{
-		sector_t sector = bio->bi_iter.bi_sector;
-		return chunk_sects >= (sector_div(sector, chunk_sects)
-						+ bio_sectors(bio));
-	}
+free:
+	free_conf(mddev, conf);
+exit_acct_set:
+	acct_bioset_exit(mddev);
+	return ret;
 }
 
 static void raid0_handle_discard(struct mddev *mddev, struct bio *bio)
@@ -499,9 +463,9 @@ static void raid0_handle_discard(struct mddev *mddev, struct bio *bio)
 	if (bio_end_sector(bio) > zone->zone_end) {
 		struct bio *split = bio_split(bio,
 			zone->zone_end - bio->bi_iter.bi_sector, GFP_NOIO,
-			mddev->bio_set);
+			&mddev->bio_set);
 		bio_chain(split, bio);
-		generic_make_request(bio);
+		submit_bio_noacct(bio);
 		bio = split;
 		end = zone->zone_end;
 	} else
@@ -593,11 +557,15 @@ static bool raid0_make_request(struct mddev *mddev, struct bio *bio)
 	sector = bio_sector;
 
 	if (sectors < bio_sectors(bio)) {
-		struct bio *split = bio_split(bio, sectors, GFP_NOIO, mddev->bio_set);
+		struct bio *split = bio_split(bio, sectors, GFP_NOIO,
+					      &mddev->bio_set);
 		bio_chain(split, bio);
-		generic_make_request(bio);
+		submit_bio_noacct(bio);
 		bio = split;
 	}
+
+	if (bio->bi_pool != &mddev->bio_set)
+		md_account_bio(mddev, &bio);
 
 	orig_sector = sector;
 	zone = find_zone(mddev->private, &sector);
@@ -624,11 +592,11 @@ static bool raid0_make_request(struct mddev *mddev, struct bio *bio)
 		tmp_dev->data_offset;
 
 	if (mddev->gendisk)
-		trace_block_bio_remap(bio->bi_disk->queue, bio,
-				disk_devt(mddev->gendisk), bio_sector);
+		trace_block_bio_remap(bio, disk_devt(mddev->gendisk),
+				      bio_sector);
 	mddev_check_writesame(mddev, bio);
 	mddev_check_write_zeroes(mddev, bio);
-	generic_make_request(bio);
+	submit_bio_noacct(bio);
 	return true;
 }
 
@@ -813,7 +781,6 @@ static struct md_personality raid0_personality=
 	.size		= raid0_size,
 	.takeover	= raid0_takeover,
 	.quiesce	= raid0_quiesce,
-	.congested	= raid0_congested,
 };
 
 static int __init raid0_init (void)
