@@ -415,6 +415,7 @@ int seg_validator_next(struct seg_validator* this, size_t* next_seg) {
 	int r;
 	bool valid;
 
+next:
 	while(this->cur_segment < this->nr_segment) {
 		r = this->seg_validity_table->get(this->seg_validity_table, this->cur_segment, &valid);
 		if (!r && !valid) {
@@ -423,6 +424,11 @@ int seg_validator_next(struct seg_validator* this, size_t* next_seg) {
 		}
 		this->cur_segment += 1;
 	}
+
+	// since there is no segment cleaning method, a trick to provide sufficient space
+	this->cur_segment = 0;
+	this->seg_validity_table->format(this->seg_validity_table, false);
+	goto next;
 
 	return -ENODATA;
 }
