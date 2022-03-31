@@ -1,1 +1,1 @@
-kernel/drivers/md/bcache/bcache.ko
+drivers/md/bcache/bcache.ko

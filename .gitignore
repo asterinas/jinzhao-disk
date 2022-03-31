@@ -2,6 +2,7 @@
 *.ko
 *.cmd
 *.d
+*.mod
 *.mod.c
 disk0
 disk1
