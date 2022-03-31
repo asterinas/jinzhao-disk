@@ -11,7 +11,7 @@
 #define SWORNDISK_METADATA_BLOCK_SIZE (DM_SM_METADATA_BLOCK_SIZE << SECTOR_SHIFT)
 
 struct disk_array {
-	sector_t start;
+	dm_block_t start;
 	size_t nr_entry;
 	size_t entry_size;
 	size_t entries_per_block;
@@ -22,7 +22,7 @@ struct disk_array {
 	void* (*get)(struct disk_array* this, size_t index);
 };
 
-struct disk_array* disk_array_create(struct dm_block_manager* bm, sector_t start, size_t nr_entry, size_t entry_size);
+struct disk_array* disk_array_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_entry, size_t entry_size);
 void disk_array_destroy(struct disk_array* this);
 
 // disk bitset definition
@@ -36,7 +36,7 @@ struct disk_bitset {
 	int (*get)(struct disk_bitset* this, size_t index, bool* result);
 };
 
-struct disk_bitset* disk_bitset_create(struct dm_block_manager* bm, sector_t start, size_t nr_bit);
+struct disk_bitset* disk_bitset_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_bit);
 void disk_bitset_destroy(struct disk_bitset* this);
 
 // disk queue definition
@@ -101,13 +101,13 @@ struct seg_validator {
 	int (*next)(struct seg_validator* this, size_t* next_seg);
 };
 
-struct seg_validator* seg_validator_create(struct dm_block_manager* bm, sector_t start, size_t nr_segment);
+struct seg_validator* seg_validator_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_segment);
 void seg_validator_destroy(struct seg_validator* this);
 
 // reverse index table definition
 struct reverse_index_entry {
 	bool valid: 1;
-	sector_t lba;
+	dm_block_t lba;
 } __packed;
 
 struct reverse_index_table {
@@ -115,8 +115,8 @@ struct reverse_index_table {
 	struct disk_array* array;
 
 	int (*format)(struct reverse_index_table* this);
-	int (*set)(struct reverse_index_table* this, sector_t pba, sector_t lba);
-	int (*get)(struct reverse_index_table* this, sector_t pba, sector_t *lba);
+	int (*set)(struct reverse_index_table* this, dm_block_t pba, dm_block_t lba);
+	int (*get)(struct reverse_index_table* this, dm_block_t pba, dm_block_t *lba);
 };
 
 // metadata definition
