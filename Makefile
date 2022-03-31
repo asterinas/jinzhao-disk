@@ -32,6 +32,7 @@ raid456-y	+= raid5.o raid5-cache.o raid5-ppl.o
 linear-y	+= md-linear.o
 multipath-y	+= md-multipath.o
 faulty-y	+= md-faulty.o
+sworndisk-y       += sworndisk/source/dm-sworndisk.o sworndisk/source/metadata.o sworndisk/source/hashmap.o sworndisk/source/memtable.o sworndisk/source/bio_operate.o sworndisk/source/crypto.o sworndisk/source/segment_allocator.o sworndisk/source/segment_buffer.o sworndisk/source/generic_cache.o
 
 # Note: link order is important.  All raid personalities
 # and must come before md.o, as they each initialise 
@@ -83,6 +84,7 @@ obj-$(CONFIG_DM_LOG_WRITES)	+= dm-log-writes.o
 obj-$(CONFIG_DM_INTEGRITY)	+= dm-integrity.o
 obj-$(CONFIG_DM_ZONED)		+= dm-zoned.o
 obj-$(CONFIG_DM_WRITECACHE)	+= dm-writecache.o
+obj-$(CONFIG_SWORNDISK)           += sworndisk.o
 
 ifeq ($(CONFIG_DM_INIT),y)
 dm-mod-objs			+= dm-init.o

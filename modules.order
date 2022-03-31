@@ -36,3 +36,4 @@ drivers/md/dm-log-writes.ko
 drivers/md/dm-integrity.ko
 drivers/md/dm-zoned.ko
 drivers/md/dm-writecache.ko
+drivers/md/sworndisk.ko
