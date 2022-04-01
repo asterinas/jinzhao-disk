@@ -14,7 +14,7 @@
 void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
     int r;
     struct record* record;
-    sector_t lba, pba;
+    dm_block_t lba, pba;
     DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
 
     if (this->cur_sector + bio_sectors(bio) >= SECTOES_PER_SEGMENT) {
@@ -126,7 +126,7 @@ struct segment_buffer* segbuf_create(struct dm_sworndisk_target* sworndisk) {
     int r;
     struct default_segment_buffer* buf;
 
-    buf = kmalloc(sizeof(struct default_segment_allocator), GFP_KERNEL);
+    buf = kmalloc(sizeof(struct default_segment_buffer), GFP_KERNEL);
     if (!buf)
         return NULL;
     

@@ -5,7 +5,7 @@
 #include "../include/crypto.h"
 
 // memtable value definition
-struct record* record_create(uint32_t pba, char* key, char* iv, char* mac) {
+struct record* record_create(dm_block_t pba, char* key, char* iv, char* mac) {
     struct record* val;
 
     val = (struct record*) kmalloc(sizeof(struct record), GFP_KERNEL);
@@ -176,8 +176,15 @@ struct memtable_rbnode* memtable_rbnode_create(uint32_t key, void* val, void (*d
 int memtable_rbnode_cmp(struct rb_node* node1, const struct rb_node* node2) {
     struct memtable_rbnode *entry1, *entry2;
 
+    if (node1 == NULL)
+        DMINFO("node1 is null");
+    
+    if (node2 == NULL)
+        DMINFO("node2 is null");
+
     entry1 = rb_entry(node1, struct memtable_rbnode, node);
     entry2 = rb_entry(node2, struct memtable_rbnode, node);
+
     return (int64_t)entry1->key - (int64_t)entry2->key;
 }
 
@@ -212,8 +219,8 @@ void* __rbtree_memtable_search(struct rb_root* root, uint32_t key) {
 }
 
 void rbtree_memtable_put(struct memtable* mt, uint32_t key, void* val) {
-    struct rb_node* node;
-    struct memtable_rbnode *old, *new;
+    struct rb_node* node = NULL;
+    struct memtable_rbnode *old = NULL, *new = NULL;
     RBTREE_MEMTABLE_THIS_POINTER_DECLARE
 
     new = memtable_rbnode_create(key, val, record_destroy);
@@ -223,8 +230,8 @@ void rbtree_memtable_put(struct memtable* mt, uint32_t key, void* val) {
 next:
     node = rb_find_add(&new->node, &this->root, memtable_rbnode_cmp);
     if (node) {
-        rb_erase(node, &this->root);
         old = rb_entry(node, struct memtable_rbnode, node);
+        rb_erase(node, &this->root);
         memtable_rbnode_destroy(old);
         goto next;
     }
@@ -234,9 +241,10 @@ int rbtree_memtable_get(struct memtable* mt, uint32_t key, void** p_val) {
     RBTREE_MEMTABLE_THIS_POINTER_DECLARE
 
     *p_val = __rbtree_memtable_search(&this->root, key);
-    if (*p_val)
+    if (*p_val) {
         return 0;
-    
+    }
+        
     return -ENODATA;
 }
 

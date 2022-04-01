@@ -78,7 +78,7 @@ static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
 {
     struct dm_sworndisk_target* sworndisk;
 
-    sworndisk = target->private;
+    sworndisk = target->private;    
     bio_set_dev(bio, sworndisk->data_dev->bdev);
     if (bio_sectors(bio) > SECTORS_PER_BLOCK)
         dm_accept_partial_bio(bio, SECTORS_PER_BLOCK);
@@ -105,7 +105,7 @@ exit:
 static int dm_sworndisk_target_ctr(struct dm_target *target,
 			    unsigned int argc, char **argv)
 {
-    struct dm_sworndisk_target *sworndisk;
+    struct dm_sworndisk_target *sworndisk = NULL;
     unsigned long long start;
     char dummy;
     int ret;
@@ -211,8 +211,6 @@ static void dm_sworndisk_target_dtr(struct dm_target *ti)
     struct dm_sworndisk_target *sworndisk = (struct dm_sworndisk_target *) ti->private;
     if (sworndisk->metadata)
         metadata_destroy(sworndisk->metadata);
-    dm_put_device(ti, sworndisk->data_dev);
-    dm_put_device(ti, sworndisk->metadata_dev);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
     if (sworndisk->wq) 
@@ -221,6 +219,9 @@ static void dm_sworndisk_target_dtr(struct dm_target *ti)
         sworndisk->memtable->destroy(sworndisk->memtable);
     if (sworndisk->seg_allocator)
         sworndisk->seg_allocator->destroy(sworndisk->seg_allocator);
+
+    dm_put_device(ti, sworndisk->data_dev);
+    dm_put_device(ti, sworndisk->metadata_dev);
     if (sworndisk)
         kfree(sworndisk);
 }

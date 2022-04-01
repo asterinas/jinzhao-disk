@@ -198,8 +198,6 @@ struct superblock* superblock_create(struct dm_block_manager* bm) {
 
 void superblock_destroy(struct superblock* this) {
 	if (!IS_ERR_OR_NULL(this)) {
-		if (!IS_ERR_OR_NULL(this->bm))
-			dm_block_manager_destroy(this->bm);
 		kfree(this);
 	}
 }
@@ -222,11 +220,10 @@ int disk_array_set(struct disk_array* this, size_t index, void* entry) {
 	r = dm_bm_write_lock(this->bm, disk_array_entry_block(this, index), NULL, &block);
 	if (r)
 		return r;
-
+		
 	memcpy(dm_block_data(block) + disk_array_entry_offset(this, index), entry, this->entry_size);
 	
 	dm_bm_unlock(block);
-	// return dm_bm_flush(this->bm);
 	return 0;
 }
 
@@ -260,7 +257,7 @@ int disk_array_format(struct disk_array* this, bool value) {
 		r = dm_bm_write_lock(this->bm, this->start + shift, NULL, &block);
 		if (r)
 			return r;
-		cycle = SECTOR_SIZE;
+		cycle = SWORNDISK_METADATA_BLOCK_SIZE;
 		if (total < cycle)
 			cycle = total;
 		memset(dm_block_data(block), value ? -1 : 0, cycle);
@@ -270,7 +267,7 @@ int disk_array_format(struct disk_array* this, bool value) {
 		shift += 1;
 	}
 
-	return dm_bm_flush(this->bm);
+	return 0;
 }
 
 
@@ -305,10 +302,6 @@ struct disk_array* disk_array_create(struct dm_block_manager* bm, dm_block_t sta
 
 void disk_array_destroy(struct disk_array* this) {
 	if (!IS_ERR_OR_NULL(this)) {
-		if (!IS_ERR_OR_NULL(this->bm)) {
-			dm_bm_flush(this->bm);
-			dm_block_manager_destroy(this->bm);
-		}
 		kfree(this);
 	}
 }
@@ -340,6 +333,7 @@ int __disk_bitset_operate(struct disk_bitset* this, size_t index, bool set) {
 	
 	(set ? set_bit : clear_bit)(__disk_bitset_offset(index), group);
 	r = this->array->set(this->array, __disk_bitset_group(index), group);
+	
 	kfree(group);
 	return r;
 }
@@ -360,6 +354,8 @@ int disk_bitset_get(struct disk_bitset* this, size_t index, bool* result) {
 		return -EINVAL;
 	
 	*result = test_bit(__disk_bitset_offset(index), group);
+
+	kfree(group);
 	return 0;
 }
 
@@ -601,10 +597,16 @@ struct metadata* metadata_create(struct block_device* bdev) {
 
 void metadata_destroy(struct metadata* this) {
 	if (!IS_ERR_OR_NULL(this)) {
+		if (!IS_ERR_OR_NULL(this->bm)) {
+			dm_bm_flush(this->bm);
+			dm_block_manager_destroy(this->bm);
+		}
 		if (!IS_ERR_OR_NULL(this->superblock))
 			superblock_destroy(this->superblock);
 		if (!IS_ERR_OR_NULL(this->seg_validator))
 			seg_validator_destroy(this->seg_validator);
+		if (!IS_ERR_OR_NULL(this->reverse_index_table))
+			reverse_index_table_destroy(this->reverse_index_table);
 		kfree(this);
 	}
 }
