@@ -32,11 +32,6 @@ struct default_segment_buffer {
     struct dm_sworndisk_target* sworndisk;
 };
 
-struct segbuf_flush_context {
-	struct bvec_iter bi_iter;
-    struct dm_sworndisk_target* sworndisk;
-};
-
 struct segment_buffer* segbuf_create(struct dm_sworndisk_target* sowrndisk);
 
 #endif

@@ -12,7 +12,7 @@ void bio_set_sector(struct bio *bio, unsigned int sector) {
 }
 
 // in bytes
-unsigned int bio_get_data_len(struct bio* bio) {
+size_t bio_get_data_len(struct bio* bio) {
     return bio->bi_iter.bi_size;
 }
 
@@ -20,7 +20,7 @@ void bio_set_data_len(struct bio* bio, unsigned int len) {
     bio->bi_iter.bi_size = len;
 }
 
-size_t bio_get_block_address(struct bio* bio) {
+dm_block_t bio_get_block_address(struct bio* bio) {
     return bio_get_sector(bio) / SECTORS_PER_BLOCK;
 }
 

@@ -104,44 +104,50 @@ void superblock_print(struct superblock* this) {
 #include "../include/segment_allocator.h"
 #define LSM_TREE_DISK_LEVEL_COMMON_RATIO 8
 
-size_t __index_region_sectors(size_t nr_disk_level, size_t common_ratio, size_t max_disk_level_size) {
-	size_t i, sectors, cur_size;
+size_t __superblock_blocks(void) {
+	size_t size;
 
+	size = sizeof(struct superblock);
+	return size ? (size - 1) / SWORNDISK_METADATA_BLOCK_SIZE + 1 : 0;
+}
+
+size_t __index_region_blocks(size_t nr_disk_level, size_t common_ratio, size_t max_disk_level_size) {
+	size_t i, blocks, cur_size;
+
+	blocks = 0;
 	cur_size = max_disk_level_size;
 	for (i = 0; i < nr_disk_level; ++i) {
-		sectors += cur_size;
+		blocks += cur_size;
 		cur_size /= common_ratio;
 	}
 
-	return sectors;
+	return blocks;
 }
 
-size_t __journal_region_sectors(size_t nr_journal, size_t journal_size) {
+size_t __journal_region_blocks(size_t nr_journal, size_t journal_size) {
 	size_t bytes;
 
 	bytes = nr_journal * journal_size;
 	if (!bytes)
 		return 0;
 	
-	return (bytes - 1) / SECTOR_SIZE + 1;
+	return (bytes - 1) / SWORNDISK_METADATA_BLOCK_SIZE + 1;
 }
 
-size_t __seg_validity_table_sectors(size_t nr_segment) {
+size_t __seg_validity_table_blocks(size_t nr_segment) {
 	if (!nr_segment)
 		return 0;
-	return (((nr_segment - 1) / BITS_PER_LONG + 1) * sizeof(unsigned long) - 1) / SECTOR_SIZE + 1;
+	return (((nr_segment - 1) / BITS_PER_LONG + 1) * sizeof(unsigned long) - 1) / SWORNDISK_METADATA_BLOCK_SIZE + 1;
 }
 
-size_t __data_seg_table_sectors(size_t nr_segment, size_t blocks_per_seg) {
+size_t __data_seg_table_blocks(size_t nr_segment, size_t blocks_per_seg) {
 	return 0;
 }
 
-int superblock_init(struct superblock* this, struct block_device* bdev) {
+int superblock_init(struct superblock* this, struct dm_block_manager* bm) {
 	int r;
 
-	this->bm = dm_block_manager_create(bdev, SECTOR_SIZE, SWORNDISK_MAX_CONCURRENT_LOCKS);
-	if (IS_ERR_OR_NULL(this->bm))
-		return -ENOMEM;
+	this->bm = bm;
 
 	this->read = superblock_read;
 	this->write = superblock_write;
@@ -161,21 +167,21 @@ int superblock_init(struct superblock* this, struct block_device* bdev) {
 	this->common_ratio = LSM_TREE_DISK_LEVEL_COMMON_RATIO;
 	this->nr_disk_level = 0;
 	this->max_disk_level_size = 0;
-	this->index_region_start = SUPERBLOCK_LOCATION + sizeof(struct superblock) / SECTOR_SIZE + 1;
+	this->index_region_start = SUPERBLOCK_LOCATION +  __superblock_blocks();
 	this->journal_size = 0;
 	this->nr_journal = 0;
 	this->cur_journal = 0;
-	this->journal_region_start = this->index_region_start + __index_region_sectors(
+	this->journal_region_start = this->index_region_start + __index_region_blocks(
 	  this->nr_disk_level, this->common_ratio, this->max_disk_level_size);
-	this->seg_validity_table_start = this->journal_region_start + __journal_region_sectors(this->nr_journal, this->journal_size);
-	this->data_seg_table_start = this->seg_validity_table_start + __seg_validity_table_sectors(this->nr_segment);
-	this->reverse_index_table_start = this->data_seg_table_start + __data_seg_table_sectors(this->nr_segment, this->blocks_per_seg);
+	this->seg_validity_table_start = this->journal_region_start + __journal_region_blocks(this->nr_journal, this->journal_size);
+	this->data_seg_table_start = this->seg_validity_table_start + __seg_validity_table_blocks(this->nr_segment);
+	this->reverse_index_table_start = this->data_seg_table_start + __data_seg_table_blocks(this->nr_segment, this->blocks_per_seg);
 
 	this->write(this);
 	return 0;
 }
 
-struct superblock* superblock_create(struct block_device* bdev) {
+struct superblock* superblock_create(struct dm_block_manager* bm) {
 	int r;
 	struct superblock* this;
 
@@ -183,7 +189,7 @@ struct superblock* superblock_create(struct block_device* bdev) {
 	if (!this)
 		return NULL;
 	
-	r = superblock_init(this, bdev);
+	r = superblock_init(this, bm);
 	if (r)
 		return NULL;
 	
@@ -192,14 +198,12 @@ struct superblock* superblock_create(struct block_device* bdev) {
 
 void superblock_destroy(struct superblock* this) {
 	if (!IS_ERR_OR_NULL(this)) {
-		if (!IS_ERR_OR_NULL(this->bm))
-			dm_block_manager_destroy(this->bm);
 		kfree(this);
 	}
 }
 
 // disk array implememtation
-sector_t disk_array_entry_block(struct disk_array* this, size_t index) {
+dm_block_t disk_array_entry_block(struct disk_array* this, size_t index) {
 	return this->start + index / this->entries_per_block;
 }
 
@@ -216,11 +220,10 @@ int disk_array_set(struct disk_array* this, size_t index, void* entry) {
 	r = dm_bm_write_lock(this->bm, disk_array_entry_block(this, index), NULL, &block);
 	if (r)
 		return r;
-
+		
 	memcpy(dm_block_data(block) + disk_array_entry_offset(this, index), entry, this->entry_size);
 	
 	dm_bm_unlock(block);
-	// return dm_bm_flush(this->bm);
 	return 0;
 }
 
@@ -254,7 +257,7 @@ int disk_array_format(struct disk_array* this, bool value) {
 		r = dm_bm_write_lock(this->bm, this->start + shift, NULL, &block);
 		if (r)
 			return r;
-		cycle = SECTOR_SIZE;
+		cycle = SWORNDISK_METADATA_BLOCK_SIZE;
 		if (total < cycle)
 			cycle = total;
 		memset(dm_block_data(block), value ? -1 : 0, cycle);
@@ -264,20 +267,16 @@ int disk_array_format(struct disk_array* this, bool value) {
 		shift += 1;
 	}
 
-	return dm_bm_flush(this->bm);
+	return 0;
 }
 
 
-int disk_array_init(struct disk_array* this, struct block_device* bdev, sector_t start, size_t nr_entry, size_t entry_size) {
-	this->bdev = bdev;
+int disk_array_init(struct disk_array* this, struct dm_block_manager* bm, dm_block_t start, size_t nr_entry, size_t entry_size) {
 	this->start = start;
 	this->nr_entry = nr_entry;
 	this->entry_size = entry_size;
-	this->entries_per_block = DISK_ARRAY_BLOCK_SIZE / this->entry_size;
-
-	this->bm = dm_block_manager_create(bdev, DISK_ARRAY_BLOCK_SIZE, SWORNDISK_MAX_CONCURRENT_LOCKS);
-	if (IS_ERR_OR_NULL(this->bm))
-		return -ENOMEM;
+	this->entries_per_block = SWORNDISK_METADATA_BLOCK_SIZE / this->entry_size;
+	this->bm = bm;
 
 	this->set = disk_array_set;
 	this->get = disk_array_get;
@@ -286,7 +285,7 @@ int disk_array_init(struct disk_array* this, struct block_device* bdev, sector_t
 	return 0;
 }
 
-struct disk_array* disk_array_create(struct block_device* bdev, sector_t start, size_t nr_entry, size_t entry_size) {
+struct disk_array* disk_array_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_entry, size_t entry_size) {
 	int r;
 	struct disk_array* this;
 
@@ -294,7 +293,7 @@ struct disk_array* disk_array_create(struct block_device* bdev, sector_t start, 
 	if (!this)
 		return NULL;
 	
-	r = disk_array_init(this, bdev, start, nr_entry, entry_size);
+	r = disk_array_init(this, bm, start, nr_entry, entry_size);
 	if (r)
 		return NULL;
 	
@@ -303,10 +302,6 @@ struct disk_array* disk_array_create(struct block_device* bdev, sector_t start, 
 
 void disk_array_destroy(struct disk_array* this) {
 	if (!IS_ERR_OR_NULL(this)) {
-		if (!IS_ERR_OR_NULL(this->bm)) {
-			dm_bm_flush(this->bm);
-			dm_block_manager_destroy(this->bm);
-		}
 		kfree(this);
 	}
 }
@@ -338,6 +333,7 @@ int __disk_bitset_operate(struct disk_bitset* this, size_t index, bool set) {
 	
 	(set ? set_bit : clear_bit)(__disk_bitset_offset(index), group);
 	r = this->array->set(this->array, __disk_bitset_group(index), group);
+	
 	kfree(group);
 	return r;
 }
@@ -358,6 +354,8 @@ int disk_bitset_get(struct disk_bitset* this, size_t index, bool* result) {
 		return -EINVAL;
 	
 	*result = test_bit(__disk_bitset_offset(index), group);
+
+	kfree(group);
 	return 0;
 }
 
@@ -365,9 +363,9 @@ int disk_bitset_format(struct disk_bitset* this, bool value) {
 	return this->array->format(this->array, value);
 }
 
-int disk_bitset_init(struct disk_bitset* this, struct block_device* bdev, sector_t start, size_t nr_bit) {
+int disk_bitset_init(struct disk_bitset* this, struct dm_block_manager* bm, dm_block_t start, size_t nr_bit) {
 	this->nr_bit = nr_bit;
-	this->array = disk_array_create(bdev, start, __disk_bitset_nr_group(nr_bit), sizeof(unsigned long));
+	this->array = disk_array_create(bm, start, __disk_bitset_nr_group(nr_bit), sizeof(unsigned long));
 	if (IS_ERR_OR_NULL(this->array))
 		return -ENOMEM;
 
@@ -379,14 +377,14 @@ int disk_bitset_init(struct disk_bitset* this, struct block_device* bdev, sector
 	return 0;
 }
 
-struct disk_bitset* disk_bitset_create(struct block_device* bdev, sector_t start, size_t nr_bit) {
+struct disk_bitset* disk_bitset_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_bit) {
 	struct disk_bitset* this;
 
 	this = kmalloc(sizeof(struct disk_bitset), GFP_KERNEL);
 	if (!this)
 		return NULL;
 	
-	disk_bitset_init(this, bdev, start, nr_bit);
+	disk_bitset_init(this, bm, start, nr_bit);
 
 	return this;
 }
@@ -433,12 +431,12 @@ next:
 	return -ENODATA;
 }
 
-int seg_validator_init(struct seg_validator* this, struct block_device* bdev, sector_t start, size_t nr_segment) {
+int seg_validator_init(struct seg_validator* this, struct dm_block_manager* bm, dm_block_t start, size_t nr_segment) {
 	int r;
 
 	this->nr_segment = nr_segment;
 	this->cur_segment = 0;
-	this->seg_validity_table = disk_bitset_create(bdev, start, nr_segment);
+	this->seg_validity_table = disk_bitset_create(bm, start, nr_segment);
 	if (IS_ERR_OR_NULL(this->seg_validity_table))
 		return -ENOMEM;
 
@@ -452,7 +450,7 @@ int seg_validator_init(struct seg_validator* this, struct block_device* bdev, se
 	return 0;
 } 
 
-struct seg_validator* seg_validator_create(struct block_device* bdev, sector_t start, size_t nr_segment) {
+struct seg_validator* seg_validator_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_segment) {
 	int r;
 	struct seg_validator* this;
 
@@ -460,7 +458,7 @@ struct seg_validator* seg_validator_create(struct block_device* bdev, sector_t s
 	if (!this)
 		return NULL;
 	
-	r = seg_validator_init(this, bdev, start, nr_segment);
+	r = seg_validator_init(this, bm, start, nr_segment);
 	if (r)
 		return NULL;
 
@@ -472,11 +470,11 @@ int reverse_index_table_format(struct reverse_index_table* this) {
 	return this->array->format(this->array, false);
 }
 
-int __reverse_index_table_set_entry(struct reverse_index_table* this, sector_t pba, struct reverse_index_entry* entry) {
+int __reverse_index_table_set_entry(struct reverse_index_table* this, dm_block_t pba, struct reverse_index_entry* entry) {
 	return this->array->set(this->array, pba, entry);
 }
 
-int reverse_index_table_set(struct reverse_index_table* this, sector_t pba, sector_t lba) {
+int reverse_index_table_set(struct reverse_index_table* this, dm_block_t pba, dm_block_t lba) {
 	int r;
 	struct reverse_index_entry entry = {
 		.valid = true,
@@ -490,11 +488,11 @@ int reverse_index_table_set(struct reverse_index_table* this, sector_t pba, sect
 	return 0;
 }
 
-struct reverse_index_entry* __reverse_index_table_get_entry(struct reverse_index_table* this, sector_t pba) {
+struct reverse_index_entry* __reverse_index_table_get_entry(struct reverse_index_table* this, dm_block_t pba) {
 	return this->array->get(this->array, pba);
 }
 
-int reverse_index_table_get(struct reverse_index_table* this, sector_t pba, sector_t* lba) {
+int reverse_index_table_get(struct reverse_index_table* this, dm_block_t pba, dm_block_t* lba) {
 	struct reverse_index_entry* entry;
 
 	entry = __reverse_index_table_get_entry(this, pba);
@@ -508,9 +506,9 @@ int reverse_index_table_get(struct reverse_index_table* this, sector_t pba, sect
 	return 0;
 }
 
-int reverse_index_table_init(struct reverse_index_table* this, struct block_device* bdev, sector_t start, size_t nr_block) {
+int reverse_index_table_init(struct reverse_index_table* this, struct dm_block_manager* bm, dm_block_t start, size_t nr_block) {
 	this->nr_block = nr_block;
-	this->array = disk_array_create(bdev, start, this->nr_block, sizeof(struct reverse_index_entry));
+	this->array = disk_array_create(bm, start, this->nr_block, sizeof(struct reverse_index_entry));
 	if (IS_ERR_OR_NULL(this->array))
 		return -ENOMEM;
 
@@ -521,7 +519,7 @@ int reverse_index_table_init(struct reverse_index_table* this, struct block_devi
 	return 0;
 }
 
-struct reverse_index_table* reverse_index_table_create(struct block_device* bdev, sector_t start, size_t nr_block) {
+struct reverse_index_table* reverse_index_table_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_block) {
 	int r;
 	struct reverse_index_table* this;
 
@@ -529,7 +527,7 @@ struct reverse_index_table* reverse_index_table_create(struct block_device* bdev
 	if (!this)
 		return NULL;
 	
-	r = reverse_index_table_init(this, bdev, start, nr_block);
+	r = reverse_index_table_init(this, bm, start, nr_block);
 	if (r)
 		return NULL;
 	
@@ -555,22 +553,27 @@ void seg_validator_destroy(struct seg_validator* this) {
 // metadata implementation
 int metadata_init(struct metadata* this, struct block_device* bdev) {
 	this->bdev = bdev;
+	this->bm = dm_block_manager_create(this->bdev, SWORNDISK_METADATA_BLOCK_SIZE, SWORNDISK_MAX_CONCURRENT_LOCKS);
+	if (IS_ERR_OR_NULL(this->bm))
+		goto bad;
 
-	this->superblock = superblock_create(bdev);
+	this->superblock = superblock_create(this->bm);
 	if (IS_ERR_OR_NULL(this->superblock))
 		goto bad;
 	
-	this->seg_validator = seg_validator_create(bdev, this->superblock->seg_validity_table_start, this->superblock->nr_segment);
+	this->seg_validator = seg_validator_create(this->bm, this->superblock->seg_validity_table_start, this->superblock->nr_segment);
 	if (IS_ERR_OR_NULL(this->seg_validator))
 		goto bad;
 
-	this->reverse_index_table = reverse_index_table_create(bdev, 
+	this->reverse_index_table = reverse_index_table_create(this->bm, 
 	  this->superblock->reverse_index_table_start, this->superblock->nr_segment * this->superblock->blocks_per_seg);
 	if (IS_ERR_OR_NULL(this->reverse_index_table))
 		goto bad;
 	
 	return 0;
 bad:
+	if (!IS_ERR_OR_NULL(this->bm))
+		dm_block_manager_destroy(this->bm);
 	superblock_destroy(this->superblock);
 	seg_validator_destroy(this->seg_validator);
 	reverse_index_table_destroy(this->reverse_index_table);
@@ -594,10 +597,16 @@ struct metadata* metadata_create(struct block_device* bdev) {
 
 void metadata_destroy(struct metadata* this) {
 	if (!IS_ERR_OR_NULL(this)) {
+		if (!IS_ERR_OR_NULL(this->bm)) {
+			dm_bm_flush(this->bm);
+			dm_block_manager_destroy(this->bm);
+		}
 		if (!IS_ERR_OR_NULL(this->superblock))
 			superblock_destroy(this->superblock);
 		if (!IS_ERR_OR_NULL(this->seg_validator))
 			seg_validator_destroy(this->seg_validator);
+		if (!IS_ERR_OR_NULL(this->reverse_index_table))
+			reverse_index_table_destroy(this->reverse_index_table);
 		kfree(this);
 	}
 }

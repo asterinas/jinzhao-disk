@@ -4,17 +4,18 @@
 #include <linux/rwsem.h>
 #include <linux/rbtree.h>
 
+#include "../../persistent-data/dm-block-manager.h"
 #include "hashmap.h"
 
 // memtable value
 struct record {
-    sector_t pba; // physical block address
+    dm_block_t pba; // physical block address
     char *mac;
     char *key;
     char *iv;
 };  
 
-struct record* record_create(uint32_t pba, char* key, char* iv, char* mac);
+struct record* record_create(dm_block_t pba, char* key, char* iv, char* mac);
 
 struct memtable {
     void (*put)(struct memtable* mt, uint32_t key, void* val);

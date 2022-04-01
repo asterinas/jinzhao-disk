@@ -17,9 +17,9 @@ struct bio_crypt_context {
 
 unsigned int bio_get_sector(struct bio *bio);
 void bio_set_sector(struct bio *bio, unsigned int sector);
-unsigned int bio_get_data_len(struct bio* bio);
+size_t bio_get_data_len(struct bio* bio);
 void bio_set_data_len(struct bio* bio, unsigned int len);
-size_t bio_get_block_address(struct bio* bio);
+dm_block_t bio_get_block_address(struct bio* bio);
 sector_t bio_block_sector_offset(struct bio* bio);
 void bio_get_data(struct bio* bio, char* buffer, size_t len);
 void bio_set_data(struct bio* bio, char* buffer, size_t len);

@@ -13,12 +13,13 @@
 struct segment_allocator {
     int (*get_next_free_segment)(struct segment_allocator* al, size_t *seg);
     void (*clean)(struct segment_allocator* al);
+    void (*set_dm_target)(struct segment_allocator* al, void* dm_target);
     void (*destroy)(struct segment_allocator* al);
 };
 
 struct default_segment_allocator {
     struct segment_allocator segment_allocator;
-    struct dm_sworndisk_target* sworndisk;
+    const struct dm_sworndisk_target* sworndisk;
     size_t nr_segment;
 };
 
