@@ -104,13 +104,6 @@ void superblock_print(struct superblock* this) {
 #include "../include/segment_allocator.h"
 #define LSM_TREE_DISK_LEVEL_COMMON_RATIO 8
 
-size_t __superblock_blocks(void) {
-	size_t size;
-
-	size = sizeof(struct superblock);
-	return size ? (size - 1) / SWORNDISK_METADATA_BLOCK_SIZE + 1 : 0;
-}
-
 size_t __index_region_blocks(size_t nr_disk_level, size_t common_ratio, size_t max_disk_level_size) {
 	size_t i, blocks, cur_size;
 
@@ -167,7 +160,7 @@ int superblock_init(struct superblock* this, struct dm_block_manager* bm) {
 	this->common_ratio = LSM_TREE_DISK_LEVEL_COMMON_RATIO;
 	this->nr_disk_level = 0;
 	this->max_disk_level_size = 0;
-	this->index_region_start = SUPERBLOCK_LOCATION +  __superblock_blocks();
+	this->index_region_start = SUPERBLOCK_LOCATION +  STRUCTURE_BLOCKS(struct superblock);
 	this->journal_size = 0;
 	this->nr_journal = 0;
 	this->cur_journal = 0;

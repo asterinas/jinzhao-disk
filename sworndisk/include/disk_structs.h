@@ -36,13 +36,22 @@ void disk_bitset_destroy(struct disk_bitset* this);
 
 // disk queue definition
 struct disk_queue {
-	size_t len, capacity, elem_size, in, out;
+	uint32_t csum;
+	dm_block_t start;
+	size_t size, capacity, elem_size, in, out;
 	struct disk_array* array;
+	struct dm_block_manager* bm;
 
+	void (*print)(struct disk_queue* this);
 	int (*push)(struct disk_queue* this, void* elem);
 	void* (*pop)(struct disk_queue* this);
 	bool (*full)(struct disk_queue* this);
 	bool (*empty)(struct disk_queue* this);
-};
+	int (*load)(struct disk_queue* this);
+	int (*write)(struct disk_queue* this);
+	int (*flush)(struct disk_queue* this);
+} __packed;
+
+struct disk_queue* disk_queue_create(struct dm_block_manager* bm, dm_block_t start, size_t capacity, size_t elem_size);
 
 #endif

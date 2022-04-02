@@ -7,8 +7,9 @@
 #include "../../persistent-data/dm-block-manager.h"
 
 #define SWORNDISK_MAX_CONCURRENT_LOCKS 6
-
 #define SWORNDISK_METADATA_BLOCK_SIZE 4096
+
+#define STRUCTURE_BLOCKS(x) (sizeof(x) ? (sizeof(x) - 1) / SWORNDISK_METADATA_BLOCK_SIZE + 1: 0) 
 
 // superblock definition
 #define SUPERBLOCK_ON_DISK_SIZE (sizeof(struct superblock) - 5 * sizeof(void*) - sizeof(uint32_t))

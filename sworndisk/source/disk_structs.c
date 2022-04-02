@@ -177,18 +177,197 @@ int disk_bitset_init(struct disk_bitset* this, struct dm_block_manager* bm, dm_b
 }
 
 struct disk_bitset* disk_bitset_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_bit) {
+	int r;
 	struct disk_bitset* this;
 
 	this = kmalloc(sizeof(struct disk_bitset), GFP_KERNEL);
 	if (!this)
 		return NULL;
 	
-	disk_bitset_init(this, bm, start, nr_bit);
+	r = disk_bitset_init(this, bm, start, nr_bit);
+	if (r)
+		return NULL;
 
 	return this;
 }
 
 void disk_bitset_destroy(struct disk_bitset* this) {
+	if (!IS_ERR_OR_NULL(this)) {
+		if (!IS_ERR_OR_NULL(this->array))
+			disk_array_destroy(this->array);
+		kfree(this);
+	}
+}
+
+int disk_queue_push(struct disk_queue* this, void* elem) {
+	int r;
+
+	if (this->full(this))
+		return -ENOSPC; // no space
+
+	r= this->array->set(this->array, this->in, elem);
+	if (r)
+		return r;
+	
+	this->in = (this->in + 1) % this->capacity;
+	this->size += 1;
+
+	return 0;
+}
+
+void* disk_queue_pop(struct disk_queue* this) {
+	void* elem;
+
+	if (this->empty(this))
+		return NULL;
+	
+	elem = this->array->get(this->array, this->out);
+	this->out = (this->out + 1) % this->capacity;
+	this->size -= 1;
+
+	return elem;
+}
+
+bool disk_queue_full(struct disk_queue* this) {
+	return this->size == this->capacity;
+}
+
+bool disk_queue_empty(struct disk_queue* this) {
+	return this->size == 0;
+}
+
+// disk queue implementation
+int __disk_io(struct dm_block_manager* bm, struct dm_block_validator* validator, 
+  dm_block_t block_id, size_t offset, size_t len, void* buffer, bool write) {
+	int r;
+	struct dm_block* block;
+	
+	if (offset + len > SWORNDISK_METADATA_BLOCK_SIZE)
+		return -ENODATA;
+	
+	r = (write ? dm_bm_write_lock : dm_bm_read_lock)(bm, block_id, validator, &block);
+	if (r)
+		return r;
+
+	if (write) 
+		memcpy(dm_block_data(block) + offset, buffer, len);
+	else 
+		memcpy(buffer, dm_block_data(block) + offset, len);
+
+	dm_bm_unlock(block);
+	return 0;
+}
+
+int disk_read(struct dm_block_manager* bm, struct dm_block_validator* validator, 
+  dm_block_t block_id, size_t offset, size_t len, void* buffer) {
+	return __disk_io(bm, validator, block_id, offset, len, buffer, false);
+}
+
+int disk_write(struct dm_block_manager* bm, struct dm_block_validator* validator, 
+  dm_block_t block_id, size_t offset, size_t len, void* buffer) {
+	return __disk_io(bm, validator, block_id, offset, len, buffer, true);
+}
+
+// disk queue implementation
+#define DISK_QUEUE_CSUM_XOR 0xde375872
+bool disk_queue_validate(struct disk_queue* disk_queue) {
+	uint32_t csum;
+
+	csum = dm_bm_checksum(&disk_queue->start, sizeof(struct disk_queue) - sizeof(uint32_t), DISK_QUEUE_CSUM_XOR);
+	if (csum != disk_queue->csum)
+		return false;
+
+	return true;
+}
+
+int disk_queue_load(struct disk_queue* this) {
+	int r;
+	struct disk_queue last;
+
+	r = disk_read(this->bm, NULL, this->start, 0, sizeof(struct disk_queue), &last);
+	if (r)
+		return r;
+
+	if (!disk_queue_validate(&last)) {
+		DMERR("disk queue invalid");
+		return -EINVAL;
+	}
+	
+	this->size = last.size;
+	this->capacity = last.capacity;
+	this->elem_size = last.elem_size;
+	this->in = last.in;
+	this->out = last.out;
+
+	return 0;
+}
+
+int disk_queue_write(struct disk_queue* this) {
+	this->csum = dm_bm_checksum(&this->start, sizeof(struct disk_queue) - sizeof(uint32_t), DISK_QUEUE_CSUM_XOR);
+	return disk_write(this->bm, NULL, this->start, 0, sizeof(struct disk_queue), this);
+}
+
+void disk_queue_print(struct disk_queue* this) {
+	DMINFO("disk queue: ");
+	DMINFO("\tcsum: %x", this->csum);
+	DMINFO("\tsize: %ld", this->size);
+	DMINFO("\tcapacity: %ld", this->capacity);
+	DMINFO("\telem_size: %ld", this->elem_size);
+	DMINFO("\tin: %ld", this->in);
+	DMINFO("\tout: %ld", this->out);
+}
+
+int disk_queue_flush(struct disk_queue* this) {
+	return dm_bm_flush(this->bm);
+}
+
+int disk_queue_init(struct disk_queue* this, struct dm_block_manager* bm, dm_block_t start, size_t capacity, size_t elem_size) {
+	int r;
+	
+	this->bm = bm;
+	this->start = start;
+	this->array = disk_array_create(bm, this->start + STRUCTURE_BLOCKS(struct disk_queue), capacity, elem_size);
+	if (IS_ERR_OR_NULL(this->array))
+		return -ENOMEM;
+	
+	this->print = disk_queue_print;
+	this->push = disk_queue_push;
+	this->pop = disk_queue_pop;
+	this->full = disk_queue_full;
+	this->empty = disk_queue_empty;
+	this->load = disk_queue_load;
+	this->write = disk_queue_write;
+	this->flush = disk_queue_flush;
+
+	r = this->load(this);
+	if (!r)
+		return 0;
+
+	this->capacity = capacity;
+	this->elem_size = elem_size;
+	this->size = 0;
+	this->in = 0;
+	this->out = 0;
+
+	return 0;
+}
+
+struct disk_queue* disk_queue_create(struct dm_block_manager* bm, dm_block_t start, size_t capacity, size_t elem_size) {
+	int r;
+	struct disk_queue* this;
+
+	this = kmalloc(sizeof(struct disk_queue), GFP_KERNEL);
+	if (!this)
+		return NULL;
+	
+	r = disk_queue_init(this, bm, start, capacity, elem_size);
+	if (r)
+		return NULL;
+	
+	return this;
+}
+
+void disk_queue_destroy(struct disk_queue* this) {
 	if (!IS_ERR_OR_NULL(this)) {
 		if (!IS_ERR_OR_NULL(this->array))
 			disk_array_destroy(this->array);
