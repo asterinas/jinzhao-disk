@@ -45,6 +45,7 @@ struct disk_queue {
 	void (*print)(struct disk_queue* this);
 	int (*push)(struct disk_queue* this, void* elem);
 	void* (*pop)(struct disk_queue* this);
+	void** (*peek)(struct disk_queue* this, size_t count);
 	bool (*full)(struct disk_queue* this);
 	bool (*empty)(struct disk_queue* this);
 	int (*load)(struct disk_queue* this);
