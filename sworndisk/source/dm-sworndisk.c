@@ -22,6 +22,7 @@
 #include "../include/memtable.h"
 #include "../include/bio_operate.h"
 #include "../include/segment_buffer.h"
+#include "../include/disk_structs.h"
 
 void defer_bio(struct dm_sworndisk_target *sworndisk, struct bio *bio) {
 	unsigned long flags;

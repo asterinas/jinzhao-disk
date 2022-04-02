@@ -1,55 +1,15 @@
 #ifndef DM_SWORNDISK_METADATA_H
 #define DM_SWORNDISK_METADATA_H
 
-#include "../../persistent-data/dm-space-map-metadata.h"
+
 #include "../include/dm_sworndisk.h"
+#include "../include/disk_structs.h"
 #include "../../persistent-data/dm-block-manager.h"
 
 #define SWORNDISK_MAX_CONCURRENT_LOCKS 6
+#define SWORNDISK_METADATA_BLOCK_SIZE 4096
 
-// disk array definition
-#define SWORNDISK_METADATA_BLOCK_SIZE (DM_SM_METADATA_BLOCK_SIZE << SECTOR_SHIFT)
-
-struct disk_array {
-	dm_block_t start;
-	size_t nr_entry;
-	size_t entry_size;
-	size_t entries_per_block;
-	struct dm_block_manager* bm;
-
-	int (*format)(struct disk_array* this, bool value);
-	int (*set)(struct disk_array* this, size_t index, void* entry);
-	void* (*get)(struct disk_array* this, size_t index);
-};
-
-struct disk_array* disk_array_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_entry, size_t entry_size);
-void disk_array_destroy(struct disk_array* this);
-
-// disk bitset definition
-struct disk_bitset {
-	size_t nr_bit;
-	struct disk_array* array;
-
-	int (*format)(struct disk_bitset* this, bool value);
-	int (*set)(struct disk_bitset* this, size_t index);
-	int (*clear)(struct disk_bitset* this, size_t index);
-	int (*get)(struct disk_bitset* this, size_t index, bool* result);
-};
-
-struct disk_bitset* disk_bitset_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_bit);
-void disk_bitset_destroy(struct disk_bitset* this);
-
-// disk queue definition
-struct disk_queue {
-	size_t len, capacity, elem_size, in, out;
-	struct disk_array* array;
-
-	int (*push)(struct disk_queue* this, void* elem);
-	void* (*pop)(struct disk_queue* this);
-	bool (*full)(struct disk_queue* this);
-	bool (*empty)(struct disk_queue* this);
-};
-
+#define STRUCTURE_BLOCKS(x) (sizeof(x) ? (sizeof(x) - 1) / SWORNDISK_METADATA_BLOCK_SIZE + 1: 0) 
 
 // superblock definition
 #define SUPERBLOCK_ON_DISK_SIZE (sizeof(struct superblock) - 5 * sizeof(void*) - sizeof(uint32_t))
