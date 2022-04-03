@@ -297,7 +297,7 @@ int disk_queue_push(struct disk_queue* this, void* elem) {
 	this->in = (this->in + 1) % this->capacity;
 	this->size += 1;
 
-	return 0;
+	return this->write(this);
 }
 
 void* disk_queue_pop(struct disk_queue* this) {
@@ -307,8 +307,12 @@ void* disk_queue_pop(struct disk_queue* this) {
 		return NULL;
 	
 	elem = this->array->get(this->array, this->out);
+	if (IS_ERR_OR_NULL(elem))
+		return NULL;
+	
 	this->out = (this->out + 1) % this->capacity;
 	this->size -= 1;
+	this->write(this);
 
 	return elem;
 }
@@ -352,6 +356,14 @@ bool disk_queue_empty(struct disk_queue* this) {
 	return this->size == 0;
 }
 
+int disk_queue_clear(struct disk_queue* this) {
+	this->size = 0;
+	this->in = 0;
+	this->out = 0;
+
+	return this->write(this);
+}
+
 int disk_queue_init(struct disk_queue* this, struct dm_block_manager* bm, dm_block_t start, size_t capacity, size_t elem_size) {
 	int r;
 	
@@ -370,6 +382,7 @@ int disk_queue_init(struct disk_queue* this, struct dm_block_manager* bm, dm_blo
 	this->load = disk_queue_load;
 	this->write = disk_queue_write;
 	this->flush = disk_queue_flush;
+	this->clear = disk_queue_clear;
 
 	r = this->load(this);
 	if (!r)

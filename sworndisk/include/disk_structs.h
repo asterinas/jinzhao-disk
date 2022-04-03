@@ -51,8 +51,10 @@ struct disk_queue {
 	int (*load)(struct disk_queue* this);
 	int (*write)(struct disk_queue* this);
 	int (*flush)(struct disk_queue* this);
+	int (*clear)(struct disk_queue* this);
 } __packed;
 
 struct disk_queue* disk_queue_create(struct dm_block_manager* bm, dm_block_t start, size_t capacity, size_t elem_size);
+void disk_queue_destroy(struct disk_queue* this);
 
 #endif
