@@ -199,44 +199,7 @@ void disk_bitset_destroy(struct disk_bitset* this) {
 	}
 }
 
-int disk_queue_push(struct disk_queue* this, void* elem) {
-	int r;
-
-	if (this->full(this))
-		return -ENOSPC; // no space
-
-	r= this->array->set(this->array, this->in, elem);
-	if (r)
-		return r;
-	
-	this->in = (this->in + 1) % this->capacity;
-	this->size += 1;
-
-	return 0;
-}
-
-void* disk_queue_pop(struct disk_queue* this) {
-	void* elem;
-
-	if (this->empty(this))
-		return NULL;
-	
-	elem = this->array->get(this->array, this->out);
-	this->out = (this->out + 1) % this->capacity;
-	this->size -= 1;
-
-	return elem;
-}
-
-bool disk_queue_full(struct disk_queue* this) {
-	return this->size == this->capacity;
-}
-
-bool disk_queue_empty(struct disk_queue* this) {
-	return this->size == 0;
-}
-
-// disk queue implementation
+// disk io implementation
 int __disk_io(struct dm_block_manager* bm, struct dm_block_validator* validator, 
   dm_block_t block_id, size_t offset, size_t len, void* buffer, bool write) {
 	int r;
@@ -289,7 +252,7 @@ int disk_queue_load(struct disk_queue* this) {
 		return r;
 
 	if (!disk_queue_validate(&last)) {
-		DMERR("disk queue invalid");
+		DMINFO("disk queue invalid");
 		return -EINVAL;
 	}
 	
@@ -321,6 +284,74 @@ int disk_queue_flush(struct disk_queue* this) {
 	return dm_bm_flush(this->bm);
 }
 
+int disk_queue_push(struct disk_queue* this, void* elem) {
+	int r;
+
+	if (this->full(this))
+		return -ENOSPC; // no space
+
+	r= this->array->set(this->array, this->in, elem);
+	if (r)
+		return r;
+	
+	this->in = (this->in + 1) % this->capacity;
+	this->size += 1;
+
+	return 0;
+}
+
+void* disk_queue_pop(struct disk_queue* this) {
+	void* elem;
+
+	if (this->empty(this))
+		return NULL;
+	
+	elem = this->array->get(this->array, this->out);
+	this->out = (this->out + 1) % this->capacity;
+	this->size -= 1;
+
+	return elem;
+}
+
+void** disk_queue_peek(struct disk_queue* this, size_t count) {
+	size_t cur, index;
+	void* entry;
+	void** entry_list;
+
+	if (count < 0 || count > this->size)
+		return NULL;
+	
+	entry_list = kmalloc(count * sizeof(void*), GFP_KERNEL);
+	if (!entry_list)
+		return NULL;
+
+	cur = 0;
+	index = this->out;
+	while(cur != count) {
+		entry = this->array->get(this->array, index);
+		if (IS_ERR_OR_NULL(entry))
+			goto bad;
+		entry_list[cur] = entry;
+		cur += 1;
+		index = (index + 1) % this->capacity;
+	}
+
+	return entry_list;
+bad:
+	for (index = 0; index < cur; ++index)
+		kfree(entry_list[cur]);
+	kfree(entry_list);
+	return NULL;
+}
+
+bool disk_queue_full(struct disk_queue* this) {
+	return this->size == this->capacity;
+}
+
+bool disk_queue_empty(struct disk_queue* this) {
+	return this->size == 0;
+}
+
 int disk_queue_init(struct disk_queue* this, struct dm_block_manager* bm, dm_block_t start, size_t capacity, size_t elem_size) {
 	int r;
 	
@@ -333,6 +364,7 @@ int disk_queue_init(struct disk_queue* this, struct dm_block_manager* bm, dm_blo
 	this->print = disk_queue_print;
 	this->push = disk_queue_push;
 	this->pop = disk_queue_pop;
+	this->peek = disk_queue_peek;
 	this->full = disk_queue_full;
 	this->empty = disk_queue_empty;
 	this->load = disk_queue_load;
