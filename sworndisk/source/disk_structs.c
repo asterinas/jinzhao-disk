@@ -252,7 +252,7 @@ int disk_queue_load(struct disk_queue* this) {
 		return r;
 
 	if (!disk_queue_validate(&last)) {
-		DMERR("disk queue invalid");
+		DMINFO("disk queue invalid");
 		return -EINVAL;
 	}
 	
