@@ -1,8 +1,6 @@
 #ifndef DM_SWORNDISK_SEGMENT_ALLOCATOR_H
 #define DM_SWORNDISK_SEGMENT_ALLOCATOR_H
 
-#include "../include/metadata.h"
-
 #define NR_SEGMENT 4096
 #define SECTORS_PER_BLOCK 8
 #define BLOCKS_PER_SEGMENT 256
