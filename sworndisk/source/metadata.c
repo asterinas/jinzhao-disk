@@ -347,6 +347,235 @@ void seg_validator_destroy(struct seg_validator* this) {
 	}
 }
 
+// data segment table implementaion
+struct victim* victim_create(size_t segment_id, size_t nr_valid_block) {
+	struct victim* victim;
+
+	victim = kmalloc(sizeof(struct victim), GFP_KERNEL);
+	if (!victim)
+		return NULL;
+	
+	victim->segment_id = segment_id;
+	victim->nr_valid_block = nr_valid_block;
+	return victim;
+}
+
+void victim_destroy(struct victim* victim) {
+	if (!IS_ERR_OR_NULL(victim)) {
+		kfree(victim);
+	}
+}
+
+bool victim_less(struct rb_node* node1, const struct rb_node* node2) {
+	struct victim *victim1, *victim2;
+
+	victim1 = container_of(node1, struct victim, node);
+	victim2 = container_of(node2, struct victim, node);
+	return victim1->nr_valid_block < victim2->nr_valid_block;
+} 
+
+int data_segment_table_load(struct data_segment_table* this) {
+	size_t segment_id;
+	struct victim* victim;
+	struct data_segment_entry* segment;
+	
+	for (segment_id = 0; segment_id < this->nr_segment; ++segment_id) {
+		segment = this->array->get(this->array, segment_id);
+		if (IS_ERR_OR_NULL(segment))
+			return -ENODATA;
+		
+		if (segment->nr_valid_block < BLOCKS_PER_SEGMENT) {
+			victim = victim_create(segment_id, segment->nr_valid_block);
+			if (IS_ERR_OR_NULL(victim))
+				return -ENOMEM;
+			this->node_list[segment_id] = &victim->node;
+			rb_add(&victim->node, &this->victims, victim_less);
+		}
+
+		kfree(segment);
+	}
+
+	return 0;
+}
+
+inline size_t __block_to_segment(dm_block_t block_id) {
+	return block_id / BLOCKS_PER_SEGMENT;
+}
+
+inline size_t __block_offset_whthin_segment(dm_block_t block_id) {
+	return block_id % BLOCKS_PER_SEGMENT;
+}
+
+int data_segment_table_take_segment(struct data_segment_table* this, size_t segment_id) {
+	int err = 0;
+	struct victim* victim = NULL;
+	struct data_segment_entry* entry = NULL;
+
+	entry = this->array->get(this->array, segment_id);
+	if (IS_ERR_OR_NULL(entry))
+		return -EINVAL;
+	
+	if (entry->nr_valid_block) {
+		err = -ENODATA;
+		goto exit;
+	}
+
+	entry->nr_valid_block = BLOCKS_PER_SEGMENT;
+	bitmap_fill(entry->block_validity_table, BLOCKS_PER_SEGMENT);
+
+	err = this->array->set(this->array, segment_id, entry);
+	if (err) 
+		goto exit;
+
+
+	victim = this->remove_victim(this, segment_id);
+	victim_destroy(victim);
+
+exit:
+	if (!IS_ERR_OR_NULL(entry))
+		kfree(entry);
+	return err;
+}
+
+int data_segment_table_return_block(struct data_segment_table* this, dm_block_t block_id) {
+	int err = 0;
+	struct victim* victim = NULL;
+	struct data_segment_entry* entry = NULL;
+	size_t segment_id, offset;
+
+	segment_id = __block_to_segment(block_id);
+	offset = __block_offset_whthin_segment(block_id);
+
+	entry = this->array->get(this->array, segment_id);
+	if (IS_ERR_OR_NULL(entry))
+		return -EINVAL;
+
+	if (!entry->nr_valid_block) {
+		err = -ENODATA;
+		goto exit;
+	}
+
+	entry->nr_valid_block -= 1;
+	clear_bit(offset, entry->block_validity_table);
+
+	err = this->array->set(this->array, segment_id, entry);
+	if (err) 
+		goto exit;
+
+	victim = this->remove_victim(this, segment_id);
+	victim_destroy(victim);
+	
+	victim = victim_create(segment_id, entry->nr_valid_block);
+	if (IS_ERR_OR_NULL(victim)) {
+		err = -ENOMEM;
+		goto exit;
+	}
+
+	rb_add(&victim->node, &this->victims, victim_less);
+	this->node_list[segment_id] = &victim->node;
+
+exit:
+	if (!IS_ERR_OR_NULL(entry))
+		kfree(entry);
+	return err;
+}
+
+bool data_segment_table_victim_empty(struct data_segment_table* this) {
+	return RB_EMPTY_ROOT(&this->victims);
+}
+
+struct victim* data_segment_table_peek_victim(struct data_segment_table* this) {
+	struct rb_node* node;
+
+	node = rb_first(&this->victims);
+	if (IS_ERR_OR_NULL(node))
+		return NULL;
+	
+	return rb_entry(node, struct victim, node);
+}
+
+struct victim* data_segment_table_pop_victim(struct data_segment_table* this) {
+	struct victim* victim;
+
+	victim = this->peek_victim(this);
+	if (IS_ERR_OR_NULL(victim))
+		return NULL;
+	
+	rb_erase(&victim->node, &this->victims);
+	this->node_list[victim->segment_id] = NULL;
+
+	return victim;
+}
+
+struct victim* data_segment_table_remove_victim(struct data_segment_table* this, size_t segment_id) {
+	struct victim* victim = NULL;
+
+	if (this->node_list[segment_id]) {
+		victim = rb_entry(this->node_list[segment_id], struct victim, node);
+		rb_erase(&victim->node, &this->victims);
+		this->node_list[segment_id] = NULL;
+	}
+	
+	return victim;
+}
+
+// data segment table implementation
+int data_segment_table_init(struct data_segment_table* this, struct dm_block_manager* bm, dm_block_t start, size_t nr_segment) {
+	int r;
+
+	this->load = data_segment_table_load;
+	this->take_segment = data_segment_table_take_segment;
+	this->return_block = data_segment_table_return_block;
+	this->victim_empty = data_segment_table_victim_empty;
+	this->peek_victim = data_segment_table_peek_victim;
+	this->pop_victim = data_segment_table_pop_victim;
+	this->remove_victim = data_segment_table_remove_victim;
+
+	this->start = start;
+	this->nr_segment = nr_segment;
+	this->array = disk_array_create(bm, this->start, this->nr_segment, sizeof(struct data_segment_entry));
+	if (IS_ERR_OR_NULL(this->array))
+		return -ENOMEM;
+
+	this->node_list = kzalloc(this->nr_segment * sizeof(struct rb_node*), GFP_KERNEL);
+	if (!this->node_list)
+		return -ENOMEM;
+
+	this->victims = RB_ROOT;
+	r = this->load(this);
+	if (r)
+		return r;
+
+	
+	return 0;
+}
+
+struct data_segment_table* data_segment_table_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_segment) {
+	int r;
+	struct data_segment_table* this;
+
+	this = kmalloc(sizeof(struct data_segment_table), GFP_KERNEL);
+	if (!this)	
+		return NULL;
+	
+	r = data_segment_table_init(this, bm, start, nr_segment);
+	if (r)
+		return NULL;
+
+	return this;
+}
+
+void data_segment_table_destroy(struct data_segment_table* this) {	
+	if (!IS_ERR_OR_NULL(this)) {
+		while(!RB_EMPTY_ROOT(&this->victims)) {
+			victim_destroy(this->pop_victim(this));
+		}
+		if (!IS_ERR_OR_NULL(this->node_list)) 
+			kfree(this->node_list);
+		kfree(this);
+	}
+}
+
 // metadata implementation
 int metadata_init(struct metadata* this, struct block_device* bdev) {
 	this->bdev = bdev;

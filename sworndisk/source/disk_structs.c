@@ -59,7 +59,7 @@ int disk_array_format(struct disk_array* this, bool value) {
 		cycle = SWORNDISK_METADATA_BLOCK_SIZE;
 		if (total < cycle)
 			cycle = total;
-		memset(dm_block_data(block), value ? -1 : 0, cycle);
+		memset(dm_block_data(block), value ? 0xff : 0, cycle);
 		dm_bm_unlock(block);
 
 		total -= cycle;

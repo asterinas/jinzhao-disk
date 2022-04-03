@@ -1,9 +1,9 @@
+#include "../include/dm_sworndisk.h"
+#include "../include/metadata.h"
 #include "../include/segment_allocator.h"
 
 #define DEFAULT_SEGMENT_ALLOCATOR_THIS_POINTER_DECLARE struct default_segment_allocator* this; \
               this = container_of(al, struct default_segment_allocator, segment_allocator); \
-
-#include "../include/dm_sworndisk.h"
 
 int sa_get_next_free_segment(struct segment_allocator* al, size_t *seg) {
     int r;

@@ -1,6 +1,7 @@
 #include <linux/bio.h>
 
 #include "../include/dm_sworndisk.h"
+#include "../include/metadata.h"
 #include "../include/segment_buffer.h"
 #include "../include/bio_operate.h"
 #include "../include/crypto.h"
