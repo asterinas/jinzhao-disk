@@ -66,6 +66,16 @@ void process_deferred_bios(struct work_struct *ws) {
             sworndisk->seg_buffer->push_bio(sworndisk->seg_buffer, bio);
             bio_endio(bio);
         }
+
+        if (bio_op(bio) == REQ_OP_DISCARD) {
+            r = sworndisk->memtable->get(sworndisk->memtable, bio_get_block_address(bio), (void**)&record);
+            if (r)
+                goto bad;
+            r = sworndisk->metadata->data_segment_table->return_block(sworndisk->metadata->data_segment_table, record->pba);
+            if (r)
+                goto bad;
+            bio_endio(bio);
+        }
 next:
         continue;
 bad:    
@@ -86,6 +96,7 @@ static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
     switch (bio_op(bio)) {
         case REQ_OP_READ:
         case REQ_OP_WRITE:
+        case REQ_OP_DISCARD:
             defer_bio(sworndisk, bio);
             break;
         default:

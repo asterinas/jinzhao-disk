@@ -27,12 +27,17 @@ void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
     }
     
     lba = bio_get_block_address(bio);
-    pba = (this->cur_segment * SECTOES_PER_SEGMENT + this->cur_sector) / SECTORS_PER_BLOCK;
+    pba = (this->cur_segment * SECTOES_PER_SEGMENT + this->cur_sector) / SECTORS_PER_BLOCK;    
 
     record = record_create(pba, NULL, NULL, NULL);
     if (IS_ERR_OR_NULL(record))
         return;
-    sworndisk->memtable->put(sworndisk->memtable, lba, record);
+
+    record = sworndisk->memtable->put(sworndisk->memtable, lba, record);
+    if (record) {
+        sworndisk->metadata->data_segment_table->return_block(sworndisk->metadata->data_segment_table, record->pba);
+        record_destroy(record);
+    }
     sworndisk->metadata->reverse_index_table->set(sworndisk->metadata->reverse_index_table, pba, lba);
  
     bio_get_data(bio, this->buffer + (this->cur_sector + bio_block_sector_offset(bio)) * SECTOR_SIZE, bio_get_data_len(bio));

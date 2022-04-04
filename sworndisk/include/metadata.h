@@ -86,10 +86,11 @@ struct reverse_index_table {
 struct victim {
 	size_t segment_id;
 	size_t nr_valid_block;
+	DECLARE_BITMAP(block_validity_table, BLOCKS_PER_SEGMENT);
 	struct rb_node node;
 } __packed;
 
-struct victim* victim_create(size_t segment_id, size_t nr_valid_block);
+struct victim* victim_create(size_t segment_id, size_t nr_valid_block, unsigned long* block_validity_table);
 void victim_destroy(struct victim* victim);
 
 
@@ -104,7 +105,9 @@ struct data_segment_table {
 	struct disk_array* array;
 	struct rb_node** node_list;
 	struct rb_root victims;
+	struct dm_block_manager* bm;
 
+	int (*format)(struct data_segment_table* this);
 	int (*load)(struct data_segment_table* this);
 	int (*take_segment)(struct data_segment_table* this, size_t segment_id);
 	int (*return_block)(struct data_segment_table* this, dm_block_t block_id);
@@ -112,6 +115,7 @@ struct data_segment_table {
 	struct victim* (*peek_victim)(struct data_segment_table* this);
 	struct victim* (*pop_victim)(struct data_segment_table* this);
 	struct victim* (*remove_victim)(struct data_segment_table* this, size_t segment_id);
+	struct data_segment_entry* (*get)(struct data_segment_table* this, size_t segment_id);
 };
 
 struct data_segment_table* data_segment_table_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_segment);
@@ -127,6 +131,7 @@ struct metadata {
 	// checkpoint region
 	struct seg_validator* seg_validator;
 	struct reverse_index_table* reverse_index_table;
+	struct data_segment_table* data_segment_table;
 
 	int (*format)(struct metadata* this);
 };
