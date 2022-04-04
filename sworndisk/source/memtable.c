@@ -255,10 +255,17 @@ bool rbtree_memtable_contains(struct memtable* mt, uint32_t key) {
 }
 
 void rbtree_memtable_destroy(struct memtable* mt) {
+    struct memtable_rbnode* entry;
     RBTREE_MEMTABLE_THIS_POINTER_DECLARE
 
-    if (!IS_ERR_OR_NULL(this))
+    if (!IS_ERR_OR_NULL(this)) {
+        while(!RB_EMPTY_ROOT(&this->root)) {
+            entry = rb_entry(rb_first(&this->root), struct memtable_rbnode, node);
+            rb_erase(&entry->node, &this->root);
+            memtable_rbnode_destroy(entry);
+        }
         kfree(this);
+    }
 }
 
 void rbtree_memtable_init(struct rbtree_memtable* this) {

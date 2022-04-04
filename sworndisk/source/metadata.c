@@ -519,7 +519,6 @@ struct victim* data_segment_table_remove_victim(struct data_segment_table* this,
 	return victim;
 }
 
-// data segment table implementation
 int data_segment_table_init(struct data_segment_table* this, struct dm_block_manager* bm, dm_block_t start, size_t nr_segment) {
 	int r;
 
