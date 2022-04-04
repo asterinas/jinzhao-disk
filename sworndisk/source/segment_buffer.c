@@ -51,7 +51,7 @@ void segbuf_flush_bios(struct segment_buffer* buf) {
     DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
     
     memcpy(this->pipe, this->buffer, SEGMENT_BUFFER_SIZE);
-    
+
     req.bi_op = req.bi_op_flags = REQ_OP_WRITE;
     req.mem.type = DM_IO_KMEM;
     req.mem.offset = 0;
