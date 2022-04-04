@@ -591,19 +591,14 @@ struct data_segment_table* data_segment_table_create(struct dm_block_manager* bm
 }
 
 void data_segment_table_destroy(struct data_segment_table* this) {	
-	size_t count = 0;
-
 	if (!IS_ERR_OR_NULL(this)) {
 		while(!RB_EMPTY_ROOT(&this->victims)) {
 			victim_destroy(this->pop_victim(this));
-			++count;
 		}
 		if (!IS_ERR_OR_NULL(this->node_list)) 
 			kfree(this->node_list);
 		kfree(this);
 	}
-
-	DMINFO("victim count: %ld", count);
 }
 
 // metadata implementation
