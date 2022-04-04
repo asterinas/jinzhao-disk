@@ -50,7 +50,7 @@ struct superblock {
 	bool (*validate)(struct superblock* this);
 } __packed;
 
-struct superblock* superblock_create(struct dm_block_manager* bm);
+struct superblock* superblock_create(struct dm_block_manager* bm, bool* should_format);
 void superblock_destroy(struct superblock* this);
 
 // segment validator definition
@@ -59,6 +59,7 @@ struct seg_validator {
 	size_t cur_segment;
 	struct disk_bitset* seg_validity_table;
 
+	int (*format)(struct seg_validator* this);
 	int (*take)(struct seg_validator* this, size_t seg);
 	int (*next)(struct seg_validator* this, size_t* next_seg);
 };
@@ -126,6 +127,8 @@ struct metadata {
 	// checkpoint region
 	struct seg_validator* seg_validator;
 	struct reverse_index_table* reverse_index_table;
+
+	int (*format)(struct metadata* this);
 };
 
 struct metadata* metadata_create(struct block_device* bdev);

@@ -137,9 +137,10 @@ size_t __data_seg_table_blocks(size_t nr_segment, size_t blocks_per_seg) {
 	return 0;
 }
 
-int superblock_init(struct superblock* this, struct dm_block_manager* bm) {
+int superblock_init(struct superblock* this, struct dm_block_manager* bm, bool* should_format) {
 	int r;
 
+	*should_format = false;
 	this->bm = bm;
 
 	this->read = superblock_read;
@@ -154,6 +155,7 @@ int superblock_init(struct superblock* this, struct dm_block_manager* bm) {
 	if (this->validate(this))
 		return 0;
 
+	*should_format = true;
 	this->magic = SUPERBLOCK_MAGIC;
 	this->blocks_per_seg = BLOCKS_PER_SEGMENT;
 	this->nr_segment = NR_SEGMENT;
@@ -174,7 +176,7 @@ int superblock_init(struct superblock* this, struct dm_block_manager* bm) {
 	return 0;
 }
 
-struct superblock* superblock_create(struct dm_block_manager* bm) {
+struct superblock* superblock_create(struct dm_block_manager* bm, bool* should_format) {
 	int r;
 	struct superblock* this;
 
@@ -182,7 +184,7 @@ struct superblock* superblock_create(struct dm_block_manager* bm) {
 	if (!this)
 		return NULL;
 	
-	r = superblock_init(this, bm);
+	r = superblock_init(this, bm, should_format);
 	if (r)
 		return NULL;
 	
@@ -228,21 +230,26 @@ next:
 	return -ENODATA;
 }
 
-int seg_validator_init(struct seg_validator* this, struct dm_block_manager* bm, dm_block_t start, size_t nr_segment) {
+int seg_validator_format(struct seg_validator* this) {
 	int r;
 
+	r = this->seg_validity_table->format(this->seg_validity_table, false);
+	if (r)
+		return r;
+	
+	return 0;
+}
+
+int seg_validator_init(struct seg_validator* this, struct dm_block_manager* bm, dm_block_t start, size_t nr_segment) {
 	this->nr_segment = nr_segment;
 	this->cur_segment = 0;
 	this->seg_validity_table = disk_bitset_create(bm, start, nr_segment);
 	if (IS_ERR_OR_NULL(this->seg_validity_table))
 		return -ENOMEM;
 
-	r = this->seg_validity_table->format(this->seg_validity_table, false);
-	if (r)
-		return r;
-
 	this->take = seg_validator_take;
 	this->next = seg_validator_next;
+	this->format = seg_validator_format;
 
 	return 0;
 } 
@@ -576,13 +583,30 @@ void data_segment_table_destroy(struct data_segment_table* this) {
 }
 
 // metadata implementation
+int metadata_format(struct metadata* this) {
+	int r;
+
+	r = this->seg_validator->format(this->seg_validator);
+	if (r)
+		return r;
+	
+	r = this->reverse_index_table->format(this->reverse_index_table);
+	if (r)
+		return r;
+
+	return 0;
+}
+
 int metadata_init(struct metadata* this, struct block_device* bdev) {
+	int r;
+	bool should_format;
+
 	this->bdev = bdev;
 	this->bm = dm_block_manager_create(this->bdev, SWORNDISK_METADATA_BLOCK_SIZE, SWORNDISK_MAX_CONCURRENT_LOCKS);
 	if (IS_ERR_OR_NULL(this->bm))
 		goto bad;
 
-	this->superblock = superblock_create(this->bm);
+	this->superblock = superblock_create(this->bm, &should_format);
 	if (IS_ERR_OR_NULL(this->superblock))
 		goto bad;
 	
@@ -594,6 +618,13 @@ int metadata_init(struct metadata* this, struct block_device* bdev) {
 	  this->superblock->reverse_index_table_start, this->superblock->nr_segment * this->superblock->blocks_per_seg);
 	if (IS_ERR_OR_NULL(this->reverse_index_table))
 		goto bad;
+
+	this->format = metadata_format;
+	if (should_format) {
+		r = this->format(this);
+		if (r)
+			goto bad;
+	}
 	
 	return 0;
 bad:
