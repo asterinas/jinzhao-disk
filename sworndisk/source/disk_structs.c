@@ -1,3 +1,4 @@
+#include "../include/dm_sworndisk.h"
 #include "../include/disk_structs.h"
 #include "../include/metadata.h"
 

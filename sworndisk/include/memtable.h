@@ -16,10 +16,12 @@ struct record {
 };  
 
 struct record* record_create(dm_block_t pba, char* key, char* iv, char* mac);
+void record_destroy(void* record);
 
 struct memtable {
-    void (*put)(struct memtable* mt, uint32_t key, void* val);
+    void* (*put)(struct memtable* mt, uint32_t key, void* val);
     int (*get)(struct memtable* mt, uint32_t key, void** p_val);
+    void* (*remove)(struct memtable* mt, uint32_t ket);
     bool (*contains)(struct memtable* mt, uint32_t key);
     void (*destroy)(struct memtable* mt);
 };

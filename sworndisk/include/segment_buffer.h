@@ -25,7 +25,7 @@ struct segment_buffer {
 struct default_segment_buffer {
     struct segment_buffer segment_buffer;
 
-    char* buffer;
+    char *buffer, *pipe;
     size_t cur_segment;
     sector_t cur_sector;
     struct dm_io_client* io_client;

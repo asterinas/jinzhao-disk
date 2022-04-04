@@ -1,7 +1,6 @@
 #ifndef SWORNDISK_DISK_STRUCTS_H
 #define SWORNDISK_DISK_STRUCTS_H
 
-#include "../include/dm_sworndisk.h"
 #include "../../persistent-data/dm-block-manager.h"
 
 // disk array definition

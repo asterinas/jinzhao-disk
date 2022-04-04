@@ -27,12 +27,17 @@ void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
     }
     
     lba = bio_get_block_address(bio);
-    pba = (this->cur_segment * SECTOES_PER_SEGMENT + this->cur_sector) / SECTORS_PER_BLOCK;
+    pba = (this->cur_segment * SECTOES_PER_SEGMENT + this->cur_sector) / SECTORS_PER_BLOCK;    
 
     record = record_create(pba, NULL, NULL, NULL);
     if (IS_ERR_OR_NULL(record))
         return;
-    sworndisk->memtable->put(sworndisk->memtable, lba, record);
+
+    record = sworndisk->memtable->put(sworndisk->memtable, lba, record);
+    if (record) {
+        sworndisk->metadata->data_segment_table->return_block(sworndisk->metadata->data_segment_table, record->pba);
+        record_destroy(record);
+    }
     sworndisk->metadata->reverse_index_table->set(sworndisk->metadata->reverse_index_table, pba, lba);
  
     bio_get_data(bio, this->buffer + (this->cur_sector + bio_block_sector_offset(bio)) * SECTOR_SIZE, bio_get_data_len(bio));
@@ -40,22 +45,17 @@ void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
 }
 
 void segbuf_flush_bios(struct segment_buffer* buf) {
-    char* data;
     unsigned long sync_error_bits;
     struct dm_io_request req;
     struct dm_io_region region;
     DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
+    
+    memcpy(this->pipe, this->buffer, SEGMENT_BUFFER_SIZE);
 
-    data = kmalloc(SEGMENT_BUFFER_SIZE, GFP_KERNEL);
-    if (!data) 
-        return;
-    
-    memcpy(data, this->buffer, SEGMENT_BUFFER_SIZE);
-    
     req.bi_op = req.bi_op_flags = REQ_OP_WRITE;
     req.mem.type = DM_IO_KMEM;
     req.mem.offset = 0;
-    req.mem.ptr.addr = data;
+    req.mem.ptr.addr = this->pipe;
     req.notify.fn = NULL;
     req.client = this->io_client;
 
@@ -66,8 +66,6 @@ void segbuf_flush_bios(struct segment_buffer* buf) {
     dm_io(&req, 1, &region, &sync_error_bits);
     if (sync_error_bits) 
         DMERR("segment buffer flush error\n");
-    
-    kfree(data);
 }
 
 int segbuf_query_bio(struct segment_buffer* buf, struct bio* bio) {
@@ -95,6 +93,7 @@ void* segbuf_implementer(struct segment_buffer* buf) {
 void segbuf_destroy(struct segment_buffer* buf) {
     DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
 
+    buf->flush_bios(buf);
     dm_io_client_destroy(this->io_client);
     kfree(this->buffer);
     kfree(this);
@@ -110,10 +109,18 @@ int segbuf_init(struct default_segment_buffer *buf, struct dm_sworndisk_target* 
     buf->cur_sector = 0;
     buf->sworndisk = sworndisk;
 
-    buf->buffer = kmalloc(SEGMENT_BUFFER_SIZE + SECTOR_SIZE, GFP_KERNEL);
+    buf->buffer = kmalloc(SEGMENT_BUFFER_SIZE, GFP_KERNEL);
     if (!buf->buffer)
         return -ENOMEM;
+
+    buf->pipe = kmalloc(SEGMENT_BUFFER_SIZE, GFP_KERNEL);
+    if (!buf->pipe)
+        return -ENOMEM;
+
     buf->io_client = dm_io_client_create();
+    if (IS_ERR_OR_NULL(buf->io_client))
+        return -ENOMEM;
+    
     buf->segment_buffer.push_bio = segbuf_push_bio;
     buf->segment_buffer.query_bio = segbuf_query_bio;
     buf->segment_buffer.flush_bios = segbuf_flush_bios;
