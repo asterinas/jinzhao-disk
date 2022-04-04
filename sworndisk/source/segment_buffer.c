@@ -13,22 +13,22 @@
 
 // assume bio has only one segment
 void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
-    int r;
-    struct record* record;
-    dm_block_t lba, pba;
+    dm_block_t lba;
     DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
-
-    if (this->cur_sector + bio_sectors(bio) >= SECTOES_PER_SEGMENT) {
-        buf->flush_bios(buf);
-        r = sworndisk->seg_allocator->get_next_free_segment(sworndisk->seg_allocator, &this->cur_segment);
-        if (r)
-            return;
-        this->cur_sector = 0;
-    }
     
     lba = bio_get_block_address(bio);
-    pba = (this->cur_segment * SECTOES_PER_SEGMENT + this->cur_sector) / SECTORS_PER_BLOCK;    
+    bio_get_data(bio, this->buffer + (this->cur_sector + bio_block_sector_offset(bio)) * SECTOR_SIZE, bio_get_data_len(bio));
+    buf->push_block(buf, lba, this->buffer + this->cur_sector * SECTOR_SIZE);
+}
 
+void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer) {
+    int r;
+    size_t offset;
+    dm_block_t pba;
+    struct record* record;
+    DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
+
+    pba = (this->cur_segment * SECTOES_PER_SEGMENT + this->cur_sector) / SECTORS_PER_BLOCK;    
     record = record_create(pba, NULL, NULL, NULL);
     if (IS_ERR_OR_NULL(record))
         return;
@@ -38,10 +38,21 @@ void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
         sworndisk->metadata->data_segment_table->return_block(sworndisk->metadata->data_segment_table, record->pba);
         record_destroy(record);
     }
+
+    if ((this->buffer + this->cur_sector * SECTOR_SIZE) != buffer) {
+        DMINFO("%p %p %lld", this->buffer + this->cur_sector * SECTOR_SIZE, buffer, this->cur_sector);
+        memcpy(this->buffer + offset, buffer, DATA_BLOCK_SIZE);
+    } 
     sworndisk->metadata->reverse_index_table->set(sworndisk->metadata->reverse_index_table, pba, lba);
- 
-    bio_get_data(bio, this->buffer + (this->cur_sector + bio_block_sector_offset(bio)) * SECTOR_SIZE, bio_get_data_len(bio));
+
     this->cur_sector += SECTORS_PER_BLOCK;
+    if (this->cur_sector >= SECTOES_PER_SEGMENT) {
+        buf->flush_bios(buf);
+        r = sworndisk->seg_allocator->get_next_free_segment(sworndisk->seg_allocator, &this->cur_segment);
+        if (r)
+            return;
+        this->cur_sector = 0;
+    }
 }
 
 void segbuf_flush_bios(struct segment_buffer* buf) {
@@ -122,6 +133,7 @@ int segbuf_init(struct default_segment_buffer *buf, struct dm_sworndisk_target* 
         return -ENOMEM;
     
     buf->segment_buffer.push_bio = segbuf_push_bio;
+    buf->segment_buffer.push_block = segbuf_push_block;
     buf->segment_buffer.query_bio = segbuf_query_bio;
     buf->segment_buffer.flush_bios = segbuf_flush_bios;
     buf->segment_buffer.implementer = segbuf_implementer;
