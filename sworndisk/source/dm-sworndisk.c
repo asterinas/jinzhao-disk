@@ -109,7 +109,6 @@ exit:
     return DM_MAPIO_REMAPPED;
 }
 
-
 /*
  * This is constructor function of target gets called when we create some device of type 'dm_sworndisk_target'.
  * i.e on execution of command 'dmsetup create'. It gets called per device.
