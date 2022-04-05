@@ -225,6 +225,22 @@ int seg_validator_next(struct seg_validator* this, size_t* next_seg) {
 	return -ENODATA;
 }
 
+int seg_validator_test_and_return(struct seg_validator* this, size_t seg, bool* old) {
+	int r;
+	bool valid;
+
+	r = this->seg_validity_table->get(this->seg_validity_table, seg, &valid);
+	if (r)
+		return r;
+
+	r = this->seg_validity_table->clear(this->seg_validity_table, seg);
+	if (r)
+		return r;
+
+	*old = valid;
+	return 0;
+}
+
 int seg_validator_format(struct seg_validator* this) {
 	int r;
 
@@ -233,6 +249,22 @@ int seg_validator_format(struct seg_validator* this) {
 		return r;
 
 	this->cur_segment = 0;
+	return 0;
+}
+
+int seg_validator_valid_segment_count(struct seg_validator* this, size_t* count) {
+	int r;
+	bool valid;
+	size_t segment_id;
+
+	*count = 0;
+	for (segment_id = 0; segment_id < this->nr_segment; ++segment_id) {
+		r = this->seg_validity_table->get(this->seg_validity_table, segment_id, &valid);
+		if (r)
+			return r;
+		*count += valid;
+	}
+
 	return 0;
 }
 
@@ -246,6 +278,8 @@ int seg_validator_init(struct seg_validator* this, struct dm_block_manager* bm, 
 	this->take = seg_validator_take;
 	this->next = seg_validator_next;
 	this->format = seg_validator_format;
+	this->valid_segment_count = seg_validator_valid_segment_count;
+	this->test_and_return = seg_validator_test_and_return;
 
 	return 0;
 } 

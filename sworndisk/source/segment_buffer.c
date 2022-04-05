@@ -40,7 +40,6 @@ void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer)
     }
 
     if ((this->buffer + this->cur_sector * SECTOR_SIZE) != buffer) {
-        DMINFO("%p %p %lld", this->buffer + this->cur_sector * SECTOR_SIZE, buffer, this->cur_sector);
         memcpy(this->buffer + offset, buffer, DATA_BLOCK_SIZE);
     } 
     sworndisk->metadata->reverse_index_table->set(sworndisk->metadata->reverse_index_table, pba, lba);
@@ -48,10 +47,10 @@ void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer)
     this->cur_sector += SECTORS_PER_BLOCK;
     if (this->cur_sector >= SECTOES_PER_SEGMENT) {
         buf->flush_bios(buf);
+        this->cur_sector = 0;
         r = sworndisk->seg_allocator->get_next_free_segment(sworndisk->seg_allocator, &this->cur_segment);
         if (r)
             return;
-        this->cur_sector = 0;
     }
 }
 

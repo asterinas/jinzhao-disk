@@ -62,6 +62,8 @@ struct seg_validator {
 	int (*format)(struct seg_validator* this);
 	int (*take)(struct seg_validator* this, size_t seg);
 	int (*next)(struct seg_validator* this, size_t* next_seg);
+	int (*test_and_return)(struct seg_validator* this, size_t seg, bool* old);
+	int (*valid_segment_count)(struct seg_validator* this, size_t* count);
 };
 
 struct seg_validator* seg_validator_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_segment);
