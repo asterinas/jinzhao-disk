@@ -106,30 +106,40 @@ void segbuf_destroy(struct segment_buffer* buf) {
     buf->flush_bios(buf);
     dm_io_client_destroy(this->io_client);
     kfree(this->buffer);
+    kfree(this->pipe);
     kfree(this);
 }
 
 int segbuf_init(struct default_segment_buffer *buf, struct dm_sworndisk_target* sworndisk) {
-    int r;
+    int err;
 
-    r = sworndisk->seg_allocator->get_next_free_segment(sworndisk->seg_allocator, &buf->cur_segment);
-    if (r)
-        return r;
+    err = sworndisk->seg_allocator->get_next_free_segment(sworndisk->seg_allocator, &buf->cur_segment);
+    if (err)
+        return err;
 
     buf->cur_sector = 0;
     buf->sworndisk = sworndisk;
 
     buf->buffer = kmalloc(SEGMENT_BUFFER_SIZE, GFP_KERNEL);
-    if (!buf->buffer)
-        return -ENOMEM;
+    if (!buf->buffer) {
+        err = -ENOMEM;
+        goto bad;
+    }
+       
 
     buf->pipe = kmalloc(SEGMENT_BUFFER_SIZE, GFP_KERNEL);
-    if (!buf->pipe)
-        return -ENOMEM;
+    if (!buf->pipe) {
+        err = -ENOMEM;
+        goto bad;
+    }
+        
 
     buf->io_client = dm_io_client_create();
-    if (IS_ERR_OR_NULL(buf->io_client))
-        return -ENOMEM;
+    if (IS_ERR_OR_NULL(buf->io_client)) {
+        err = -ENOMEM;
+        goto bad;
+    }
+        
     
     buf->segment_buffer.push_bio = segbuf_push_bio;
     buf->segment_buffer.push_block = segbuf_push_block;
@@ -139,13 +149,20 @@ int segbuf_init(struct default_segment_buffer *buf, struct dm_sworndisk_target* 
     buf->segment_buffer.destroy = segbuf_destroy;
 
     return 0;
+
+bad:
+    if (buf->buffer)
+        kfree(buf->buffer);
+    if (buf->pipe)
+        kfree(buf->pipe);
+    return err;
 };
 
 struct segment_buffer* segbuf_create(struct dm_sworndisk_target* sworndisk) {
     int r;
     struct default_segment_buffer* buf;
 
-    buf = kmalloc(sizeof(struct default_segment_buffer), GFP_KERNEL);
+    buf = kzalloc(sizeof(struct default_segment_buffer), GFP_KERNEL);
     if (!buf)
         return NULL;
     
