@@ -21,14 +21,15 @@ int sa_get_next_free_segment(struct segment_allocator* al, size_t *seg) {
     r = sworndisk->metadata->seg_validator->take(sworndisk->metadata->seg_validator, *seg);
     if (r)
         return r;
+
     this->nr_valid_segment += 1;
-   
     r = sworndisk->metadata->data_segment_table->take_segment(sworndisk->metadata->data_segment_table, *seg);
     if (r)
         return r;
 
     if (this->nr_valid_segment > TRIGGER_SEGMENT_CLEANING_THREADHOLD && this->status != SEGMENT_CLEANING) 
         al->clean(al);
+
     return 0;
 }
 
@@ -36,8 +37,7 @@ void sa_clean(struct segment_allocator* al) {
     int r;
     bool valid;
     dm_block_t lba, pba;
-    size_t clean = 0;
-    unsigned int begin, end, i;
+    size_t clean = 0, offset;
     struct victim* victim = NULL;
     unsigned long sync_error_bits;
     struct dm_io_request req;
@@ -56,24 +56,24 @@ void sa_clean(struct segment_allocator* al) {
       !sworndisk->metadata->data_segment_table->victim_empty(sworndisk->metadata->data_segment_table)) {
         victim = sworndisk->metadata->data_segment_table->pop_victim(sworndisk->metadata->data_segment_table);
 
-        begin = find_first_bit(victim->block_validity_table, BLOCKS_PER_SEGMENT);
-        while (begin < BLOCKS_PER_SEGMENT) {
-            bitmap_next_set_region(victim->block_validity_table, &begin, &end, BLOCKS_PER_SEGMENT);
-            region.sector = victim->segment_id * SECTOES_PER_SEGMENT + begin * SECTORS_PER_BLOCK;
-            region.count = (end - begin) * SECTORS_PER_BLOCK;
+        if (victim->nr_valid_block) {
+            region.sector = victim->segment_id * SECTOES_PER_SEGMENT;
+            region.count = SECTOES_PER_SEGMENT;
             dm_io(&req, 1, &region, &sync_error_bits);
             if (sync_error_bits) {
                 DMERR("segment allocator read blocks error\n");
                 goto exit;
             }
-            for (i = begin; i < end; ++i) {
-                pba = victim->segment_id * BLOCKS_PER_SEGMENT + i;
+
+            offset = find_first_bit(victim->block_validity_table, BLOCKS_PER_SEGMENT);
+            while(offset < BLOCKS_PER_SEGMENT) {
+                pba = victim->segment_id * BLOCKS_PER_SEGMENT + offset;
                 r = sworndisk->metadata->reverse_index_table->get(sworndisk->metadata->reverse_index_table, pba, &lba);
                 if (r)
                     goto exit; 
-                sworndisk->seg_buffer->push_block(sworndisk->seg_buffer, lba, this->buffer + i * DATA_BLOCK_SIZE);
+                sworndisk->seg_buffer->push_block(sworndisk->seg_buffer, lba, this->buffer + offset * DATA_BLOCK_SIZE);
+                offset = find_next_bit(victim->block_validity_table, BLOCKS_PER_SEGMENT, offset + 1);
             }
-            begin = end;
         }
 
         r = sworndisk->metadata->seg_validator->test_and_return(sworndisk->metadata->seg_validator, victim->segment_id, &valid);
@@ -93,7 +93,6 @@ exit:
     if (victim)
         victim_destroy(victim);
 
-    sworndisk->metadata->seg_validator->cur_segment = 0;
     this->status = SEGMENT_ALLOCATING;
 }
 
@@ -103,8 +102,8 @@ void sa_destroy(struct segment_allocator* al) {
     if (!IS_ERR_OR_NULL(this)) {
         if (!IS_ERR_OR_NULL(this->io_client))
             dm_io_client_destroy(this->io_client);
-        // if (!IS_ERR_OR_NULL(this->buffer))
-        //     kfree(this->buffer);
+        if (!IS_ERR_OR_NULL(this->buffer))
+            kfree(this->buffer);
         kfree(this);
     }
 }

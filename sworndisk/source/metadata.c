@@ -212,7 +212,9 @@ int seg_validator_take(struct seg_validator* this, size_t seg) {
 int seg_validator_next(struct seg_validator* this, size_t* next_seg) {
 	int r;
 	bool valid;
+	size_t try_times = 0;
 
+next_try:
 	while(this->cur_segment < this->nr_segment) {
 		r = this->seg_validity_table->get(this->seg_validity_table, this->cur_segment, &valid);
 		if (!r && !valid) {
@@ -220,6 +222,12 @@ int seg_validator_next(struct seg_validator* this, size_t* next_seg) {
 			return 0;
 		}
 		this->cur_segment += 1;
+	}
+
+	if (try_times < 1) {
+		try_times += 1;
+		this->cur_segment = 0;
+		goto next_try;
 	}
 
 	return -ENODATA;

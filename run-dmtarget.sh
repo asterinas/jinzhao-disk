@@ -24,9 +24,9 @@ do
 		# touch disk0
 		# touch disk1
 		# dd if=/dev/zero of=disk0 bs=1M count=5120 # 5GB file
-		dd if=/dev/zero of=disk1 bs=1M count=128 # 128MB file
-		losetup /dev/loop0 disk0
-		losetup /dev/loop1 disk1 
+		dd if=/dev/zero of=/dev/sdb5 bs=1M count=512 # 128MB file
+		# losetup /dev/loop0 disk0
+		# losetup /dev/loop1 disk1 
 		;;
 	w)
 		# dd if=/dev/urandom of=/dev/mapper/sworndisk  bs=512 count=100
@@ -52,7 +52,7 @@ do
 		modprobe sworndisk
 		# insmod persistent-data/dm-persistent-data.ko
 		# insmod mappery.ko
-		echo 0 10485760 sworndisk /dev/loop0 /dev/loop1 0 | dmsetup create sworndisk
+		echo 0 10485760 sworndisk /dev/sdb6 /dev/sdb5 0 | dmsetup create sworndisk
 		;;
 		
 	h)
