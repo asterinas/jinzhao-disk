@@ -93,7 +93,6 @@ exit:
     if (victim)
         victim_destroy(victim);
 
-    // sworndisk->metadata->seg_validator->cur_segment = 0;
     this->status = SEGMENT_ALLOCATING;
 }
 
