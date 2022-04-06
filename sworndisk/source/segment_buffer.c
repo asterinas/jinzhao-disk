@@ -23,7 +23,6 @@ void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
 
 void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer) {
     int r;
-    size_t offset;
     dm_block_t pba;
     struct record* record;
     DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
@@ -40,7 +39,7 @@ void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer)
     }
 
     if ((this->buffer + this->cur_sector * SECTOR_SIZE) != buffer) {
-        memcpy(this->buffer + offset, buffer, DATA_BLOCK_SIZE);
+        memcpy(this->buffer + this->cur_sector * SECTOR_SIZE, buffer, DATA_BLOCK_SIZE);
     } 
     sworndisk->metadata->reverse_index_table->set(sworndisk->metadata->reverse_index_table, pba, lba);
 
