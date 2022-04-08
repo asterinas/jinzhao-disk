@@ -13,8 +13,11 @@
 
 #define STRUCTURE_BLOCKS(x) (sizeof(x) ? (sizeof(x) - 1) / SWORNDISK_METADATA_BLOCK_SIZE + 1: 0) 
 
+size_t __bytes_to_block(size_t bytes, size_t block_size);
+
 // superblock definition
-#define SUPERBLOCK_ON_DISK_SIZE (sizeof(struct superblock) - 5 * sizeof(void*) - sizeof(uint32_t))
+#define NR_SUPERBLOCK_METHOD 5
+#define SUPERBLOCK_ON_DISK_SIZE (sizeof(struct superblock) - NR_SUPERBLOCK_METHOD * sizeof(void*) - sizeof(uint32_t))
 struct superblock {
 	// validation 
 	uint32_t csum;
