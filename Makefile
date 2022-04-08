@@ -32,7 +32,7 @@ raid456-y	+= raid5.o raid5-cache.o raid5-ppl.o
 linear-y	+= md-linear.o
 multipath-y	+= md-multipath.o
 faulty-y	+= md-faulty.o
-sworndisk-y       += sworndisk/source/dm-sworndisk.o sworndisk/source/metadata.o sworndisk/source/hashmap.o sworndisk/source/memtable.o sworndisk/source/bio_operate.o sworndisk/source/crypto.o sworndisk/source/segment_allocator.o sworndisk/source/segment_buffer.o sworndisk/source/generic_cache.o sworndisk/source/disk_structs.o sworndisk/source/journal.o
+sworndisk-y       += sworndisk/source/dm-sworndisk.o sworndisk/source/metadata.o sworndisk/source/hashmap.o sworndisk/source/memtable.o sworndisk/source/bio_operate.o sworndisk/source/crypto.o sworndisk/source/segment_allocator.o sworndisk/source/segment_buffer.o sworndisk/source/generic_cache.o sworndisk/source/disk_structs.o sworndisk/source/journal.o sworndisk/source/lsm_tree.o
 
 # Note: link order is important.  All raid personalities
 # and must come before md.o, as they each initialise 
