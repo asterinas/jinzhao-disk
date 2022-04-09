@@ -172,6 +172,7 @@ int bit_generator_select_root(struct bit_generator* this) {
         h += 1;
     }
 
+    this->bit->root = this->pos - 1;
     return 0;
 }
 
