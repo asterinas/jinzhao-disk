@@ -2,20 +2,20 @@
 #include "../include/lsm_tree.h"
 #include "../include/segment_buffer.h"
 
-// block index table implementaion
+// block index table node implementaion
 void bit_node_print(struct bit_node* bit_node) {
     size_t i;
 
-    DMINFO("is leaf: %d", bit_node->leaf);
-    if (bit_node->leaf) {
-        DMINFO("key: %d", bit_node->node.key);
-        DMINFO("value: %lld", bit_node->node.record.pba);
-        DMINFO("next: %ld", bit_node->node.next.pos);
+    DMINFO("is leaf: %d", bit_node->is_leaf);
+    if (bit_node->is_leaf) {
+        DMINFO("key: %d", bit_node->leaf.key);
+        DMINFO("value: %lld", bit_node->leaf.record.pba);
+        DMINFO("next: %ld", bit_node->leaf.next.pos);
     } else {
-        for (i = 0; i < BIT_DEGREE; ++i) {
+        for (i = 0; i < bit_node->inner.nr_child; ++i) {
             DMINFO("child %ld", i);
-            DMINFO("\tkey: %d", bit_node->children[i].key);
-            DMINFO("\tpos: %ld", bit_node->children[i].pointer.pos);
+            DMINFO("\tkey: %d", bit_node->inner.children[i].key);
+            DMINFO("\tpos: %ld", bit_node->inner.children[i].pointer.pos);
         }
     }
 }
@@ -48,8 +48,8 @@ void* bit_iterator_next(struct iterator* iterator) {
     if (!bit_node)
         return NULL;
     
-    *this->node = bit_node->node;
-    entry = __entry(bit_node->node.key, &this->node->record);
+    *this->node = bit_node->leaf;
+    entry = __entry(bit_node->leaf.key, &this->node->record);
     kfree(bit_node);
     return entry;
 }
@@ -90,11 +90,11 @@ struct iterator* bit_iterator_create(struct block_index_table* bit, struct bit_l
 }
 
 size_t __bit_height(size_t capacity, size_t nr_degree) {
-    size_t height = 0;
+    size_t height = 0, size = capacity;
 
-    while(capacity) {
+    while(size) {
         height += 1;
-        capacity /= nr_degree;
+        size /= nr_degree;
     }
 
     if (capacity % nr_degree)
@@ -105,8 +105,8 @@ size_t __bit_height(size_t capacity, size_t nr_degree) {
 
 struct bit_node __bit_leaf(struct bit_leaf* leaf) {
     struct bit_node bit_node = {
-        .leaf = true,
-        .node = *leaf
+        .is_leaf = true,
+        .leaf = *leaf
     };
 
     return bit_node;
@@ -115,15 +115,17 @@ struct bit_node __bit_leaf(struct bit_leaf* leaf) {
 struct bit_node __bit_inner_node(struct bit_generator_slot* slot) {
     size_t i;
     struct bit_node bit_node = {
-        .leaf = false
+        .is_leaf = false
     };
 
-    for (i = 0; i < BIT_DEGREE; ++i) {
-        bit_node.children[i].valid = true;
-        bit_node.children[i].key = slot->nodes[i].leaf ? slot->nodes[i].node.key : slot->nodes[i].children[BIT_DEGREE-1].key;
-        bit_node.children[i].pointer.pos = slot->pointers[i].pos;
+    memset(&bit_node, 0, sizeof(bit_node));
+    for (i = 0; i < slot->nr; ++i) {
+        bit_node.inner.children[i].key = slot->nodes[i].is_leaf ? 
+          slot->nodes[i].leaf.key : slot->nodes[i].inner.children[slot->nodes[i].inner.nr_child-1].key;
+        bit_node.inner.children[i].pointer.pos = slot->pointers[i].pos;
     }
 
+    bit_node.inner.nr_child = slot->nr;
     return bit_node;
 }
 
@@ -143,6 +145,36 @@ struct bit_pointer __bit_pointer(size_t pos, char* key, char* iv, char* mac) {
 }
 
 // block index table generator implementation
+int bit_generator_select_root(struct bit_generator* this) {
+    int h = 0, err = 0;
+    struct bit_node bit_node;
+
+    if (this->slots[this->height - 1].nr) {
+        this->bit->root = this->slots[this->height - 1].pointers[0].pos;
+        return 0;
+    }
+
+    while (h < this->height - 1) {
+        if (!this->slots[h].nr) {
+            h += 1;
+            continue;
+        }
+
+        bit_node = __bit_inner_node(&this->slots[h]);
+        err = this->bit->bit_nodes->set(this->bit->bit_nodes, this->pos, &bit_node);
+        if (err)
+            return err;
+        this->slots[h+1].pointers[this->slots[h+1].nr].pos = this->pos;
+        this->slots[h+1].nodes[this->slots[h+1].nr] =  bit_node;
+
+        this->pos += 1;
+        this->slots[h+1].nr += 1;
+        h += 1;
+    }
+
+    return 0;
+}
+
 int bit_generator_add(struct lsm_level_generator* lsm_level_generator, struct entry* entry) {
     int err = 0;
     size_t h = 0, cur;
@@ -160,7 +192,7 @@ int bit_generator_add(struct lsm_level_generator* lsm_level_generator, struct en
     
     this->pos += 1;
     this->slots[h].nr += 1;
-    while(this->slots[h].nr == BIT_DEGREE) {
+    while(this->slots[h].nr == this->bit->nr_degree) {
         bit_node = __bit_inner_node(&this->slots[h]);
         err = this->bit->bit_nodes->set(this->bit->bit_nodes, this->pos, &bit_node);
         if (err)
@@ -174,8 +206,16 @@ int bit_generator_add(struct lsm_level_generator* lsm_level_generator, struct en
         h += 1;
     }
 
-    leaf_node.node.next.pos = this->pos;
-    return this->bit->bit_nodes->set(this->bit->bit_nodes, cur, &leaf_node);
+    leaf_node.leaf.next.pos = this->pos;
+    err = this->bit->bit_nodes->set(this->bit->bit_nodes, cur, &leaf_node);
+    if (err)
+        return err;
+    
+    this->nr += 1;
+    if (this->nr == this->capacity)
+        return bit_generator_select_root(this);
+    
+    return 0;
 }
 
 void bit_generator_destroy(struct lsm_level_generator* lsm_level_generator) {
@@ -192,6 +232,7 @@ int bit_generator_init(struct bit_generator* this, struct block_index_table* bit
     int err = 0;
     
     this->bit = bit;
+    this->nr = 0;
     this->capacity = bit->lsm_level.capacity;
     this->pos = 0;
     this->height = __bit_height(this->capacity, bit->nr_degree);
@@ -242,17 +283,17 @@ next:
     if (!bit_node)
         goto exit;
 
-    if (bit_node->leaf) {
-        *first = bit_node->node;
+    if (bit_node->is_leaf) {
+        *first = bit_node->leaf;
         goto exit;
     } else {
-        if (!bit_node->children[0].valid) {
+        if (!bit_node->inner.nr_child) {
             kfree(first);
             first = NULL;
             goto exit;
         }
 
-        cur = bit_node->children[0].pointer.pos;
+        cur = bit_node->inner.children[0].pointer.pos;
         kfree(bit_node);
         goto next;
     }
@@ -288,22 +329,17 @@ next:
         goto exit;
     } 
 
-    if (bit_node->leaf) {
-        if (bit_node->node.key != key) {
+    if (bit_node->is_leaf) {
+        if (bit_node->leaf.key != key) {
             err = -ENODATA;
             goto exit;
         }
-        *(struct record*)val = bit_node->node.record;
+        *(struct record*)val = bit_node->leaf.record;
         goto exit;
     } else {
-        for (i = 0; i < this->nr_degree; ++i) {
-            if (!bit_node->children[i].valid) {
-                err = -ENODATA;
-                goto exit;
-            }
-
-            if (key <= bit_node->children[i].key) {
-                cur = bit_node->children[i].pointer.pos;
+        for (i = 0; i < bit_node->inner.nr_child; ++i) {
+            if (key <= bit_node->inner.children[i].key) {
+                cur = bit_node->inner.children[i].pointer.pos;
                 kfree(bit_node);
                 goto next;
             }

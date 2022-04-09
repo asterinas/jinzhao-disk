@@ -34,7 +34,6 @@ struct bit_pointer {
 } __packed;
 
 struct bit_child {
-    bool valid: 1;
     uint32_t key;
     struct bit_pointer pointer;
 } __packed;
@@ -45,11 +44,16 @@ struct bit_leaf {
     struct bit_pointer next;
 } __packed;
 
+struct bit_inner {
+    size_t nr_child;
+    struct bit_child children[BIT_DEGREE];
+};
+
 struct bit_node {
-    bool leaf: 1;
+    bool is_leaf: 1;
     union {
-        struct bit_leaf node;
-        struct bit_child children[BIT_DEGREE];
+        struct bit_leaf leaf;
+        struct bit_inner inner;
     };
 } __packed;
 
@@ -83,7 +87,7 @@ struct lsm_level* block_index_table_create(size_t capacity, size_t nr_degree, st
 
 struct bit_generator {
     struct lsm_level_generator lsm_level_generator;
-    size_t capacity, height, pos;
+    size_t capacity, nr, height, pos;
     struct bit_generator_slot* slots;
     struct block_index_table* bit;
 };
