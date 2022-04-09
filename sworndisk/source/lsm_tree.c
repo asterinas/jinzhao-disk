@@ -182,6 +182,7 @@ int bit_generator_add(struct lsm_level_generator* lsm_level_generator, struct en
     struct bit_leaf leaf = {
         .key = entry->key,
         .record = *((struct record*)entry->val),
+        .next.pos = 0
     };
     struct bit_generator* this = container_of(lsm_level_generator, struct bit_generator, lsm_level_generator);
 
@@ -206,12 +207,14 @@ int bit_generator_add(struct lsm_level_generator* lsm_level_generator, struct en
         h += 1;
     }
 
-    leaf_node.leaf.next.pos = this->pos;
+
+    this->nr += 1;
+    if (this->nr != this->capacity)
+        leaf_node.leaf.next.pos = this->pos;
     err = this->bit->bit_nodes->set(this->bit->bit_nodes, cur, &leaf_node);
     if (err)
         return err;
-    
-    this->nr += 1;
+
     if (this->nr == this->capacity)
         return bit_generator_select_root(this);
     
