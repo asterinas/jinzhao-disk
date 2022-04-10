@@ -155,7 +155,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 		goto bad;
 	}
 
-    sworndisk->lsm_tree = lsm_tree_create(DEFAULT_LSM_TREE_NR_LEVEL);
+    sworndisk->lsm_tree = lsm_tree_create(&sworndisk->metadata->block_index_table_catalogue->lsm_level_catalogue);
     if (!sworndisk->lsm_tree) {
         target->error = "could not create sworndisk memtable";
         ret = -EAGAIN;

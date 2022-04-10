@@ -386,9 +386,10 @@ size_t __bit_array_size(size_t capacity, size_t nr_degree) {
     return size;
 }
 
-int block_index_table_init(struct block_index_table* this, size_t capacity, size_t size, size_t nr_degree, struct dm_block_manager* bm, dm_block_t start, struct aead_cipher* cipher) {
+int block_index_table_init(struct block_index_table* this, size_t level, size_t capacity, size_t size, size_t nr_degree, struct dm_block_manager* bm, dm_block_t start, struct aead_cipher* cipher) {
     this->lsm_level.capacity = capacity;
     this->lsm_level.size = size;
+    this->level = level;
     this->nr_degree = nr_degree;
     this->cipher = cipher;
 
@@ -404,7 +405,7 @@ int block_index_table_init(struct block_index_table* this, size_t capacity, size
     return 0;
 }
 
-struct lsm_level* block_index_table_create(size_t capacity, size_t size, size_t nr_degree, struct dm_block_manager* bm, dm_block_t start, struct aead_cipher* cipher) {
+struct lsm_level* block_index_table_create(size_t level, size_t capacity, size_t size, size_t nr_degree, struct dm_block_manager* bm, dm_block_t start, struct aead_cipher* cipher) {
     int r;
     struct block_index_table* this;
 
@@ -412,7 +413,7 @@ struct lsm_level* block_index_table_create(size_t capacity, size_t size, size_t 
     if (!this)
         return NULL;
     
-    r = block_index_table_init(this, capacity, size, nr_degree, bm, start, cipher);
+    r = block_index_table_init(this, level, capacity, size, nr_degree, bm, start, cipher);
     if (r)
         return NULL;
     
@@ -451,12 +452,13 @@ void lsm_tree_destroy(struct lsm_tree* this) {
     }
 }
 
-int lsm_tree_init(struct lsm_tree* this, size_t nr_level) {
+int lsm_tree_init(struct lsm_tree* this, struct lsm_level_catalogue* catalogue) {
     this->memtable = rbtree_memtable_create(DEFAULT_MEMTABLE_CAPACITY);
     if (!this->memtable)
         return -ENOMEM;
 
-    this->nr_level = nr_level;
+    this->catalogue = catalogue;
+    this->nr_level = this->catalogue->nr_level(this->catalogue);
     this->levels = kmalloc(this->nr_level * sizeof(struct lsm_level*), GFP_KERNEL);
     if (!this->levels)
         return -ENOMEM;
@@ -469,7 +471,7 @@ int lsm_tree_init(struct lsm_tree* this, size_t nr_level) {
     return 0;
 }
 
-struct lsm_tree* lsm_tree_create(size_t nr_level) {
+struct lsm_tree* lsm_tree_create(struct lsm_level_catalogue* catalogue) {
     int r;
     struct lsm_tree* this;
 
@@ -477,7 +479,7 @@ struct lsm_tree* lsm_tree_create(size_t nr_level) {
     if (!this)
         return NULL;
 
-    r = lsm_tree_init(this, nr_level);
+    r = lsm_tree_init(this, catalogue);
     if (r)
         return NULL;
     
