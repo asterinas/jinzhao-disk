@@ -38,7 +38,7 @@ void process_deferred_bios(struct work_struct *ws) {
 	struct bio_list bios;
 	struct bio* bio;
     
-    struct record* record;
+    struct record record;
     struct dm_sworndisk_target *sworndisk;
 
     sworndisk = container_of(ws, struct dm_sworndisk_target, deferred_bio_worker);
@@ -50,10 +50,10 @@ void process_deferred_bios(struct work_struct *ws) {
 
 	while ((bio = bio_list_pop(&bios))) {
         if (bio_op(bio) == REQ_OP_READ) {
-            r = sworndisk->memtable->get(sworndisk->memtable, bio_get_block_address(bio), (void**)&record);
+            r = sworndisk->lsm_tree->get(sworndisk->lsm_tree, bio_get_block_address(bio), &record);
             if (r)
                 goto bad;
-            bio_set_sector(bio, record->pba * SECTORS_PER_BLOCK + bio_block_sector_offset(bio));
+            bio_set_sector(bio, record.pba * SECTORS_PER_BLOCK + bio_block_sector_offset(bio));
             r = sworndisk->seg_buffer->query_bio(sworndisk->seg_buffer, bio);
             if (!r) {
                 bio_endio(bio);
@@ -155,8 +155,8 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 		goto bad;
 	}
 
-    sworndisk->memtable = rbtree_memtable_create(DEFAULT_MEMTABLE_CAPACITY);
-    if (!sworndisk->memtable) {
+    sworndisk->lsm_tree = lsm_tree_create(DEFAULT_LSM_TREE_NR_LEVEL);
+    if (!sworndisk->lsm_tree) {
         target->error = "could not create sworndisk memtable";
         ret = -EAGAIN;
 		goto bad;
@@ -193,8 +193,8 @@ bad:
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
     if (sworndisk->wq) 
         destroy_workqueue(sworndisk->wq);
-    if (sworndisk->memtable) 
-        sworndisk->memtable->destroy(sworndisk->memtable);
+    if (sworndisk->lsm_tree) 
+        sworndisk->lsm_tree->destroy(sworndisk->lsm_tree);
     if (sworndisk->seg_allocator)
         sworndisk->seg_allocator->destroy(sworndisk->seg_allocator);
     if (sworndisk)
@@ -216,8 +216,8 @@ static void dm_sworndisk_target_dtr(struct dm_target *ti)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
     if (sworndisk->wq) 
         destroy_workqueue(sworndisk->wq);
-    if (sworndisk->memtable) 
-        sworndisk->memtable->destroy(sworndisk->memtable);
+    if (sworndisk->lsm_tree) 
+        sworndisk->lsm_tree->destroy(sworndisk->lsm_tree);
     if (sworndisk->seg_allocator)
         sworndisk->seg_allocator->destroy(sworndisk->seg_allocator);
 

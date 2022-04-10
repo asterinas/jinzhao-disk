@@ -1,6 +1,7 @@
 #include "../include/dm_sworndisk.h"
 #include "../include/lsm_tree.h"
 #include "../include/segment_buffer.h"
+#include "../include/memtable.h"
 
 // block index table node implementaion
 void bit_node_print(struct bit_node* bit_node) {
@@ -416,4 +417,69 @@ struct lsm_level* block_index_table_create(size_t capacity, size_t size, size_t 
         return NULL;
     
     return &this->lsm_level;
+}
+
+void* lsm_tree_set(struct lsm_tree* this, uint32_t key, void* val) {
+    return this->memtable->put(this->memtable, key, val);
+}
+
+int lsm_tree_get(struct lsm_tree* this, uint32_t key, void* val) {
+    int err;
+    size_t i;
+
+    for (i = 0; i < this->nr_level; ++i) {
+        err = this->levels[i]->search(this->levels[i], key, val);
+        if (!err)
+            return 0;
+    }
+
+    return -ENODATA;
+}
+
+void lsm_tree_destroy(struct lsm_tree* this) {
+    size_t i;
+
+    if (!IS_ERR_OR_NULL(this)) {
+        if (!IS_ERR_OR_NULL(this->levels)) {
+            for (i = 0; i < this->nr_level; ++i) {
+                if (!IS_ERR_OR_NULL(this->levels[i]))
+                    this->levels[i]->destroy(this->levels[i]);
+            }
+            kfree(this->levels);
+        }
+        kfree(this);
+    }
+}
+
+int lsm_tree_init(struct lsm_tree* this, size_t nr_level) {
+    this->memtable = rbtree_memtable_create(DEFAULT_MEMTABLE_CAPACITY);
+    if (!this->memtable)
+        return -ENOMEM;
+
+    this->nr_level = nr_level;
+    this->levels = kmalloc(this->nr_level * sizeof(struct lsm_level*), GFP_KERNEL);
+    if (!this->levels)
+        return -ENOMEM;
+    
+    this->levels[0] = &this->memtable->lsm_level;
+    this->set = lsm_tree_set;
+    this->get = lsm_tree_get;
+    this->merge = NULL;
+    this->destroy = lsm_tree_destroy;
+    return 0;
+}
+
+struct lsm_tree* lsm_tree_create(size_t nr_level) {
+    int r;
+    struct lsm_tree* this;
+
+    this = kmalloc(sizeof(struct lsm_tree), GFP_KERNEL);
+    if (!this)
+        return NULL;
+
+    r = lsm_tree_init(this, nr_level);
+    if (r)
+        return NULL;
+    
+    return this;
 }

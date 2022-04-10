@@ -5,6 +5,8 @@
 #include "crypto.h"
 #include "disk_structs.h"
 
+#define DEFAULT_LSM_TREE_NR_LEVEL 1
+
 // record, lba => (pba, key, iv, mac)
 struct record {
     dm_block_t pba; // physical block address
@@ -108,14 +110,15 @@ struct lsm_level_generator* bit_generator_create(struct block_index_table* bit, 
 
 struct lsm_tree {
     size_t nr_level;
-    struct lsm_level* levels;
+    struct lsm_level** levels;
+    struct memtable* memtable;
 
-    int (*set)(struct lsm_tree* this, uint32_t key, void* val);
+    void* (*set)(struct lsm_tree* this, uint32_t key, void* val);
     int (*get)(struct lsm_tree* this, uint32_t key, void* val);
-    int (*merge)(struct lsm_tree* this, size_t upper, size_t lower);
+    int (*merge)(struct lsm_tree* this, size_t level1, size_t level2);
+    void (*destroy)(struct lsm_tree* this);
 };
 
-
-void block_index_table_iterator_test(struct dm_block_manager* bm);
+struct lsm_tree* lsm_tree_create(size_t nr_level);
 
 #endif
