@@ -1,15 +1,27 @@
 #ifndef SWORNDISK_LSM_TREE_H
 #define SWORNDISK_LSM_TREE_H
 
-#include "memtable.h"
 #include "metadata.h"
 #include "crypto.h"
 #include "disk_structs.h"
+
+// record, lba => (pba, key, iv, mac)
+struct record {
+    dm_block_t pba; // physical block address
+    char *mac;
+    char *key;
+    char *iv;
+};  
+
+struct record* record_create(dm_block_t pba, char* key, char* iv, char* mac);
+void record_destroy(void* record);
 
 struct entry {
     uint32_t key;
     void* val;
 };  
+
+struct entry* __entry(uint32_t key, void* val);
 
 struct iterator {
     bool (*has_next)(struct iterator* iterator);
@@ -18,7 +30,7 @@ struct iterator {
 };
 
 struct lsm_level {
-    size_t capacity;
+    size_t size, capacity;
 
     struct iterator* (*iterator)(struct lsm_level* lsm_level);
     int (*search)(struct lsm_level* lsm_level, uint32_t key, void* val);
@@ -83,16 +95,16 @@ struct block_index_table {
     struct disk_array* bit_nodes;
     struct aead_cipher* cipher;
 };
-struct lsm_level* block_index_table_create(size_t capacity, size_t nr_degree, struct dm_block_manager* bm, dm_block_t start, struct aead_cipher* cipher);
+struct lsm_level* block_index_table_create(size_t capacity, size_t size, size_t nr_degree, struct dm_block_manager* bm, dm_block_t start, struct aead_cipher* cipher);
 
 struct bit_generator {
     struct lsm_level_generator lsm_level_generator;
-    size_t capacity, nr, height, pos;
+    size_t size, nr, height, pos;
     struct bit_generator_slot* slots;
     struct block_index_table* bit;
 };
 
-struct lsm_level_generator* bit_generator_create(struct block_index_table* bit);
+struct lsm_level_generator* bit_generator_create(struct block_index_table* bit, size_t size);
 
 struct lsm_tree {
     size_t nr_level;
@@ -102,5 +114,8 @@ struct lsm_tree {
     int (*get)(struct lsm_tree* this, uint32_t key, void* val);
     int (*merge)(struct lsm_tree* this, size_t upper, size_t lower);
 };
+
+
+void block_index_table_iterator_test(struct dm_block_manager* bm);
 
 #endif

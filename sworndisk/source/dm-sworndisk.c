@@ -155,7 +155,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 		goto bad;
 	}
 
-    sworndisk->memtable = rbtree_memtable_create();
+    sworndisk->memtable = rbtree_memtable_create(DEFAULT_MEMTABLE_CAPACITY);
     if (!sworndisk->memtable) {
         target->error = "could not create sworndisk memtable";
         ret = -EAGAIN;

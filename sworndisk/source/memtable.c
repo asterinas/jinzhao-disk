@@ -206,6 +206,7 @@ void memtable_rbnode_destroy(struct memtable_rbnode* entry) {
 #define RBTREE_MEMTABLE_THIS_POINTER_DECLARE struct rbtree_memtable* this; \
         this = container_of(mt, struct rbtree_memtable, memtable);
 
+// memtable interface implementation
 void* __rbtree_memtable_search(struct rb_root* root, uint32_t key) {
     struct memtable_rbnode* cur;
     struct rb_node *node = root->rb_node;  /* top of the tree */
@@ -244,6 +245,8 @@ next:
         goto next;
     }
 
+    if (!oldval)
+        this->memtable.lsm_level.size += 1;
     return oldval;
 }
 
@@ -282,6 +285,85 @@ bool rbtree_memtable_contains(struct memtable* mt, uint32_t key) {
     return __rbtree_memtable_search(&this->root, key);
 }
 
+// lsm level interface implementation
+#define RBTREE_LSM_LEVEL_THIS_POINTER_DECLARE struct memtable* memtable = container_of(lsm_level, struct memtable, lsm_level); \
+    struct rbtree_memtable* this = container_of(memtable, struct rbtree_memtable, memtable);
+
+int rbtree_memtable_lsm_level_search(struct lsm_level* lsm_level, uint32_t key, void* val) {
+    int r;
+    struct record* record = NULL;
+    struct memtable* memtable = container_of(lsm_level, struct memtable, lsm_level);
+
+    r = memtable->get(memtable, key, (void**)&record);
+    if (r)
+        return r;
+    
+    *(struct record*)val = *record;
+    return 0;
+}
+
+struct rbtree_memtable_iterator {
+    struct iterator iterator;
+    struct rb_node* node;
+};
+
+bool rbtree_memtable_iterator_has_next(struct iterator* iterator) {
+    struct rbtree_memtable_iterator* this = container_of(iterator, struct rbtree_memtable_iterator, iterator);
+
+    return this->node != NULL;
+}
+
+void* rbtree_memtable_iterator_next(struct iterator* iterator) {
+    struct memtable_rbnode* m_rbnode;
+    struct rbtree_memtable_iterator* this = container_of(iterator, struct rbtree_memtable_iterator, iterator);
+
+    if (!this->node) 
+        return NULL;
+    m_rbnode = rb_entry(this->node, struct memtable_rbnode, node);
+    this->node = rb_next(this->node);    
+    return __entry(m_rbnode->key, m_rbnode->val);
+}
+
+void rbtree_memtable_iterator_destroy(struct iterator* iterator) {
+    struct rbtree_memtable_iterator* this = container_of(iterator, struct rbtree_memtable_iterator, iterator);
+
+    if (!IS_ERR_OR_NULL(this)) {
+        kfree(this);
+    }
+}
+
+int rbtree_memtable_iterator_init(struct rbtree_memtable_iterator* this, struct rb_node* first) {
+    this->node = first;
+    this->iterator.has_next = rbtree_memtable_iterator_has_next;
+    this->iterator.next = rbtree_memtable_iterator_next;
+    this->iterator.destroy = rbtree_memtable_iterator_destroy;
+
+    return 0;
+} 
+
+struct iterator* rbtree_memtable_iterator_create(struct rb_node* first) {
+    int r;
+    struct rbtree_memtable_iterator* this;
+
+    this = kmalloc(sizeof(struct rbtree_memtable_iterator), GFP_KERNEL);
+    if (!this)
+        return NULL;
+    
+    r = rbtree_memtable_iterator_init(this, first);
+    if (r)
+        return NULL;
+    
+    return &this->iterator;
+}
+
+struct iterator* rbtree_memtable_lsm_level_iterator(struct lsm_level* lsm_level) {
+    struct rb_node* first;
+    RBTREE_LSM_LEVEL_THIS_POINTER_DECLARE
+
+    first = rb_first(&this->root);
+    return rbtree_memtable_iterator_create(first);
+}
+
 void rbtree_memtable_destroy(struct memtable* mt) {
     struct memtable_rbnode* entry;
     RBTREE_MEMTABLE_THIS_POINTER_DECLARE
@@ -293,26 +375,40 @@ void rbtree_memtable_destroy(struct memtable* mt) {
             memtable_rbnode_destroy(entry);
         }
         kfree(this);
+        this = NULL;
     }
 }
 
-void rbtree_memtable_init(struct rbtree_memtable* this) {
+void rbtree_memtable_lsm_level_destroy(struct lsm_level* lsm_level) {
+    struct memtable* memtable = container_of(lsm_level, struct memtable, lsm_level);
+
+    memtable->destroy(memtable);
+}
+
+void rbtree_memtable_init(struct rbtree_memtable* this, size_t capacity) {
     this->root = RB_ROOT;
+    // memtable
     this->memtable.put = rbtree_memtable_put;
     this->memtable.get = rbtree_memtable_get;
     this->memtable.contains = rbtree_memtable_contains;
     this->memtable.destroy = rbtree_memtable_destroy;
     this->memtable.remove = rbtree_memtable_remove;
+    // lsm level
+    this->memtable.lsm_level.capacity = capacity;
+    this->memtable.lsm_level.size = 0;
+    this->memtable.lsm_level.iterator = rbtree_memtable_lsm_level_iterator;
+    this->memtable.lsm_level.search = rbtree_memtable_lsm_level_search;
+    this->memtable.lsm_level.destroy = rbtree_memtable_lsm_level_destroy;
 }
 
-struct memtable* rbtree_memtable_create(void) {
+struct memtable* rbtree_memtable_create(size_t capacity) {
     struct rbtree_memtable* this;
 
     this = kmalloc(sizeof(struct rbtree_memtable), GFP_KERNEL);
     if (!this)
         return NULL;
     
-    rbtree_memtable_init(this);
+    rbtree_memtable_init(this, capacity);
 
     return &this->memtable;
 }

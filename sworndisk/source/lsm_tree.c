@@ -24,7 +24,7 @@ void bit_node_print(struct bit_node* bit_node) {
 bool bit_iterator_has_next(struct iterator* iterator) {
     struct bit_iterator* this = container_of(iterator, struct bit_iterator, iterator);
 
-    return this->node->next.pos != 0;
+    return this->node != NULL;
 }
 
 struct entry* __entry(uint32_t key, void* val) {
@@ -44,12 +44,17 @@ void* bit_iterator_next(struct iterator* iterator) {
     struct bit_node* bit_node = NULL;
     struct bit_iterator* this = container_of(iterator, struct bit_iterator, iterator);
 
+    entry = __entry(this->node->key, &this->node->record);
+    if (this->node->next.pos == 0) {
+        this->node = NULL;
+        return entry;
+    }
+
     bit_node = this->bit->bit_nodes->get(this->bit->bit_nodes, this->node->next.pos);
     if (!bit_node)
         return NULL;
     
     *this->node = bit_node->leaf;
-    entry = __entry(bit_node->leaf.key, &this->node->record);
     kfree(bit_node);
     return entry;
 }
@@ -210,13 +215,13 @@ int bit_generator_add(struct lsm_level_generator* lsm_level_generator, struct en
 
 
     this->nr += 1;
-    if (this->nr != this->capacity)
+    if (this->nr != this->size)
         leaf_node.leaf.next.pos = this->pos;
     err = this->bit->bit_nodes->set(this->bit->bit_nodes, cur, &leaf_node);
     if (err)
         return err;
 
-    if (this->nr == this->capacity)
+    if (this->nr == this->size)
         return bit_generator_select_root(this);
     
     return 0;
@@ -232,14 +237,14 @@ void bit_generator_destroy(struct lsm_level_generator* lsm_level_generator) {
     }
 }
 
-int bit_generator_init(struct bit_generator* this, struct block_index_table* bit) {
+int bit_generator_init(struct bit_generator* this, struct block_index_table* bit, size_t size) {
     int err = 0;
     
     this->bit = bit;
     this->nr = 0;
-    this->capacity = bit->lsm_level.capacity;
+    this->size = size;
     this->pos = 0;
-    this->height = __bit_height(this->capacity, bit->nr_degree);
+    this->height = __bit_height(this->size, bit->nr_degree);
     this->slots = kzalloc(this->height * sizeof(struct bit_generator_slot), GFP_KERNEL);
     if (!this->slots) {
         err = -ENOMEM;
@@ -256,7 +261,7 @@ bad:
     return err;
 }
 
-struct lsm_level_generator* bit_generator_create(struct block_index_table* bit) {
+struct lsm_level_generator* bit_generator_create(struct block_index_table* bit, size_t size) {
     int err;
     struct bit_generator* this;
 
@@ -264,7 +269,7 @@ struct lsm_level_generator* bit_generator_create(struct block_index_table* bit) 
     if (!this)
         return NULL;
     
-    err = bit_generator_init(this, bit);
+    err = bit_generator_init(this, bit, size);
     if (err)
         return NULL;
     
@@ -380,8 +385,9 @@ size_t __bit_array_size(size_t capacity, size_t nr_degree) {
     return size;
 }
 
-int block_index_table_init(struct block_index_table* this, size_t capacity, size_t nr_degree, struct dm_block_manager* bm, dm_block_t start, struct aead_cipher* cipher) {
+int block_index_table_init(struct block_index_table* this, size_t capacity, size_t size, size_t nr_degree, struct dm_block_manager* bm, dm_block_t start, struct aead_cipher* cipher) {
     this->lsm_level.capacity = capacity;
+    this->lsm_level.size = size;
     this->nr_degree = nr_degree;
     this->cipher = cipher;
 
@@ -397,7 +403,7 @@ int block_index_table_init(struct block_index_table* this, size_t capacity, size
     return 0;
 }
 
-struct lsm_level* block_index_table_create(size_t capacity, size_t nr_degree, struct dm_block_manager* bm, dm_block_t start, struct aead_cipher* cipher) {
+struct lsm_level* block_index_table_create(size_t capacity, size_t size, size_t nr_degree, struct dm_block_manager* bm, dm_block_t start, struct aead_cipher* cipher) {
     int r;
     struct block_index_table* this;
 
@@ -405,7 +411,7 @@ struct lsm_level* block_index_table_create(size_t capacity, size_t nr_degree, st
     if (!this)
         return NULL;
     
-    r = block_index_table_init(this, capacity, nr_degree, bm, start, cipher);
+    r = block_index_table_init(this, capacity, size, nr_degree, bm, start, cipher);
     if (r)
         return NULL;
     
