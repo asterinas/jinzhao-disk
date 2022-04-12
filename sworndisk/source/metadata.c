@@ -107,12 +107,18 @@ void superblock_print(struct superblock* this) {
 #include "../include/segment_allocator.h"
 #define LSM_TREE_DISK_LEVEL_COMMON_RATIO 8
 
+size_t __disk_array_blocks(size_t nr_elem, size_t elem_size, size_t block_size) {
+	size_t elems_per_block = block_size / elem_size;
+
+	return nr_elem / elems_per_block + 1;
+}
+
 size_t __index_region_blocks(size_t nr_disk_level, size_t common_ratio, size_t max_disk_level_capacity) {
 	size_t i, capacity, total_blocks = 0;
 
 	capacity = max_disk_level_capacity;
 	for (i = 0; i < nr_disk_level; ++i) {
-		total_blocks += __bytes_to_block(capacity * sizeof(struct bit_node), SWORNDISK_METADATA_BLOCK_SIZE);
+		total_blocks += __disk_array_blocks(capacity, sizeof(struct bit_node), SWORNDISK_METADATA_BLOCK_SIZE);
 		capacity /= common_ratio;
 	}
 
@@ -127,7 +133,7 @@ size_t __bytes_to_block(size_t bytes, size_t block_size) {
 }
 
 size_t __journal_region_blocks(size_t nr_journal, size_t journal_size) {
-	return __bytes_to_block(nr_journal * journal_size, SWORNDISK_METADATA_BLOCK_SIZE);
+	return __disk_array_blocks(nr_journal, journal_size, SWORNDISK_METADATA_BLOCK_SIZE);
 }
 
 size_t __seg_validity_table_blocks(size_t nr_segment) {
@@ -137,11 +143,11 @@ size_t __seg_validity_table_blocks(size_t nr_segment) {
 }
 
 size_t __data_seg_table_blocks(size_t nr_segment) {
-	return __bytes_to_block(nr_segment * sizeof(struct data_segment_entry), SWORNDISK_METADATA_BLOCK_SIZE);
+	return __disk_array_blocks(nr_segment, sizeof(struct data_segment_entry), SWORNDISK_METADATA_BLOCK_SIZE);
 }
 
 size_t __reverse_index_table_blocks(size_t nr_segment, size_t blocks_per_seg) {
-	return __bytes_to_block(nr_segment * blocks_per_seg * sizeof(struct data_segment_entry), SWORNDISK_METADATA_BLOCK_SIZE);
+	return __disk_array_blocks(nr_segment * blocks_per_seg, sizeof(struct data_segment_entry), SWORNDISK_METADATA_BLOCK_SIZE);
 }
 
 int superblock_init(struct superblock* this, struct dm_block_manager* bm, bool* should_format) {
