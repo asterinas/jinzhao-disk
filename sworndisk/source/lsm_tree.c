@@ -65,16 +65,14 @@ struct bit_node __bit_inner(struct bit_builder_context* ctx) {
     return node;
 }
 
-void bit_builder_forward_cursor(struct bit_builder* this) {
+void bit_builder_buffer_flush_if_full(struct bit_builder* this) {
     loff_t pos = this->begin;
 
-    if (this->cur + this->height * sizeof(struct bit_node) > SEGMENT_BUFFER_SIZE) {
+    if (this->cur + this->height * sizeof(struct bit_node) > (SEGMENT_BUFFER_SIZE >> 1)) {
         kernel_write(this->file, this->buffer, this->cur, &pos);
         this->begin += this->cur;
         this->cur = 0;
     }
-
-    this->cur += sizeof(struct bit_node);
 }
 
 int bit_builder_add_entry(struct lsm_file_builder* builder, struct entry* entry) {
@@ -97,8 +95,9 @@ int bit_builder_add_entry(struct lsm_file_builder* builder, struct entry* entry)
 
     this->ctx[h].nodes[this->ctx[h].nr] = leaf_node;
     this->ctx[h].pointers[this->ctx[h].nr]  = pointer;
-    bit_builder_forward_cursor(this);
-    cur = this->cur - sizeof(struct bit_node);
+    bit_builder_buffer_flush_if_full(this);
+    cur = this->cur;
+    this->cur += sizeof(struct bit_node);
 
     this->ctx[h].nr += 1;
     while (this->ctx[h].nr == DEFAULT_BIT_DEGREE) {
@@ -106,7 +105,7 @@ int bit_builder_add_entry(struct lsm_file_builder* builder, struct entry* entry)
         this->ctx[h+1].nodes[this->ctx[h+1].nr] = inner_node;
         this->ctx[h+1].pointers[this->ctx[h+1].nr].pos = this->begin + this->cur;
         memcpy(this->buffer + this->cur, &inner_node, sizeof(struct bit_node));
-        bit_builder_forward_cursor(this);
+        this->cur += sizeof(struct bit_node);
 
         this->ctx[h+1].nr += 1;
         this->ctx[h].nr = 0;
@@ -128,12 +127,13 @@ struct lsm_file* bit_builder_complete(struct lsm_file_builder* builder) {
     if (this->ctx[this->height-1].nr) 
         goto exit;
 
+    bit_builder_buffer_flush_if_full(this);
     while (h < this->height - 1) {
         inner_node = __bit_inner(&this->ctx[h]);
         this->ctx[h+1].nodes[this->ctx[h+1].nr] = inner_node;
         this->ctx[h+1].pointers[this->ctx[h+1].nr].pos = this->begin + this->cur;
         memcpy(this->buffer + this->cur, &inner_node, sizeof(struct bit_node));
-        bit_builder_forward_cursor(this);
+        this->cur += sizeof(struct bit_node);
 
         this->ctx[h+1].nr += 1;
         this->ctx[h].nr = 0;
@@ -213,7 +213,6 @@ bad:
 }
 
 // block index table file implementation
-
 struct entry __entry(uint32_t key, void* val) {
     struct entry entry = {
         .key = key,
@@ -242,7 +241,7 @@ next:
             goto next;
         }
     }
-    
+
     return -ENODATA;
 }
 
@@ -263,6 +262,90 @@ int bit_file_search(struct lsm_file* lsm_file, uint32_t key, void* val) {
     return err;
 }
 
+// block index table iterator implementation
+struct bit_iterator {
+    struct iterator iterator;
+
+    bool has_next;
+    struct bit_file* bit_file;
+    struct bit_leaf leaf;
+};
+
+bool bit_iterator_has_next(struct iterator* iter) {
+    struct bit_iterator* this = container_of(iter, struct bit_iterator, iterator);
+
+    return this->has_next;
+}
+
+int bit_iterator_next(struct iterator* iter, void* data) {
+    loff_t pos;
+    struct bit_node bit_node;
+    struct bit_iterator* this = container_of(iter, struct bit_iterator, iterator);
+
+    if (!iter->has_next(iter))
+        return -ENODATA;
+    
+    *(struct entry*)data = __entry(this->leaf.key, &this->leaf.record);
+    if (this->leaf.key >= this->bit_file->last_key) {
+        this->has_next = false;
+        return 0;
+    }
+
+    pos = this->leaf.next.pos;
+    kernel_read(this->bit_file->file, &bit_node, sizeof(struct bit_node), &pos);
+    this->leaf = bit_node.leaf;
+    return 0;
+}
+
+void bit_iterator_destroy(struct iterator* iter) {
+    struct bit_iterator* this = container_of(iter, struct bit_iterator, iterator);
+
+    if (!IS_ERR_OR_NULL(this)) 
+        kfree(this);
+}
+
+
+int bit_iterator_init(struct bit_iterator* this, struct bit_file* bit_file) {
+    int err = 0;
+
+    this->has_next = true;
+    this->bit_file = bit_file;
+    err = bit_file_first_leaf(this->bit_file, &this->leaf);
+    if (err)
+        return err;
+
+    this->iterator.has_next = bit_iterator_has_next;
+    this->iterator.next = bit_iterator_next;
+    this->iterator.destroy = bit_iterator_destroy;
+    
+    return 0;
+}
+
+struct iterator* bit_iterator_create(struct bit_file* bit_file) {
+    int err = 0;
+    struct bit_iterator* this;
+
+    this = kmalloc(sizeof(struct bit_iterator), GFP_KERNEL);
+    if (!this) 
+        goto bad;
+
+    err = bit_iterator_init(this, bit_file);
+    if (err)
+        goto bad;
+
+    return &this->iterator;
+bad:
+    if (this)
+        kfree(this);
+    return NULL;
+}
+
+struct iterator* bit_file_iterator(struct lsm_file* lsm_file) {
+    struct bit_file* this = container_of(lsm_file, struct bit_file, lsm_file);
+
+    return bit_iterator_create(this);
+}
+
 int bit_file_init(struct bit_file* this, struct file* file, loff_t root, size_t id, size_t level, uint32_t first_key, uint32_t last_key) {
     int err = 0;
     
@@ -272,6 +355,9 @@ int bit_file_init(struct bit_file* this, struct file* file, loff_t root, size_t 
     this->level = level;
     this->first_key = first_key;
     this->last_key = last_key;
+
+    this->lsm_file.search = bit_file_search;
+    this->lsm_file.iterator = bit_file_iterator;
     return err;
 }
 

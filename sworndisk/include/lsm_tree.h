@@ -29,7 +29,7 @@ struct entry __entry(uint32_t key, void* val);
 
 struct iterator {
     bool (*has_next)(struct iterator* iterator);
-    void* (*next)(struct iterator* iterator);
+    int (*next)(struct iterator* iterator, void* data);
     void (*destroy)(struct iterator* iterator);
 };
 

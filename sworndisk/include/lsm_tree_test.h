@@ -5,5 +5,6 @@
 
 int block_index_table_builder_test(void);
 int block_index_table_search_test(void);
+int block_index_table_iterator_test(void);
 
 #endif
