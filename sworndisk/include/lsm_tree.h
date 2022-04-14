@@ -1,10 +1,13 @@
 #ifndef SWORNDISK_LSM_TREE_H
 #define SWORNDISK_LSM_TREE_H
 
+#include <linux/fs.h>
+
 #include "crypto.h"
 #include "disk_structs.h"
 
 #define DEFAULT_LSM_TREE_NR_LEVEL 1
+#define DEFAULT_LSM_FILE_CAPACITY 65536
 
 // record, lba => (pba, key, iv, mac)
 struct record {
@@ -30,21 +33,12 @@ struct iterator {
     void (*destroy)(struct iterator* iterator);
 };
 
-struct lsm_level {
-    size_t size, capacity;
 
-    struct lsm_level_generator* (*generator)(struct lsm_level* lsm_level);
-    struct iterator* (*iterator)(struct lsm_level* lsm_level);
-    int (*search)(struct lsm_level* lsm_level, uint32_t key, void* val);
-    void (*destroy)(struct lsm_level* lsm_level);
-};
-
-#define BIT_DEGREE 4
+#define DEFAULT_BIT_DEGREE 4
 struct bit_pointer {
     size_t pos;
     char key[AES_GCM_KEY_SIZE];
     char iv[AES_GCM_IV_SIZE];
-    char mac[AES_GCM_AUTH_SIZE];
 } __packed;
 
 struct bit_child {
@@ -60,7 +54,7 @@ struct bit_leaf {
 
 struct bit_inner {
     size_t nr_child;
-    struct bit_child children[BIT_DEGREE];
+    struct bit_child children[DEFAULT_BIT_DEGREE];
 } __packed;
 
 struct bit_node {
@@ -69,63 +63,51 @@ struct bit_node {
         struct bit_leaf leaf;
         struct bit_inner inner;
     };
+    char mac[AES_GCM_AUTH_SIZE];
 } __packed;
 
 void bit_node_print(struct bit_node* bit_node);
+size_t __bit_array_len(size_t capacity, size_t nr_degree);
 
-struct bit_iterator {
-    struct bit_leaf* node;
-    struct block_index_table* bit;
-    struct iterator iterator;
+struct lsm_file {
+    struct iterator* (*iterator)(struct lsm_file* lsm_file);
+    int (*search)(struct lsm_file* lsm_file, uint32_t key, void* data);
+    void (*destroy)(struct lsm_file* lsm_file);
 };
 
-struct lsm_level_generator {
-    int (*add)(struct lsm_level_generator* lsm_level_generator, struct entry* entry);
-    void (*destroy)(struct lsm_level_generator* lsm_level_generator);
+struct bit_file {
+    struct lsm_file lsm_file;
+
+    struct dm_block_manager* bm;
+    struct disk_array* nodes;
 };
 
-struct bit_generator_slot {
+struct lsm_file_builder {
+    int (*add_entry)(struct lsm_file_builder* builder, struct entry* entry);
+    struct lsm_file* (*complete)(struct lsm_file_builder* builder);
+    void (*destroy)(struct lsm_file_builder* builder);
+};
+
+struct bit_builder_context {
     size_t nr;
-    struct bit_pointer pointers[BIT_DEGREE];
-    struct bit_node nodes[BIT_DEGREE];
+    struct bit_pointer pointers[DEFAULT_BIT_DEGREE];
+    struct bit_node nodes[DEFAULT_BIT_DEGREE];
 };
 
-struct block_index_table {
-    struct lsm_level lsm_level;
-    size_t level, nr_degree, root;
-    dm_block_t start;
-    struct disk_array* bit_nodes;
-    struct aead_cipher* cipher;
-};
-struct lsm_level* block_index_table_create(size_t level, size_t capacity, size_t size, size_t nr_degree, struct dm_block_manager* bm, dm_block_t start, struct aead_cipher* cipher);
+struct bit_builder {
+    struct lsm_file_builder lsm_file_builder;
 
-struct bit_generator {
-    struct lsm_level_generator lsm_level_generator;
-    size_t size, nr, height, pos;
-    struct bit_generator_slot* slots;
-    struct block_index_table* bit;
+    struct file* file;
+    loff_t begin;
+    size_t cur, height;
+    void* buffer;
+    struct bit_builder_context* ctx;
 };
 
-struct lsm_level_generator* bit_generator_create(struct block_index_table* bit, size_t size);
+struct lsm_file_builder* bit_builder_create(struct file* file, size_t begin);
 
-struct lsm_level_catalogue {
-    size_t (*nr_level)(struct lsm_level_catalogue* lsm_level_catalogue);
-    int (*set)(struct lsm_level_catalogue* lsm_level_catalogue, size_t level, void* entry);
-    void* (*get)(struct lsm_level_catalogue* lsm_level_catalogue, size_t level);
+struct bit_compactor_job {
+       
 };
-
-struct lsm_tree {
-    size_t nr_level;
-    struct lsm_level** levels;
-    struct memtable* memtable;
-    struct lsm_level_catalogue* catalogue;
-
-    void* (*set)(struct lsm_tree* this, uint32_t key, void* val);
-    int (*get)(struct lsm_tree* this, uint32_t key, void* val);
-    int (*merge)(struct lsm_tree* this, size_t level1, size_t level2);
-    void (*destroy)(struct lsm_tree* this);
-};
-
-struct lsm_tree* lsm_tree_create(struct lsm_level_catalogue* catalogue);
 
 #endif

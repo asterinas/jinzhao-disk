@@ -11,8 +11,6 @@
 #define DEFAULT_MEMTABLE_CAPACITY 65536
 
 struct memtable {
-    struct lsm_level lsm_level;
-
     void* (*put)(struct memtable* mt, uint32_t key, void* val);
     int (*get)(struct memtable* mt, uint32_t key, void** p_val);
     void* (*remove)(struct memtable* mt, uint32_t ket);

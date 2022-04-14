@@ -32,7 +32,7 @@ void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer)
     if (IS_ERR_OR_NULL(record))
         return;
 
-    record = sworndisk->lsm_tree->set(sworndisk->lsm_tree, lba, record);
+    record = sworndisk->memtable->put(sworndisk->memtable, lba, record);
     if (record) {
         sworndisk->metadata->data_segment_table->return_block(sworndisk->metadata->data_segment_table, record->pba);
         record_destroy(record);

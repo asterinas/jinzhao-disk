@@ -656,88 +656,6 @@ void data_segment_table_destroy(struct data_segment_table* this) {
 	}
 }
 
-// block index table catalogue implementation
-size_t bitc_lsm_level_catalogue_nr_level(struct lsm_level_catalogue* lsm_level_catalogue) {
-	struct block_index_table_catalogue* this = container_of(lsm_level_catalogue, struct block_index_table_catalogue, lsm_level_catalogue);
-
-	return this->nr_level;
-}
-
-int bitc_lsm_level_catalogue_set(struct lsm_level_catalogue* lsm_level_catalogue, size_t level, void* entry) {
-	struct block_index_table_catalogue* this = container_of(lsm_level_catalogue, struct block_index_table_catalogue, lsm_level_catalogue);
-
-	return this->levels->set(this->levels, level, entry);
-}
-
-void* bitc_lsm_level_catalogue_get(struct lsm_level_catalogue* lsm_level_catalogue, size_t level) {
-	struct block_index_table_catalogue* this = container_of(lsm_level_catalogue, struct block_index_table_catalogue, lsm_level_catalogue);
-
-	return this->levels->get(this->levels, level);
-}
-
-void block_index_table_catalogue_destroy(struct block_index_table_catalogue* this) {
-	if (!IS_ERR_OR_NULL(this)) {
-		if (!IS_ERR_OR_NULL(this->levels)) {
-			disk_array_destroy(this->levels);
-		}
-		kfree(this);
-	}
-}
-
-int block_index_table_catalogue_format(struct block_index_table_catalogue* this) {
-	int r;
-	size_t i;
-	struct bitc_entry entry = {
-		.start = this->index_region_start,
-		.size = 0,
-		.capacity = this->max_disk_level_capacity
-	};
-
-	for (i = this->nr_level - 1; i >= 1; --i) {
-		r = this->levels->set(this->levels, i, &entry);
-		if (r)
-			return r;
-		
-		entry.start += __index_region_blocks(1, LSM_TREE_DISK_LEVEL_COMMON_RATIO, entry.capacity);
-		entry.capacity /= this->common_ratio;
-	}
-
-	return 0;
-}
-
-int block_index_table_catalogue_init(struct block_index_table_catalogue* this, size_t nr_level, size_t common_ratio, size_t max_disk_level_capacity, struct dm_block_manager* bm, dm_block_t catalogue_start, dm_block_t index_region_start) {
-	this->nr_level = nr_level;
-	this->common_ratio = common_ratio;
-	this->max_disk_level_capacity = max_disk_level_capacity;
-	this->index_region_start = index_region_start;
-	this->bm = bm;
-	this->levels = disk_array_create(this->bm, catalogue_start, this->nr_level, sizeof(struct bitc_entry));
-	if (IS_ERR_OR_NULL(this->levels))
-		return -ENOMEM;
-
-	this->format = block_index_table_catalogue_format;
-	this->lsm_level_catalogue.nr_level = bitc_lsm_level_catalogue_nr_level;
-	this->lsm_level_catalogue.set = bitc_lsm_level_catalogue_set;
-	this->lsm_level_catalogue.get = bitc_lsm_level_catalogue_get;
-
-	return 0;
-}
-
-struct block_index_table_catalogue* block_index_table_catalogue_create(size_t nr_level, size_t common_ratio, size_t max_disk_level_capacity, struct dm_block_manager* bm, dm_block_t catalogue_start, dm_block_t index_region_start) {
-	int r;
-	struct block_index_table_catalogue* this;
-
-	this = kmalloc(sizeof(struct block_index_table_catalogue), GFP_KERNEL);
-	if (!this)
-		return NULL;
-	
-	r = block_index_table_catalogue_init(this, nr_level, common_ratio, max_disk_level_capacity, bm, catalogue_start, index_region_start);
-	if (r)
-		return NULL;
-	
-	return this;
-}
-
 // metadata implementation
 int metadata_format(struct metadata* this) {
 	int r;
@@ -751,10 +669,6 @@ int metadata_format(struct metadata* this) {
 		return r;
 
 	r = this->data_segment_table->format(this->data_segment_table);
-	if (r)
-		return r;
-
-	r = this->block_index_table_catalogue->format(this->block_index_table_catalogue);
 	if (r)
 		return r;
 
@@ -787,11 +701,6 @@ int metadata_init(struct metadata* this, struct block_device* bdev) {
 	if (IS_ERR_OR_NULL(this->data_segment_table))
 		goto bad;
 
-	this->block_index_table_catalogue = block_index_table_catalogue_create(this->superblock->nr_disk_level + 1, LSM_TREE_DISK_LEVEL_COMMON_RATIO, 
-	  NR_SEGMENT * BLOCKS_PER_SEGMENT, this->bm, this->superblock->block_index_table_catalogue_start, this->superblock->index_region_start);
-	if (IS_ERR_OR_NULL(this->block_index_table_catalogue))
-		goto bad;
-
 	this->format = metadata_format;
 	if (should_format) {
 		r = this->format(this);
@@ -807,7 +716,6 @@ bad:
 	seg_validator_destroy(this->seg_validator);
 	reverse_index_table_destroy(this->reverse_index_table);
 	data_segment_table_destroy(this->data_segment_table);
-	block_index_table_catalogue_destroy(this->block_index_table_catalogue);
 	return -EAGAIN;
 }
 
@@ -836,7 +744,6 @@ void metadata_destroy(struct metadata* this) {
 		seg_validator_destroy(this->seg_validator);
 		reverse_index_table_destroy(this->reverse_index_table);
 		data_segment_table_destroy(this->data_segment_table);
-		block_index_table_catalogue_destroy(this->block_index_table_catalogue);
 		kfree(this);
 	}
 }

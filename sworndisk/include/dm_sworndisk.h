@@ -18,7 +18,7 @@ struct dm_sworndisk_target {
 	struct metadata* metadata;
     struct segment_buffer* seg_buffer;
     struct segment_allocator* seg_allocator;
-    struct lsm_tree* lsm_tree;
+    struct memtable* memtable;
     struct aead_cipher *cipher;
 };
 

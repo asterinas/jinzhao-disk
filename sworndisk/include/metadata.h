@@ -128,21 +128,7 @@ struct data_segment_table {
 struct data_segment_table* data_segment_table_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_segment);
 void data_segment_table_destroy(struct data_segment_table* this);
 
-// block index table definition
-struct bitc_entry {
-	dm_block_t start;
-	size_t size, capacity, root;
-} __packed;
 
-struct block_index_table_catalogue {
-	struct lsm_level_catalogue lsm_level_catalogue;
-	size_t nr_level, common_ratio, max_disk_level_capacity;
-	struct disk_array* levels;
-	struct dm_block_manager* bm;
-	dm_block_t index_region_start;
-
-	int (*format)(struct block_index_table_catalogue* this);
-};
 
 // metadata definition
 struct metadata {
