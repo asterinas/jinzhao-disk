@@ -25,7 +25,7 @@ struct entry {
     void* val;
 };  
 
-struct entry* __entry(uint32_t key, void* val);
+struct entry __entry(uint32_t key, void* val);
 
 struct iterator {
     bool (*has_next)(struct iterator* iterator);
@@ -71,16 +71,21 @@ size_t __bit_array_len(size_t capacity, size_t nr_degree);
 
 struct lsm_file {
     struct iterator* (*iterator)(struct lsm_file* lsm_file);
-    int (*search)(struct lsm_file* lsm_file, uint32_t key, void* data);
+    int (*search)(struct lsm_file* lsm_file, uint32_t key, void* val);
+    void* (*get_stats)(struct lsm_file* lsm_file);
     void (*destroy)(struct lsm_file* lsm_file);
 };
 
 struct bit_file {
     struct lsm_file lsm_file;
 
-    struct dm_block_manager* bm;
-    struct disk_array* nodes;
+    struct file* file;
+    loff_t root;
+    size_t id, level;
+    uint32_t first_key, last_key;
 };
+
+struct lsm_file* bit_file_create(struct file* file, loff_t root, size_t id, size_t level, uint32_t first_key, uint32_t last_key);
 
 struct lsm_file_builder {
     int (*add_entry)(struct lsm_file_builder* builder, struct entry* entry);
@@ -99,12 +104,14 @@ struct bit_builder {
 
     struct file* file;
     loff_t begin;
-    size_t cur, height;
+    bool has_first_key;
+    uint32_t first_key, last_key;
+    size_t cur, height, id, level;
     void* buffer;
     struct bit_builder_context* ctx;
 };
 
-struct lsm_file_builder* bit_builder_create(struct file* file, size_t begin);
+struct lsm_file_builder* bit_builder_create(struct file* file, size_t begin, size_t id, size_t level);
 
 struct bit_compactor_job {
        
