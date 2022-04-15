@@ -113,8 +113,20 @@ struct bit_builder {
 
 struct lsm_file_builder* bit_builder_create(struct file* file, size_t begin, size_t id, size_t level);
 
-struct bit_compactor_job {
-       
+struct lsm_level {
+    bool (*is_full)(struct lsm_level* lsm_level);
+    int (*add_file)(struct lsm_level* lsm_level, struct lsm_file* file);
+    int (*remove_file)(struct lsm_level* lsm_level, struct lsm_file* file);
+    int (*search)(struct lsm_level* lsm_level, uint32_t key, void* val);
+    struct lsm_file* (*pick_demoted_file)(struct lsm_level* lsm_level);
+    struct list_head (*find_relative_files)(struct lsm_level* lsm_level, struct lsm_file* file);
+};
+
+struct bit_level {
+    struct lsm_level lsm_level;
+
+    size_t capacity, size, max_size;
+    struct bit_file** bit_files;
 };
 
 #endif

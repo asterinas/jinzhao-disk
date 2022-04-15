@@ -346,6 +346,13 @@ struct iterator* bit_file_iterator(struct lsm_file* lsm_file) {
     return bit_iterator_create(this);
 }
 
+void bit_file_destroy(struct lsm_file* lsm_file) {
+    struct bit_file* this = container_of(lsm_file, struct bit_file, lsm_file);
+
+    if (!IS_ERR_OR_NULL(this))
+        kfree(this);
+}
+
 int bit_file_init(struct bit_file* this, struct file* file, loff_t root, size_t id, size_t level, uint32_t first_key, uint32_t last_key) {
     int err = 0;
     
@@ -358,6 +365,7 @@ int bit_file_init(struct bit_file* this, struct file* file, loff_t root, size_t 
 
     this->lsm_file.search = bit_file_search;
     this->lsm_file.iterator = bit_file_iterator;
+    this->lsm_file.destroy = bit_file_destroy;
     return err;
 }
 
@@ -378,6 +386,113 @@ struct lsm_file* bit_file_create(struct file* file, loff_t root, size_t id, size
     }
 
     return &this->lsm_file;
+bad:
+    if (this)
+        kfree(this);
+    return NULL;
+}
+
+// block index table level implementaion
+bool bit_level_is_full(struct lsm_level* lsm_level) {
+    struct bit_level* this = container_of(lsm_level, struct bit_level, lsm_level);
+
+    return this->size >= this->capacity;
+}
+
+int64_t bit_file_cmp(struct bit_file* file1, struct bit_file* file2) {
+    if (file1->first_key == file2->first_key) 
+        return (int64_t)(file1->last_key) - (int64_t)(file2->last_key);
+
+    return (int64_t)(file1->first_key) - (int64_t)(file2->first_key);
+}
+
+size_t bit_level_search_file(struct bit_level* this, struct bit_file* file) {
+    size_t low = 0, high = this->size - 1, mid;
+
+    if (!this->size)
+        return 0;
+
+    if (bit_file_cmp(this->bit_files[low], file) >= 0)
+        return low;
+
+    if (bit_file_cmp(this->bit_files[high], file) <= 0)
+        return high + 1;
+
+    while (low < high) {
+        mid = low + ((high - low) >> 1);
+        if (bit_file_cmp(this->bit_files[mid], file) < 0)
+            low = mid + 1;
+        else 
+            high = mid;
+    }
+
+    return low;
+}
+
+// size_t bit_level_locate_file(struct bit_level* this, uint32_t key) {
+
+// bad:
+//     return this->size;
+// }
+
+int bit_level_add_file(struct lsm_level* lsm_level, struct lsm_file* file) {
+    size_t pos;
+    struct bit_file* bit_file = container_of(file, struct bit_file, lsm_file);
+    struct bit_level* this = container_of(lsm_level, struct bit_level, lsm_level);
+
+    if (this->size >= this->max_size)
+        return -ENOSPC;
+
+    pos = bit_level_search_file(this, bit_file);
+    memcpy(this->bit_files + pos + 1, this->bit_files + pos, (this->size - pos) * sizeof(struct bit_file*));
+    this->bit_files[pos] = bit_file;
+    this->size += 1;
+    return 0;
+}
+
+// int bit_level_remove_file(struct lsm_level* lsm_level, struct lsm_file* file) {
+//     size_t pos;
+//     struct bit_file* bit_file = container_of(file, struct bit_file, lsm_file);
+//     struct bit_level* this = container_of(lsm_level, struct bit_level, lsm_level);
+
+//     pos = bit_level_search_file(this, file);
+
+// }
+
+int bit_level_init(struct bit_level* this, size_t capacity) {
+    int err = 0;
+
+    this->size = 0;
+    this->max_size = (capacity << 1);
+    this->capacity = capacity;
+    this->bit_files = kmalloc(this->max_size * sizeof(struct bit_file*), GFP_KERNEL);
+    if (!this->bit_files) {
+        err = -ENOMEM;
+        goto bad;
+    }
+
+    this->lsm_level.add_file = bit_level_add_file;
+
+    return 0;
+bad:
+    if (this->bit_files)
+        kfree(this->bit_files);
+    return err;
+}
+
+struct lsm_level* bit_level_create(size_t capacity) {
+    int err = 0;
+    struct bit_level* this = NULL;
+
+    this = kzalloc(sizeof(struct bit_level), GFP_KERNEL);
+    if (!this)
+        goto bad;
+
+    err = bit_level_init(this, capacity);
+    if (err)
+        goto bad;
+
+    return &this->lsm_level;
 bad:
     if (this)
         kfree(this);
