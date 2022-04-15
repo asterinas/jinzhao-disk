@@ -120,6 +120,7 @@ struct lsm_level {
     int (*search)(struct lsm_level* lsm_level, uint32_t key, void* val);
     struct lsm_file* (*pick_demoted_file)(struct lsm_level* lsm_level);
     struct list_head (*find_relative_files)(struct lsm_level* lsm_level, struct lsm_file* file);
+    void (*destroy)(struct lsm_level* lsm_level);
 };
 
 struct bit_level {

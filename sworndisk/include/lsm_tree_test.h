@@ -7,5 +7,7 @@ int block_index_table_builder_test(void);
 int block_index_table_search_test(void);
 int block_index_table_iterator_test(void);
 int block_index_table_add_file_test(void);
+int block_index_table_level_locate_file_test(void);
+int block_index_table_level_search_test(void);
 
 #endif

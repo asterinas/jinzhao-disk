@@ -1,3 +1,5 @@
+#include <linux/bsearch.h>
+
 #include "../include/dm_sworndisk.h"
 #include "../include/lsm_tree.h"
 #include "../include/segment_buffer.h"
@@ -429,11 +431,26 @@ size_t bit_level_search_file(struct bit_level* this, struct bit_file* file) {
     return low;
 }
 
-// size_t bit_level_locate_file(struct bit_level* this, uint32_t key) {
+int bit_file_cmp_key(const void* p_key, const void* p_file) {
+    uint32_t key = *(uint32_t*)p_key;
+    const struct bit_file* file = *(struct bit_file**)p_file;
 
-// bad:
-//     return this->size;
-// }
+    if (key >= file->first_key && key <= file->last_key)
+        return 0;
+    
+    if (key < file->first_key)
+        return -1;
+
+    return 1;
+}
+
+struct bit_file* bit_level_locate_file(struct bit_level* this, uint32_t key) {
+    struct bit_file** result = bsearch(&key, this->bit_files, this->size, sizeof(struct bit_file*), bit_file_cmp_key);
+    
+    if (!result)
+        return NULL;
+    return *(struct bit_file**)result;
+}
 
 int bit_level_add_file(struct lsm_level* lsm_level, struct lsm_file* file) {
     size_t pos;
@@ -450,6 +467,16 @@ int bit_level_add_file(struct lsm_level* lsm_level, struct lsm_file* file) {
     return 0;
 }
 
+int bit_level_search(struct lsm_level* lsm_level, uint32_t key, void* val) {
+    struct bit_file* file;
+    struct bit_level* this = container_of(lsm_level, struct bit_level, lsm_level);
+
+    file = bit_level_locate_file(this, key);
+    if (!file)
+        return -ENODATA;
+    return bit_file_search(&file->lsm_file, key, val);
+}
+
 // int bit_level_remove_file(struct lsm_level* lsm_level, struct lsm_file* file) {
 //     size_t pos;
 //     struct bit_file* bit_file = container_of(file, struct bit_file, lsm_file);
@@ -458,6 +485,17 @@ int bit_level_add_file(struct lsm_level* lsm_level, struct lsm_file* file) {
 //     pos = bit_level_search_file(this, file);
 
 // }
+
+void bit_level_destroy(struct lsm_level* lsm_level) {
+    size_t i;
+    struct bit_level* this = container_of(lsm_level, struct bit_level, lsm_level);
+
+    if (!IS_ERR_OR_NULL(this)) {
+        for (i = 0; i < this->size; ++i)
+            bit_file_destroy(&this->bit_files[i]->lsm_file);
+        kfree(this);
+    }
+}
 
 int bit_level_init(struct bit_level* this, size_t capacity) {
     int err = 0;
@@ -472,6 +510,8 @@ int bit_level_init(struct bit_level* this, size_t capacity) {
     }
 
     this->lsm_level.add_file = bit_level_add_file;
+    this->lsm_level.search = bit_level_search;
+    this->lsm_level.destroy = bit_level_destroy;
 
     return 0;
 bad:

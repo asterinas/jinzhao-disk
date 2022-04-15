@@ -180,3 +180,84 @@ int block_index_table_add_file_test() {
 
     return 0;
 }
+
+// block index table level search test
+extern struct bit_file* bit_level_locate_file(struct bit_level* this, uint32_t key);
+int block_index_table_level_locate_file_test() {
+    size_t capacity = 10, i;
+    struct lsm_file* file;
+    struct bit_file* bit_file;
+    struct lsm_level* level = bit_level_create(capacity);
+    struct bit_level* bit_level = container_of(level, struct bit_level, lsm_level);
+    uint32_t first_key, last_key, key;
+
+    for (i = 0; i < (capacity << 1); ++i) {
+        first_key = 1000 * i;
+        last_key = 1000 * (i + 1) - 1;
+        file = bit_file_create(NULL, 0, 0, 0, first_key, last_key);
+        level->add_file(level, file);
+    }
+
+    for (i = 0; i < 10; ++i) {
+        get_random_bytes(&key, sizeof(key));
+        bit_file = bit_level_locate_file(bit_level, key % last_key);
+        if (bit_file) {
+            DMINFO("key: %u, range: %u ~ %u", key % last_key, bit_file->first_key, bit_file->last_key);
+        }
+    }
+
+    level->destroy(level);
+    return 0;
+}
+
+// block index table level search test
+int block_index_table_level_search_test() {
+    size_t capacity = 10;
+    struct lsm_level* level = bit_level_create(capacity);
+    int err = 0;
+    const char* filename = "/dev/sdb5";
+    struct file* file = filp_open(filename, O_RDWR, 0);
+    size_t i, j, begin = 16 * SWORNDISK_METADATA_BLOCK_SIZE;
+    struct lsm_file_builder* builder;
+    struct record record = {
+        .pba = 100
+    };
+    struct entry entry = {
+        .key = 0,
+        .val = &record
+    };
+    struct lsm_file* bit_file;
+
+    if (!file) {
+        err = -EINVAL;
+        goto exit;
+    }
+
+    for (j = 0; j < 6; ++j) {
+        builder = bit_builder_create(file, begin, 0, 0);
+        begin += __bit_array_len(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE) * sizeof(struct bit_node);
+
+        for (i = 0; i < 60007; ++i) {
+            builder->add_entry(builder, &entry);
+            entry.key += 1;
+            record.pba += 1;
+            entry.val = &record;
+        }
+
+        bit_file = builder->complete(builder);
+        level->add_file(level, bit_file);
+    }
+
+    for (i = 0; i < entry.key; i += 10000) {
+        err = level->search(level, i, &record);
+        if (!err)
+            DMINFO("key: %ld, pba: %lld", i, record.pba);
+    }
+
+exit:
+    if (file)
+        filp_close(file, NULL);
+    if (level)
+        level->destroy(level);
+    return err;
+}
