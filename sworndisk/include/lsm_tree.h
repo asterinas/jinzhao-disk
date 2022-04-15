@@ -5,6 +5,7 @@
 
 #include "crypto.h"
 #include "disk_structs.h"
+#include "hashmap.h"
 
 #define DEFAULT_LSM_TREE_NR_LEVEL 1
 #define DEFAULT_LSM_FILE_CAPACITY 65536
@@ -116,7 +117,7 @@ struct lsm_file_builder* bit_builder_create(struct file* file, size_t begin, siz
 struct lsm_level {
     bool (*is_full)(struct lsm_level* lsm_level);
     int (*add_file)(struct lsm_level* lsm_level, struct lsm_file* file);
-    int (*remove_file)(struct lsm_level* lsm_level, struct lsm_file* file);
+    int (*remove_file)(struct lsm_level* lsm_level, size_t id);
     int (*search)(struct lsm_level* lsm_level, uint32_t key, void* val);
     struct lsm_file* (*pick_demoted_file)(struct lsm_level* lsm_level);
     struct list_head (*find_relative_files)(struct lsm_level* lsm_level, struct lsm_file* file);

@@ -477,14 +477,20 @@ int bit_level_search(struct lsm_level* lsm_level, uint32_t key, void* val) {
     return bit_file_search(&file->lsm_file, key, val);
 }
 
-// int bit_level_remove_file(struct lsm_level* lsm_level, struct lsm_file* file) {
-//     size_t pos;
-//     struct bit_file* bit_file = container_of(file, struct bit_file, lsm_file);
-//     struct bit_level* this = container_of(lsm_level, struct bit_level, lsm_level);
+int bit_level_remove_file(struct lsm_level* lsm_level, size_t id) {
+    size_t pos;
+    struct bit_level* this = container_of(lsm_level, struct bit_level, lsm_level);
 
-//     pos = bit_level_search_file(this, file);
+    for (pos = 0; pos < this->size; ++pos) {
+        if (this->bit_files[pos]->id == id) {
+            memcpy(this->bit_files + pos, this->bit_files + pos + 1, (this->size - pos - 1) * sizeof(struct bit_file*));
+            this->size -= 1;
+            return 0;
+        }
+    }
 
-// }
+    return -EINVAL;
+}
 
 void bit_level_destroy(struct lsm_level* lsm_level) {
     size_t i;
@@ -510,6 +516,7 @@ int bit_level_init(struct bit_level* this, size_t capacity) {
     }
 
     this->lsm_level.add_file = bit_level_add_file;
+    this->lsm_level.remove_file = bit_level_remove_file;
     this->lsm_level.search = bit_level_search;
     this->lsm_level.destroy = bit_level_destroy;
 

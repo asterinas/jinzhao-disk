@@ -214,6 +214,7 @@ int block_index_table_level_locate_file_test() {
 int block_index_table_level_search_test() {
     size_t capacity = 10;
     struct lsm_level* level = bit_level_create(capacity);
+    // struct bit_level* bit_level = container_of(level, struct bit_level, lsm_level);
     int err = 0;
     const char* filename = "/dev/sdb5";
     struct file* file = filp_open(filename, O_RDWR, 0);
@@ -234,7 +235,7 @@ int block_index_table_level_search_test() {
     }
 
     for (j = 0; j < 6; ++j) {
-        builder = bit_builder_create(file, begin, 0, 0);
+        builder = bit_builder_create(file, begin, j, 0);
         begin += __bit_array_len(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE) * sizeof(struct bit_node);
 
         for (i = 0; i < 60007; ++i) {
@@ -248,11 +249,22 @@ int block_index_table_level_search_test() {
         level->add_file(level, bit_file);
     }
 
+    level->remove_file(level, 0);
+    level->remove_file(level, 2);
+    level->remove_file(level, 4);
+    level->remove_file(level, 6);
+    level->remove_file(level, 8);
+
     for (i = 0; i < entry.key; i += 10000) {
         err = level->search(level, i, &record);
         if (!err)
             DMINFO("key: %ld, pba: %lld", i, record.pba);
     }
+
+    // for (i = 0; i < bit_level->size; ++i) {
+    //     DMINFO("first key: %u, last key: %u", 
+    //       bit_level->bit_files[i]->first_key, bit_level->bit_files[i]->last_key);
+    // }
 
 exit:
     if (file)
