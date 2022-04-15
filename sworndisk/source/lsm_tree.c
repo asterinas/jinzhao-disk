@@ -348,6 +348,18 @@ struct iterator* bit_file_iterator(struct lsm_file* lsm_file) {
     return bit_iterator_create(this);
 }
 
+uint32_t bit_file_get_first_key(struct lsm_file* lsm_file) {
+    struct bit_file* this = container_of(lsm_file, struct bit_file, lsm_file);
+
+    return this->first_key;
+}
+
+uint32_t bit_file_get_last_key(struct lsm_file* lsm_file) {
+    struct bit_file* this = container_of(lsm_file, struct bit_file, lsm_file);
+
+    return this->last_key;
+}
+
 void bit_file_destroy(struct lsm_file* lsm_file) {
     struct bit_file* this = container_of(lsm_file, struct bit_file, lsm_file);
 
@@ -367,6 +379,8 @@ int bit_file_init(struct bit_file* this, struct file* file, loff_t root, size_t 
 
     this->lsm_file.search = bit_file_search;
     this->lsm_file.iterator = bit_file_iterator;
+    this->lsm_file.get_first_key = bit_file_get_first_key;
+    this->lsm_file.get_last_key = bit_file_get_last_key;
     this->lsm_file.destroy = bit_file_destroy;
     return err;
 }
@@ -444,8 +458,12 @@ int bit_file_cmp_key(const void* p_key, const void* p_file) {
     return 1;
 }
 
+struct bit_file** bit_level_locate_file_pointer(struct bit_level* this, uint32_t key) {
+    return bsearch(&key, this->bit_files, this->size, sizeof(struct bit_file*), bit_file_cmp_key);
+}
+
 struct bit_file* bit_level_locate_file(struct bit_level* this, uint32_t key) {
-    struct bit_file** result = bsearch(&key, this->bit_files, this->size, sizeof(struct bit_file*), bit_file_cmp_key);
+    struct bit_file** result = bit_level_locate_file_pointer(this, key);
     
     if (!result)
         return NULL;
@@ -492,6 +510,61 @@ int bit_level_remove_file(struct lsm_level* lsm_level, size_t id) {
     return -EINVAL;
 }
 
+struct lsm_file* bit_level_pick_demoted_file(struct lsm_level* lsm_level) {
+    struct bit_level* this = container_of(lsm_level, struct bit_level, lsm_level);
+
+    if (!this->size)
+        return NULL;
+    return &this->bit_files[0]->lsm_file;
+}
+ 
+// should carefully check bit level has files
+uint32_t bit_level_get_first_key(struct bit_level* this) {
+    return this->bit_files[0]->first_key;
+}
+
+uint32_t bit_level_get_last_key(struct bit_level* this) {
+    return this->bit_files[this->size - 1]->last_key;
+}
+
+// assume there are no intersections between files
+int bit_level_lower_bound(struct bit_level* this, uint32_t key) {
+    int low = 0, high = this->size - 1, mid;
+
+    while (low < high) {
+        mid = low + ((high - low) >> 1);
+        if (key >= this->bit_files[mid]->first_key && key <= this->bit_files[mid]->last_key)
+            return mid;
+        if (key < this->bit_files[mid]->first_key)
+            high = mid - 1;
+        else 
+            low = mid + 1;
+    }
+
+    return low;
+}
+
+int bit_level_find_relative_files(struct lsm_level* lsm_level, struct lsm_file* file, struct list_head* relatives) {
+    size_t pos;
+    struct bit_level* this = container_of(lsm_level, struct bit_level, lsm_level);
+
+    INIT_LIST_HEAD(relatives);
+    if (!this->size)
+        return -ENODATA;
+
+    if (file->get_last_key(file) < bit_level_get_first_key(this) || 
+      file->get_first_key(file) > bit_level_get_last_key(this)) 
+        return -ENODATA;
+    
+    pos = bit_level_lower_bound(this, file->get_first_key(file));
+    while(pos < this->size && this->bit_files[pos]->first_key <= file->get_last_key(file)) {
+        list_add_tail(&this->bit_files[pos]->lsm_file.node, relatives);
+        pos += 1;
+    }
+
+    return 0;
+}
+
 void bit_level_destroy(struct lsm_level* lsm_level) {
     size_t i;
     struct bit_level* this = container_of(lsm_level, struct bit_level, lsm_level);
@@ -518,6 +591,8 @@ int bit_level_init(struct bit_level* this, size_t capacity) {
     this->lsm_level.add_file = bit_level_add_file;
     this->lsm_level.remove_file = bit_level_remove_file;
     this->lsm_level.search = bit_level_search;
+    this->lsm_level.pick_demoted_file = bit_level_pick_demoted_file;
+    this->lsm_level.find_relative_files = bit_level_find_relative_files;
     this->lsm_level.destroy = bit_level_destroy;
 
     return 0;

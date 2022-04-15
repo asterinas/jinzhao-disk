@@ -273,3 +273,120 @@ exit:
         level->destroy(level);
     return err;
 }
+
+// block index table get first & last key test
+int block_index_table_get_first_and_last_key_test() {
+     int err = 0;
+    const char* filename = "/dev/sdb5";
+    struct file* file = filp_open(filename, O_RDWR, 0);
+    size_t i, begin = 16 * SWORNDISK_METADATA_BLOCK_SIZE;
+    struct lsm_file_builder* builder = bit_builder_create(file, begin, 0, 0);
+    struct record record = {
+        .pba = 100
+    };
+    struct entry entry = {
+        .key = 0,
+        .val = &record
+    };
+    struct lsm_file* bit_file = NULL;
+    // struct bit_leaf leaf;
+
+    if (!file) {
+        err = -EINVAL;
+        goto exit;
+    }
+
+    if (!builder) {
+        err = -ENOMEM;
+        goto exit;
+    }
+
+    for (i = 3000; i < 60006; ++i) {
+        entry.key = i;
+        builder->add_entry(builder, &entry);
+        record.pba += 1;
+        entry.val = &record;
+    }
+
+    bit_file = builder->complete(builder);
+    DMINFO("first key: %u, last key: %u", bit_file->get_first_key(bit_file), bit_file->get_last_key(bit_file));
+exit:
+    if (file)
+        filp_close(file, NULL);
+    if (builder)
+        builder->destroy(builder);
+    if (bit_file)
+        bit_file->destroy(bit_file);
+    return err;
+}
+
+// block index table level find relative files test 
+int block_index_table_level_find_relative_files_test() {
+    size_t capacity = 10;
+    struct lsm_level* level = bit_level_create(capacity);
+    // struct bit_level* bit_level = container_of(level, struct bit_level, lsm_level);
+    int err = 0;
+    const char* filename = "/dev/sdb5";
+    struct file* file = filp_open(filename, O_RDWR, 0);
+    size_t i, j, begin = 16 * SWORNDISK_METADATA_BLOCK_SIZE;
+    struct lsm_file_builder* builder;
+    struct record record = {
+        .pba = 100
+    };
+    struct entry entry = {
+        .key = 0,
+        .val = &record
+    };
+    struct lsm_file *bit_file, *bit_file_cursor;
+    struct list_head relatives;
+
+    if (!file) {
+        err = -EINVAL;
+        goto exit;
+    }
+
+    for (j = 0; j < 6; ++j) {
+        builder = bit_builder_create(file, begin, j, 0);
+        begin += __bit_array_len(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE) * sizeof(struct bit_node);
+
+        for (i = 0; i < 60007; ++i) {
+            builder->add_entry(builder, &entry);
+            entry.key += 1;
+            record.pba += 1;
+            entry.val = &record;
+        }
+
+        bit_file = builder->complete(builder);
+        level->add_file(level, bit_file);
+    }
+
+    level->remove_file(level, 0);
+    level->remove_file(level, 1);
+    // level->remove_file(level, 2);
+    // level->remove_file(level, 3);
+    // level->remove_file(level, 4);
+    // level->remove_file(level, 5);
+    level->remove_file(level, 6);
+
+    builder = bit_builder_create(file, begin, j, 0);
+    for (i = 65000; i < 300000; ++i) {
+        entry.key = i;
+        builder->add_entry(builder, &entry);
+        record.pba += 1;
+        entry.val = &record;
+    }
+
+    bit_file = builder->complete(builder);
+    DMINFO("bit file range: %u ~ %u", bit_file->get_first_key(bit_file), bit_file->get_last_key(bit_file));
+    level->find_relative_files(level, bit_file, &relatives);
+    list_for_each_entry(bit_file_cursor, &relatives, node) {
+        DMINFO("\trelative: %u ~ %u", bit_file_cursor->get_first_key(bit_file_cursor), bit_file_cursor->get_last_key(bit_file_cursor));
+    }
+    bit_file->destroy(bit_file);
+exit:
+    if (file)
+        filp_close(file, NULL);
+    if (level)
+        level->destroy(level);
+    return err;
+}

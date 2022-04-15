@@ -2,6 +2,7 @@
 #define SWORNDISK_LSM_TREE_H
 
 #include <linux/fs.h>
+#include <linux/list.h>
 
 #include "crypto.h"
 #include "disk_structs.h"
@@ -71,7 +72,11 @@ void bit_node_print(struct bit_node* bit_node);
 size_t __bit_array_len(size_t capacity, size_t nr_degree);
 
 struct lsm_file {
+    struct list_head node;
+
     struct iterator* (*iterator)(struct lsm_file* lsm_file);
+    uint32_t (*get_first_key)(struct lsm_file* lsm_file);
+    uint32_t (*get_last_key)(struct lsm_file* lsm_file);
     int (*search)(struct lsm_file* lsm_file, uint32_t key, void* val);
     void* (*get_stats)(struct lsm_file* lsm_file);
     void (*destroy)(struct lsm_file* lsm_file);
@@ -120,7 +125,7 @@ struct lsm_level {
     int (*remove_file)(struct lsm_level* lsm_level, size_t id);
     int (*search)(struct lsm_level* lsm_level, uint32_t key, void* val);
     struct lsm_file* (*pick_demoted_file)(struct lsm_level* lsm_level);
-    struct list_head (*find_relative_files)(struct lsm_level* lsm_level, struct lsm_file* file);
+    int (*find_relative_files)(struct lsm_level* lsm_level, struct lsm_file* file, struct list_head* relatives);
     void (*destroy)(struct lsm_level* lsm_level);
 };
 
