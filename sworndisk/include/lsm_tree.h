@@ -8,8 +8,10 @@
 #include "disk_structs.h"
 #include "hashmap.h"
 
-#define DEFAULT_LSM_TREE_NR_LEVEL 1
+#define DEFAULT_LSM_TREE_NR_LEVEL 2
 #define DEFAULT_LSM_FILE_CAPACITY 65536
+
+size_t __bit_array_len(size_t capacity, size_t nr_degree);
 
 // record, lba => (pba, key, iv, mac)
 struct record {
@@ -134,6 +136,23 @@ struct bit_level {
 
     size_t capacity, size, max_size;
     struct bit_file** bit_files;
+};
+
+struct lsm_catalogue {
+    loff_t start;
+    size_t nr_disk_level, common_ratio, max_level_nr_file, total_file;
+
+    int (*alloc_file)(struct lsm_catalogue* lsm_catalogue, size_t* fd);
+    int (*release_file)(struct lsm_catalogue* lsm_catalogue, size_t fd);
+    int (*set_file_stats)(struct lsm_catalogue* lsm_catalogue, size_t fd, void* stats);
+    int (*get_file_stats)(struct lsm_catalogue* lsm_catalogue, size_t fd, void* stats);
+    int (*get_all_file_stats)(struct lsm_catalogue* lsm_catalogue, struct list_head* stats);
+};
+
+struct compaction_job {
+    struct list_head* input_files;
+    
+    int (*run)(struct compaction_job* this);
 };
 
 #endif

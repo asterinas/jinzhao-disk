@@ -11,5 +11,6 @@ int block_index_table_level_locate_file_test(void);
 int block_index_table_level_search_test(void);
 int block_index_table_get_first_and_last_key_test(void);
 int block_index_table_level_find_relative_files_test(void);
+int block_index_table_catalogue_test(struct lsm_catalogue* catalogue);
 
 #endif

@@ -37,7 +37,6 @@ struct superblock {
 	// journal region
 	uint32_t journal_size; // sector aligned
 	uint64_t nr_journal;
-	uint64_t cur_journal;
 	uint64_t journal_region_start;
 
 	// checkpoint region
@@ -129,6 +128,24 @@ struct data_segment_table* data_segment_table_create(struct dm_block_manager* bm
 void data_segment_table_destroy(struct data_segment_table* this);
 
 
+struct table_info {
+	loff_t root;
+	size_t id, level;
+	uint32_t first_key, last_key;
+	struct list_head node;
+} __packed;
+
+struct bit_catalogue {
+	struct lsm_catalogue lsm_catalogue;
+
+	size_t nr_table;
+	struct seg_validator* bit_validity_table;
+	struct disk_array* table_infos;
+	dm_block_t start, index_region_start;
+	struct dm_block_manager* bm;
+
+	int (*format)(struct bit_catalogue* this);
+};
 
 // metadata definition
 struct metadata {
@@ -141,7 +158,7 @@ struct metadata {
 	struct seg_validator* seg_validator;
 	struct reverse_index_table* reverse_index_table;
 	struct data_segment_table* data_segment_table;
-	struct block_index_table_catalogue* block_index_table_catalogue;
+	struct bit_catalogue* bit_catalogue;
 
 	int (*format)(struct metadata* this);
 };

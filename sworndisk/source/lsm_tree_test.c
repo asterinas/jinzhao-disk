@@ -390,3 +390,32 @@ exit:
         level->destroy(level);
     return err;
 }
+
+// block index table catalogue test
+int block_index_table_catalogue_test(struct lsm_catalogue* catalogue) {
+    size_t fd, i;
+    struct list_head stats;
+    struct table_info info, *pinfo;
+
+    for (i = 0; i < catalogue->total_file; ++i) {
+        catalogue->alloc_file(catalogue, &fd);
+        info.id = fd;
+        catalogue->set_file_stats(catalogue, i, &info);
+    }
+
+    for (i = 0; i < catalogue->total_file; i += 2) {
+        catalogue->release_file(catalogue, i);
+    }
+
+    catalogue->get_all_file_stats(catalogue, &stats);
+    list_for_each_entry(pinfo, &stats, node) {
+        DMINFO("fd: %ld", pinfo->id);
+    }
+
+    for (i = 0; i < catalogue->total_file; ++i) {
+        catalogue->get_file_stats(catalogue, i, &info);
+        DMINFO("fd: %ld", info.id);
+    }
+
+    return 0;
+}

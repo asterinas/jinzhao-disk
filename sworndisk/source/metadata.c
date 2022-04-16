@@ -1,4 +1,5 @@
 #include "../include/metadata.h"
+#include "../include/lsm_tree.h"
 
 #define SUPERBLOCK_LOCATION 0
 #define SUPERBLOCK_MAGIC 0x22946
@@ -26,7 +27,6 @@ int superblock_read(struct superblock* this) {
 	this->index_region_start = le64_to_cpu(disk_super->index_region_start);
 	this->journal_size = le32_to_cpu(disk_super->journal_size);
 	this->nr_journal = le64_to_cpu(disk_super->nr_journal);
-	this->cur_journal = le64_to_cpu(disk_super->cur_journal);
 	this->journal_region_start = le64_to_cpu(disk_super->journal_region_start);
 	this->seg_validity_table_start = le64_to_cpu(disk_super->seg_validity_table_start);
 	this->data_seg_table_start = le64_to_cpu(disk_super->data_seg_table_start);
@@ -61,7 +61,6 @@ int superblock_write(struct superblock* this) {
 	disk_super->index_region_start = cpu_to_le64(this->index_region_start);
 	disk_super->journal_size = cpu_to_le32(this->journal_size);
 	disk_super->nr_journal = cpu_to_le64(this->nr_journal);
-	disk_super->cur_journal = cpu_to_le64(this->cur_journal);
 	disk_super->journal_region_start = cpu_to_le64(this->journal_region_start);
 	disk_super->seg_validity_table_start = cpu_to_le64(this->seg_validity_table_start);
 	disk_super->data_seg_table_start = cpu_to_le64(this->data_seg_table_start);
@@ -96,7 +95,6 @@ void superblock_print(struct superblock* this) {
 	DMINFO("\tindex_region_start: %lld", this->index_region_start);
 	DMINFO("\tjournal_size: %d", this->journal_size);
 	DMINFO("\tnr_journal: %lld", this->nr_journal);
-	DMINFO("\tcur_journal: %lld", this->cur_journal);
 	DMINFO("\tjournal_region_start: %lld", this->journal_region_start);
 	DMINFO("\tseg_validity_table_start: %lld", this->seg_validity_table_start);
 	DMINFO("\tdata_seg_table_start: %lld", this->data_seg_table_start);
@@ -105,31 +103,42 @@ void superblock_print(struct superblock* this) {
 }
 
 #include "../include/segment_allocator.h"
-#define LSM_TREE_DISK_LEVEL_COMMON_RATIO 8
-
-size_t __disk_array_blocks(size_t nr_elem, size_t elem_size, size_t block_size) {
-	size_t elems_per_block = block_size / elem_size;
-
-	return nr_elem / elems_per_block + 1;
-}
-
-size_t __index_region_blocks(size_t nr_disk_level, size_t common_ratio, size_t max_disk_level_capacity) {
-	size_t i, capacity, total_blocks = 0;
-
-	capacity = max_disk_level_capacity;
-	for (i = 0; i < nr_disk_level; ++i) {
-		total_blocks += __disk_array_blocks(capacity, sizeof(struct bit_node), SWORNDISK_METADATA_BLOCK_SIZE);
-		capacity /= common_ratio;
-	}
-
-	return total_blocks;
-}
+#define LSM_TREE_DISK_LEVEL_COMMON_RATIO 10
 
 size_t __bytes_to_block(size_t bytes, size_t block_size) {
 	if (bytes == 0)
 		return 0;
 	
 	return (bytes - 1) / block_size + 1;
+}
+
+size_t __disk_array_blocks(size_t nr_elem, size_t elem_size, size_t block_size) {
+	size_t elems_per_block;
+
+	if (elem_size == 0)
+		return 0;
+	
+	elems_per_block = block_size / elem_size;
+	return nr_elem / elems_per_block + 1;
+}
+
+size_t __total_bit(size_t nr_disk_level, size_t common_ratio, size_t max_disk_level_capacity) {
+	size_t total = 0, capacity, i;
+
+	capacity = max_disk_level_capacity;
+	for (i = 0; i < nr_disk_level; ++i) {
+		total += (capacity ? (capacity - 1) / DEFAULT_LSM_FILE_CAPACITY + 1 : 0);
+		capacity /= common_ratio;
+	}
+
+	return total;
+}
+
+size_t __index_region_blocks(size_t nr_disk_level, size_t common_ratio, size_t max_disk_level_capacity) {
+	size_t total_bit;
+
+	total_bit = __total_bit(nr_disk_level, common_ratio, max_disk_level_capacity);
+	return __bytes_to_block(total_bit * __bit_array_len(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE) * sizeof(struct bit_node), SWORNDISK_METADATA_BLOCK_SIZE);
 }
 
 size_t __journal_region_blocks(size_t nr_journal, size_t journal_size) {
@@ -178,7 +187,6 @@ int superblock_init(struct superblock* this, struct dm_block_manager* bm, bool* 
 	this->index_region_start = SUPERBLOCK_LOCATION +  STRUCTURE_BLOCKS(struct superblock);
 	this->journal_size = 0;
 	this->nr_journal = 0;
-	this->cur_journal = 0;
 	this->journal_region_start = this->index_region_start + __index_region_blocks(
 	  this->nr_disk_level, this->common_ratio, this->max_disk_level_capacity);
 	this->seg_validity_table_start = this->journal_region_start + __journal_region_blocks(this->nr_journal, this->journal_size);
@@ -656,6 +664,163 @@ void data_segment_table_destroy(struct data_segment_table* this) {
 	}
 }
 
+// block index table catalogue implementation
+int bitc_alloc_file(struct lsm_catalogue* lsm_catalogue, size_t* fd) {
+	int err = 0;
+	struct bit_catalogue* this = container_of(lsm_catalogue, struct bit_catalogue, lsm_catalogue);
+
+	err = this->bit_validity_table->next(this->bit_validity_table, fd);
+	if (err)
+		return err;
+	
+	err = this->bit_validity_table->take(this->bit_validity_table, *fd);
+	if (err)
+		return err;
+	
+	return 0;
+}
+
+int bitc_release_file(struct lsm_catalogue* lsm_catalogue, size_t fd) {
+	int err;
+	bool old;
+	struct bit_catalogue* this = container_of(lsm_catalogue, struct bit_catalogue, lsm_catalogue);
+
+	err = this->bit_validity_table->test_and_return(this->bit_validity_table, fd, &old);
+	if (err)
+		return err;
+	
+	return 0;
+}
+
+int bitc_set_file_stats(struct lsm_catalogue* lsm_catalogue, size_t fd, void* stats) {
+	struct bit_catalogue* this = container_of(lsm_catalogue, struct bit_catalogue, lsm_catalogue);
+
+	return this->table_infos->set(this->table_infos, fd, stats);
+}
+
+int bitc_get_file_stats(struct lsm_catalogue* lsm_catalogue, size_t fd, void* stats) {
+	struct table_info* info;
+	struct bit_catalogue* this = container_of(lsm_catalogue, struct bit_catalogue, lsm_catalogue);
+
+	info = this->table_infos->get(this->table_infos, fd);
+	if (info) {
+		*(struct table_info*)stats = *info;
+		kfree(info);
+		return 0;
+	}
+
+	return -ENODATA;
+}
+
+int bitc_get_all_file_stats(struct lsm_catalogue* lsm_catalogue, struct list_head* stats) {
+	int err = 0;
+	bool valid;
+	size_t i;
+	struct table_info* info;
+	struct bit_catalogue* this = container_of(lsm_catalogue, struct bit_catalogue, lsm_catalogue);
+
+	INIT_LIST_HEAD(stats);
+	for (i = 0; i < this->bit_validity_table->nr_segment; ++i) {
+		err = this->bit_validity_table->seg_validity_table->get(this->bit_validity_table->seg_validity_table, i, &valid);
+		if (err)
+			return err;
+		if (valid) {
+			info = this->table_infos->get(this->table_infos, i);
+			if (info) {
+				list_add_tail(&info->node, stats);
+			}
+		}
+	}
+
+	return 0;
+}
+
+int bit_catalogue_format(struct bit_catalogue* this) {
+	int err = 0;
+
+	err = this->bit_validity_table->format(this->bit_validity_table);
+	if (err)
+		return err;
+	
+	err = this->table_infos->format(this->table_infos, false);
+	if (err)
+		return err;
+	
+	return 0;
+}
+
+int bit_catalogue_init(struct bit_catalogue* this, struct dm_block_manager* bm, struct superblock* superblock) {
+	int err = 0;
+	size_t max_fd;
+	
+	this->bm = bm;
+	this->start = superblock->block_index_table_catalogue_start;
+	this->index_region_start = superblock->index_region_start;
+	this->nr_table = __total_bit(superblock->nr_disk_level, superblock->common_ratio, superblock->max_disk_level_capacity);
+
+	max_fd = (this->nr_table << 1);
+	this->bit_validity_table = seg_validator_create(bm, this->start, max_fd);
+	if (!this->bit_validity_table) {
+		err = -ENOMEM;
+		goto bad;
+	}
+
+	this->table_infos = disk_array_create(bm, this->start + __seg_validity_table_blocks(max_fd), this->nr_table, sizeof(struct table_info));
+	if (!this->table_infos) {
+		err = -ENOMEM;
+		goto bad;
+	}
+
+	this->format = bit_catalogue_format;
+	this->lsm_catalogue.total_file = this->nr_table;
+	this->lsm_catalogue.start = this->index_region_start * SWORNDISK_METADATA_BLOCK_SIZE;
+	this->lsm_catalogue.nr_disk_level = superblock->nr_disk_level;
+	this->lsm_catalogue.common_ratio = superblock->common_ratio;
+	this->lsm_catalogue.max_level_nr_file = __total_bit(1, superblock->common_ratio, superblock->max_disk_level_capacity);
+	this->lsm_catalogue.alloc_file = bitc_alloc_file;
+	this->lsm_catalogue.release_file = bitc_release_file;
+	this->lsm_catalogue.set_file_stats = bitc_set_file_stats;
+	this->lsm_catalogue.get_file_stats = bitc_get_file_stats;
+	this->lsm_catalogue.get_all_file_stats = bitc_get_all_file_stats;
+
+	return 0;
+bad:
+	if (this->bit_validity_table)
+		seg_validator_destroy(this->bit_validity_table);
+	if (this->table_infos)
+		disk_array_destroy(this->table_infos);
+	return err;
+}
+
+struct bit_catalogue* bit_catalogue_create(struct dm_block_manager* bm, struct superblock* superblock) {
+	int err = 0;
+	struct bit_catalogue* this;
+
+	this = kzalloc(sizeof(struct bit_catalogue), GFP_KERNEL);
+	if (!this)
+		goto bad;
+
+	err = bit_catalogue_init(this, bm, superblock);
+	if (err)
+		goto bad;
+	
+	return this;
+bad:
+	if (this)
+		kfree(this);
+	return NULL;
+}
+
+void bit_catalogue_destroy(struct bit_catalogue* this) {
+	if (!IS_ERR_OR_NULL(this)) {
+		if (!IS_ERR_OR_NULL(this->bit_validity_table))
+			seg_validator_destroy(this->bit_validity_table);
+		if (!IS_ERR_OR_NULL(this->table_infos))
+			disk_array_destroy(this->table_infos);
+		kfree(this);
+	}
+}
+
 // metadata implementation
 int metadata_format(struct metadata* this) {
 	int r;
@@ -669,6 +834,10 @@ int metadata_format(struct metadata* this) {
 		return r;
 
 	r = this->data_segment_table->format(this->data_segment_table);
+	if (r)
+		return r;
+
+	r = this->bit_catalogue->format(this->bit_catalogue);
 	if (r)
 		return r;
 
@@ -701,6 +870,10 @@ int metadata_init(struct metadata* this, struct block_device* bdev) {
 	if (IS_ERR_OR_NULL(this->data_segment_table))
 		goto bad;
 
+	this->bit_catalogue = bit_catalogue_create(this->bm, this->superblock);
+	if (IS_ERR_OR_NULL(this->bit_catalogue))
+		goto bad;
+
 	this->format = metadata_format;
 	if (should_format) {
 		r = this->format(this);
@@ -716,6 +889,7 @@ bad:
 	seg_validator_destroy(this->seg_validator);
 	reverse_index_table_destroy(this->reverse_index_table);
 	data_segment_table_destroy(this->data_segment_table);
+	bit_catalogue_destroy(this->bit_catalogue);
 	return -EAGAIN;
 }
 
@@ -744,6 +918,7 @@ void metadata_destroy(struct metadata* this) {
 		seg_validator_destroy(this->seg_validator);
 		reverse_index_table_destroy(this->reverse_index_table);
 		data_segment_table_destroy(this->data_segment_table);
+		bit_catalogue_destroy(this->bit_catalogue);
 		kfree(this);
 	}
 }
