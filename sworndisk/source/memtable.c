@@ -1,48 +1,56 @@
 #include <linux/slab.h>
+#include <linux/random.h>
 
 #include "../include/dm_sworndisk.h"
 #include "../include/memtable.h"
 #include "../include/crypto.h"
 
 // memtable value definition
-struct record* record_create(dm_block_t pba, char* key, char* iv, char* mac) {
-    struct record* val;
+void __copy_or_random(void* dst, void* src, size_t len) {
+    if (src == NULL) {
+        get_random_bytes(dst, len);
+        return;
+    }
+    memcpy(dst, src, len);
+}
 
-    val = (struct record*) kmalloc(sizeof(struct record), GFP_KERNEL);
-    if (!val) {
+struct record* record_create(dm_block_t pba, char* key, char* iv, char* mac) {
+    struct record* record;
+
+    record = (struct record*) kmalloc(sizeof(struct record), GFP_KERNEL);
+    if (!record) {
         DMERR("mt value create alloc mem error\n");
         return NULL;
     }
 
-    if (key == NULL)
-        __get_random_bytes(&key, AES_GCM_KEY_SIZE);
-    if (iv == NULL)
-        __get_random_bytes(&iv, AES_GCM_IV_SIZE);
-    if (mac == NULL)
-        mac = kmalloc(AES_GCM_AUTH_SIZE, GFP_KERNEL);
-    
-    if (IS_ERR_OR_NULL(key) || IS_ERR_OR_NULL(iv) || IS_ERR_OR_NULL(mac))
-        return NULL;
+    __copy_or_random(record->key, key, AES_GCM_KEY_SIZE);
+    __copy_or_random(record->iv, iv, AES_GCM_IV_SIZE);
+    if (mac)
+        memcpy(record->mac, mac, AES_GCM_AUTH_SIZE);
 
-    val->pba = pba;
-    val->key = key;
-    val->iv = iv;
-    val->mac = mac;
-    return val;
+    record->pba = pba;
+    return record;
 }
 
-void record_destroy(void* val) {
-    struct record* record = val;
+struct record* record_copy(struct record* old) {
+    struct record* new;
 
-    if (!IS_ERR_OR_NULL(record)) {
-        if (!IS_ERR_OR_NULL(record->key))
-            kfree(record->key);
-        if (!IS_ERR_OR_NULL(record->iv))
-            kfree(record->iv);
-        if (!IS_ERR_OR_NULL(record->mac))
-            kfree(record->mac);
+    if (!old)
+        return NULL;
+
+    new = kmalloc(sizeof(struct record), GFP_KERNEL);
+    if (!new)
+        return NULL;
+    
+    *new = *old;
+    return new;
+}
+
+void record_destroy(void* p) {
+    struct record* record = p;
+
+    if (!IS_ERR_OR_NULL(record))
         kfree(record);
-    }
 }
 
 // hash memtable definition

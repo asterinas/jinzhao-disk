@@ -142,6 +142,7 @@ int block_index_table_iterator_test() {
     while(iter->has_next(iter)) {
         iter->next(iter, &entry);
         DMINFO("entry key: %d", entry.key);
+        record_destroy(entry.val);
     }
     iter->destroy(iter);
     bit_file->destroy(bit_file);
@@ -155,12 +156,11 @@ exit:
 }
 
 // block index table add file test
-extern struct lsm_level* bit_level_create(size_t capacity);
 extern int64_t bit_file_cmp(struct bit_file* file1, struct bit_file* file2);
 int block_index_table_add_file_test() {
     size_t capacity = 65536, i;
     struct lsm_file* file;
-    struct lsm_level* level = bit_level_create(capacity);
+    struct lsm_level* level = bit_level_create(0, capacity);
     struct bit_level* bit_level = container_of(level, struct bit_level, lsm_level);
     uint32_t first_key, last_key;
 
@@ -187,7 +187,7 @@ int block_index_table_level_locate_file_test() {
     size_t capacity = 10, i;
     struct lsm_file* file;
     struct bit_file* bit_file;
-    struct lsm_level* level = bit_level_create(capacity);
+    struct lsm_level* level = bit_level_create(0, capacity);
     struct bit_level* bit_level = container_of(level, struct bit_level, lsm_level);
     uint32_t first_key, last_key, key;
 
@@ -213,7 +213,7 @@ int block_index_table_level_locate_file_test() {
 // block index table level search test
 int block_index_table_level_search_test() {
     size_t capacity = 10;
-    struct lsm_level* level = bit_level_create(capacity);
+    struct lsm_level* level = bit_level_create(0, capacity);
     // struct bit_level* bit_level = container_of(level, struct bit_level, lsm_level);
     int err = 0;
     const char* filename = "/dev/sdb5";
@@ -323,7 +323,7 @@ exit:
 // block index table level find relative files test 
 int block_index_table_level_find_relative_files_test() {
     size_t capacity = 10;
-    struct lsm_level* level = bit_level_create(capacity);
+    struct lsm_level* level = bit_level_create(0, capacity);
     // struct bit_level* bit_level = container_of(level, struct bit_level, lsm_level);
     int err = 0;
     const char* filename = "/dev/sdb5";
@@ -395,7 +395,7 @@ exit:
 int block_index_table_catalogue_test(struct lsm_catalogue* catalogue) {
     size_t fd, i;
     struct list_head stats;
-    struct table_info info, *pinfo;
+    struct bit_info info, *pinfo;
 
     for (i = 0; i < catalogue->total_file; ++i) {
         catalogue->alloc_file(catalogue, &fd);
@@ -418,4 +418,81 @@ int block_index_table_catalogue_test(struct lsm_catalogue* catalogue) {
     }
 
     return 0;
+}
+
+// compaction job run test 
+int compaction_job_run_test(struct lsm_catalogue* catalogue) {
+    size_t capacity = 10;
+    struct lsm_level* level1 = bit_level_create(0, capacity);
+    struct lsm_level* level2 = bit_level_create(1, capacity);
+    // struct bit_level* bit_level = container_of(level, struct bit_level, lsm_level);
+    int err = 0;
+    const char* filename = "/dev/sdb5";
+    struct file* file = filp_open(filename, O_RDWR, 0);
+    size_t i, j, begin = 16 * SWORNDISK_METADATA_BLOCK_SIZE;
+    struct lsm_file_builder* builder = NULL;
+    struct record record = {
+        .pba = 100
+    };
+    struct entry entry = {
+        .key = 0,
+        .val = &record
+    };
+    struct lsm_file* bit_file = NULL;
+    struct compaction_job* compaction_job = NULL;
+
+    if (!file) {
+        err = -EINVAL;
+        goto exit;
+    }
+
+    for (j = 0; j < 6; ++j) {
+        builder = bit_builder_create(file, begin, j, 0);
+        begin += __bit_array_len(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE) * sizeof(struct bit_node);
+
+        for (i = 0; i < 60007; ++i) {
+            builder->add_entry(builder, &entry);
+            entry.key += 1;
+            record.pba += 1;
+            entry.val = &record;
+        }
+
+        bit_file = builder->complete(builder);
+        // info = bit_file->get_stats(bit_file);
+        // DMINFO("id: %ld, level: %ld, root: %lld, first key: %u, last key: %u", 
+        //   info->id, info->level, info->root, info->first_key, info->last_key);
+        // kfree(info);
+        level1->add_file(level1, bit_file);
+    }
+
+    builder->destroy(builder);
+    builder = bit_builder_create(file, begin, j, 1);
+    for (i = 0; i < 60007; ++i) {
+        entry.key = i;
+        builder->add_entry(builder, &entry);
+        record.pba += 1;
+        entry.val = &record;
+    }
+    bit_file = builder->complete(builder);
+    level2->add_file(level2, bit_file);
+
+    compaction_job = compaction_job_create(file, catalogue, level1, level2);
+    compaction_job->run(compaction_job);
+
+    for (i = 0; i < 60007; i += 10000) {
+        err = level2->search(level2, i, &record);
+        if (!err)
+            DMINFO("pba: %lld", record.pba);
+    }
+
+exit:
+    if (file)
+        filp_close(file, NULL);
+    if (level1)
+        level1->destroy(level1);
+    if (level2)
+        level2->destroy(level2);
+    if (compaction_job)
+        compaction_job->destroy(compaction_job);
+    return err;
 }

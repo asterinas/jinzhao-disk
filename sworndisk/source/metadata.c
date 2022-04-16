@@ -695,16 +695,16 @@ int bitc_release_file(struct lsm_catalogue* lsm_catalogue, size_t fd) {
 int bitc_set_file_stats(struct lsm_catalogue* lsm_catalogue, size_t fd, void* stats) {
 	struct bit_catalogue* this = container_of(lsm_catalogue, struct bit_catalogue, lsm_catalogue);
 
-	return this->table_infos->set(this->table_infos, fd, stats);
+	return this->bit_infos->set(this->bit_infos, fd, stats);
 }
 
 int bitc_get_file_stats(struct lsm_catalogue* lsm_catalogue, size_t fd, void* stats) {
-	struct table_info* info;
+	struct bit_info* info;
 	struct bit_catalogue* this = container_of(lsm_catalogue, struct bit_catalogue, lsm_catalogue);
 
-	info = this->table_infos->get(this->table_infos, fd);
+	info = this->bit_infos->get(this->bit_infos, fd);
 	if (info) {
-		*(struct table_info*)stats = *info;
+		*(struct bit_info*)stats = *info;
 		kfree(info);
 		return 0;
 	}
@@ -716,7 +716,7 @@ int bitc_get_all_file_stats(struct lsm_catalogue* lsm_catalogue, struct list_hea
 	int err = 0;
 	bool valid;
 	size_t i;
-	struct table_info* info;
+	struct bit_info* info;
 	struct bit_catalogue* this = container_of(lsm_catalogue, struct bit_catalogue, lsm_catalogue);
 
 	INIT_LIST_HEAD(stats);
@@ -725,7 +725,7 @@ int bitc_get_all_file_stats(struct lsm_catalogue* lsm_catalogue, struct list_hea
 		if (err)
 			return err;
 		if (valid) {
-			info = this->table_infos->get(this->table_infos, i);
+			info = this->bit_infos->get(this->bit_infos, i);
 			if (info) {
 				list_add_tail(&info->node, stats);
 			}
@@ -742,7 +742,7 @@ int bit_catalogue_format(struct bit_catalogue* this) {
 	if (err)
 		return err;
 	
-	err = this->table_infos->format(this->table_infos, false);
+	err = this->bit_infos->format(this->bit_infos, false);
 	if (err)
 		return err;
 	
@@ -765,13 +765,14 @@ int bit_catalogue_init(struct bit_catalogue* this, struct dm_block_manager* bm, 
 		goto bad;
 	}
 
-	this->table_infos = disk_array_create(bm, this->start + __seg_validity_table_blocks(max_fd), this->nr_table, sizeof(struct table_info));
-	if (!this->table_infos) {
+	this->bit_infos = disk_array_create(bm, this->start + __seg_validity_table_blocks(max_fd), this->nr_table, sizeof(struct bit_info));
+	if (!this->bit_infos) {
 		err = -ENOMEM;
 		goto bad;
 	}
 
 	this->format = bit_catalogue_format;
+	this->lsm_catalogue.file_size = __bit_array_len(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE) * sizeof(struct bit_node);
 	this->lsm_catalogue.total_file = this->nr_table;
 	this->lsm_catalogue.start = this->index_region_start * SWORNDISK_METADATA_BLOCK_SIZE;
 	this->lsm_catalogue.nr_disk_level = superblock->nr_disk_level;
@@ -787,8 +788,8 @@ int bit_catalogue_init(struct bit_catalogue* this, struct dm_block_manager* bm, 
 bad:
 	if (this->bit_validity_table)
 		seg_validator_destroy(this->bit_validity_table);
-	if (this->table_infos)
-		disk_array_destroy(this->table_infos);
+	if (this->bit_infos)
+		disk_array_destroy(this->bit_infos);
 	return err;
 }
 
@@ -815,8 +816,8 @@ void bit_catalogue_destroy(struct bit_catalogue* this) {
 	if (!IS_ERR_OR_NULL(this)) {
 		if (!IS_ERR_OR_NULL(this->bit_validity_table))
 			seg_validator_destroy(this->bit_validity_table);
-		if (!IS_ERR_OR_NULL(this->table_infos))
-			disk_array_destroy(this->table_infos);
+		if (!IS_ERR_OR_NULL(this->bit_infos))
+			disk_array_destroy(this->bit_infos);
 		kfree(this);
 	}
 }

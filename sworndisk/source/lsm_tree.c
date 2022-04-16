@@ -4,6 +4,7 @@
 #include "../include/lsm_tree.h"
 #include "../include/segment_buffer.h"
 #include "../include/memtable.h"
+#include "../include/metadata.h"
 
 // block index table node implementaion
 void bit_node_print(struct bit_node* bit_node) {
@@ -116,7 +117,7 @@ int bit_builder_add_entry(struct lsm_file_builder* builder, struct entry* entry)
 
     leaf_node.leaf.next.pos = this->begin + this->cur;
     memcpy(this->buffer + cur, &leaf_node, sizeof(struct bit_node));
-
+    this->lsm_file_builder.size += 1;
     return 0;
 }
 
@@ -182,6 +183,7 @@ int bit_builder_init(struct bit_builder* this, struct file* file, size_t begin, 
         goto bad;
     }
 
+    this->lsm_file_builder.size = 0;
     this->lsm_file_builder.add_entry = bit_builder_add_entry;
     this->lsm_file_builder.complete = bit_builder_complete;
     this->lsm_file_builder.destroy = bit_builder_destroy;
@@ -287,7 +289,9 @@ int bit_iterator_next(struct iterator* iter, void* data) {
     if (!iter->has_next(iter))
         return -ENODATA;
     
-    *(struct entry*)data = __entry(this->leaf.key, &this->leaf.record);
+    // todo: record create
+
+    *(struct entry*)data = __entry(this->leaf.key, record_copy(&this->leaf.record));
     if (this->leaf.key >= this->bit_file->last_key) {
         this->has_next = false;
         return 0;
@@ -360,6 +364,20 @@ uint32_t bit_file_get_last_key(struct lsm_file* lsm_file) {
     return this->last_key;
 }
 
+void* bit_file_get_stats(struct lsm_file* lsm_file) {
+    struct bit_file* this = container_of(lsm_file, struct bit_file, lsm_file);
+    struct bit_info* stats = kmalloc(sizeof(struct bit_info), GFP_KERNEL);
+    
+    if (!stats)
+        return NULL;
+    stats->root = this->root;
+    stats->first_key = this->first_key;
+    stats->last_key = this->last_key;
+    stats->id = this->lsm_file.id;
+    stats->level = this->lsm_file.level;
+    return stats;
+}
+
 void bit_file_destroy(struct lsm_file* lsm_file) {
     struct bit_file* this = container_of(lsm_file, struct bit_file, lsm_file);
 
@@ -372,15 +390,16 @@ int bit_file_init(struct bit_file* this, struct file* file, loff_t root, size_t 
     
     this->file = file;
     this->root = root;
-    this->id = id;
-    this->level = level;
     this->first_key = first_key;
     this->last_key = last_key;
 
+    this->lsm_file.id = id;
+    this->lsm_file.level = level;
     this->lsm_file.search = bit_file_search;
     this->lsm_file.iterator = bit_file_iterator;
     this->lsm_file.get_first_key = bit_file_get_first_key;
     this->lsm_file.get_last_key = bit_file_get_last_key;
+    this->lsm_file.get_stats = bit_file_get_stats;
     this->lsm_file.destroy = bit_file_destroy;
     return err;
 }
@@ -500,7 +519,7 @@ int bit_level_remove_file(struct lsm_level* lsm_level, size_t id) {
     struct bit_level* this = container_of(lsm_level, struct bit_level, lsm_level);
 
     for (pos = 0; pos < this->size; ++pos) {
-        if (this->bit_files[pos]->id == id) {
+        if (this->bit_files[pos]->lsm_file.id == id) {
             memcpy(this->bit_files + pos, this->bit_files + pos + 1, (this->size - pos - 1) * sizeof(struct bit_file*));
             this->size -= 1;
             return 0;
@@ -565,6 +584,10 @@ int bit_level_find_relative_files(struct lsm_level* lsm_level, struct lsm_file* 
     return 0;
 }
 
+struct lsm_file_builder* bit_level_get_builder(struct lsm_level* lsm_level, struct file* file, size_t begin, size_t id, size_t level) {
+    return bit_builder_create(file, begin, id, level);
+}
+
 void bit_level_destroy(struct lsm_level* lsm_level) {
     size_t i;
     struct bit_level* this = container_of(lsm_level, struct bit_level, lsm_level);
@@ -576,7 +599,7 @@ void bit_level_destroy(struct lsm_level* lsm_level) {
     }
 }
 
-int bit_level_init(struct bit_level* this, size_t capacity) {
+int bit_level_init(struct bit_level* this, size_t level, size_t capacity) {
     int err = 0;
 
     this->size = 0;
@@ -588,11 +611,13 @@ int bit_level_init(struct bit_level* this, size_t capacity) {
         goto bad;
     }
 
+    this->lsm_level.level = level;
     this->lsm_level.add_file = bit_level_add_file;
     this->lsm_level.remove_file = bit_level_remove_file;
     this->lsm_level.search = bit_level_search;
     this->lsm_level.pick_demoted_file = bit_level_pick_demoted_file;
     this->lsm_level.find_relative_files = bit_level_find_relative_files;
+    this->lsm_level.get_builder = bit_level_get_builder;
     this->lsm_level.destroy = bit_level_destroy;
 
     return 0;
@@ -602,7 +627,7 @@ bad:
     return err;
 }
 
-struct lsm_level* bit_level_create(size_t capacity) {
+struct lsm_level* bit_level_create(size_t level, size_t capacity) {
     int err = 0;
     struct bit_level* this = NULL;
 
@@ -610,11 +635,181 @@ struct lsm_level* bit_level_create(size_t capacity) {
     if (!this)
         goto bad;
 
-    err = bit_level_init(this, capacity);
+    err = bit_level_init(this, level, capacity);
     if (err)
         goto bad;
 
     return &this->lsm_level;
+bad:
+    if (this)
+        kfree(this);
+    return NULL;
+}
+
+// compaction job implementation
+struct kway_merge_node {
+    struct iterator* iter;
+    struct entry entry;
+};
+
+struct kway_merge_node __kway_merge_node(struct iterator* iter, struct entry entry) {
+    struct kway_merge_node node = {
+        .iter = iter,
+        .entry = entry
+    };
+    return node;
+}
+
+bool kway_merge_node_less(const void *lhs, const void *rhs) {
+    const struct kway_merge_node *node1 = lhs, *node2 = rhs;
+
+    return node1->entry.key < node2->entry.key;
+}
+
+void kway_merge_node_swap(void *lhs, void *rhs) {
+    struct kway_merge_node *node1 = lhs, *node2 = rhs, temp;
+
+    temp = *node1;
+    *node1 = *node2;
+    *node2 = temp;
+}
+
+int compaction_job_run(struct compaction_job* this) {
+    int err = 0;
+    size_t fd;
+    struct min_heap heap = {
+        .data = NULL,
+        .nr = 0,
+        .size = 0
+    };
+    struct min_heap_callbacks comparator = {
+        .elem_size = sizeof(struct kway_merge_node),
+        .less = kway_merge_node_less,
+        .swp = kway_merge_node_swap
+    };
+    struct kway_merge_node kway_merge_node;
+    struct entry entry, distinct, first;
+    struct lsm_file *file, *demoted;
+    struct iterator *iter;
+    struct list_head files, iters;
+    struct lsm_file_builder* builder = NULL;
+
+    demoted = this->level1->pick_demoted_file(this->level1);
+    this->level2->find_relative_files(this->level2, demoted, &files);
+
+    // if (list_empty(&files)) {
+    //     // write metadata
+    //     demoted->level = this->level2->level;
+    //     this->catalogue->set_file_stats(this->catalogue, demoted->id, demoted->get_stats(demoted));
+    //     // move file between levels
+    //     this->level2->add_file(this->level2, demoted);
+    //     this->level1->remove_file(this->level1, demoted->id);
+    //     return 0;
+    // }
+
+    INIT_LIST_HEAD(&iters);
+    list_for_each_entry(file, &files, node) {
+        list_add_tail(&file->iterator(file)->node, &iters);
+        heap.size += 1;
+    }
+    list_add(&demoted->iterator(demoted)->node, &iters);
+    heap.size += 1;
+
+    heap.data = kmalloc(heap.size * sizeof(struct kway_merge_node), GFP_KERNEL);
+    if (!heap.data) {
+        err = -ENOMEM;
+        goto exit;
+    }
+
+    list_for_each_entry(iter, &iters, node) {
+        if (iter->has_next(iter)) {
+            iter->next(iter, &entry);
+            kway_merge_node = __kway_merge_node(iter, entry);
+            min_heap_push(&heap, &kway_merge_node, &comparator);
+        }
+    }
+
+    distinct = ((struct kway_merge_node*)heap.data)->entry;
+    this->catalogue->alloc_file(this->catalogue, &fd);
+    builder = this->level2->get_builder(this->level2, this->file, this->catalogue->start + fd * this->catalogue->file_size, fd, this->level2->level);
+    while (heap.nr > 0) {
+        iter = ((struct kway_merge_node*)heap.data)->iter;
+        first = ((struct kway_merge_node*)heap.data)->entry;
+        min_heap_pop(&heap, &comparator);
+
+        if (iter->has_next(iter)) {
+            iter->next(iter, &entry);
+            kway_merge_node = __kway_merge_node(iter, entry);
+            min_heap_push(&heap, &kway_merge_node, &comparator);
+        }
+
+        if (distinct.key == first.key) {
+            distinct = first;
+            continue;
+        }
+        builder->add_entry(builder, &distinct);
+        record_destroy(distinct.val);
+        distinct = first;
+
+        if (builder->size >= DEFAULT_LSM_FILE_CAPACITY) {
+            file = builder->complete(builder);
+            this->catalogue->set_file_stats(this->catalogue, file->id, file->get_stats(file));
+            this->level2->add_file(this->level2, file);
+
+            this->catalogue->alloc_file(this->catalogue, &fd);
+            builder->destroy(builder);
+            builder = this->level2->get_builder(this->level2, this->file, this->catalogue->start + fd * this->catalogue->file_size, fd, this->level2->level);
+        }
+    }
+
+    builder->add_entry(builder, &distinct);
+    file = builder->complete(builder);
+    this->catalogue->set_file_stats(this->catalogue, file->id, file->get_stats(file));
+    this->level2->add_file(this->level2, file);
+
+    this->catalogue->release_file(this->catalogue, demoted->id);
+    this->level1->remove_file(this->level1, demoted->id);
+    list_for_each_entry(file, &files, node) {
+        this->catalogue->release_file(this->catalogue, file->id);
+        this->level2->remove_file(this->level2, file->id);
+    }
+
+exit:
+    if (heap.data)
+        kfree(heap.data);
+    if (builder)
+        builder->destroy(builder);
+    return err;   
+}
+
+void compaction_job_destroy(struct compaction_job* this) {
+    if (!IS_ERR_OR_NULL(this))
+        kfree(this);
+}
+
+int compaction_job_init(struct compaction_job* this, struct file* file, struct lsm_catalogue* catalogue, struct lsm_level* level1, struct lsm_level* level2) {
+    this->file = file;
+    this->catalogue = catalogue;
+    this->level1 = level1;
+    this->level2 = level2;
+    this->run = compaction_job_run;
+    this->destroy = compaction_job_destroy;
+    return 0;
+}
+
+struct compaction_job* compaction_job_create(struct file* file, struct lsm_catalogue* catalogue, struct lsm_level* level1, struct lsm_level* level2) {
+    int err = 0;
+    struct compaction_job* this;
+
+    this = kzalloc(sizeof(struct compaction_job), GFP_KERNEL);
+    if (!this)
+        goto bad;
+
+    err = compaction_job_init(this, file, catalogue, level1, level2);
+    if (err)
+        goto bad;
+
+    return this;
 bad:
     if (this)
         kfree(this);

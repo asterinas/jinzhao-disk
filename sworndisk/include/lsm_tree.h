@@ -16,12 +16,13 @@ size_t __bit_array_len(size_t capacity, size_t nr_degree);
 // record, lba => (pba, key, iv, mac)
 struct record {
     dm_block_t pba; // physical block address
-    char *mac;
-    char *key;
-    char *iv;
+    char mac[AES_GCM_AUTH_SIZE];
+    char key[AES_GCM_KEY_SIZE];
+    char iv[AES_GCM_IV_SIZE];
 };  
 
 struct record* record_create(dm_block_t pba, char* key, char* iv, char* mac);
+struct record* record_copy(struct record* old);
 void record_destroy(void* record);
 
 struct entry {
@@ -32,6 +33,8 @@ struct entry {
 struct entry __entry(uint32_t key, void* val);
 
 struct iterator {
+    struct list_head node;
+
     bool (*has_next)(struct iterator* iterator);
     int (*next)(struct iterator* iterator, void* data);
     void (*destroy)(struct iterator* iterator);
@@ -74,6 +77,7 @@ void bit_node_print(struct bit_node* bit_node);
 size_t __bit_array_len(size_t capacity, size_t nr_degree);
 
 struct lsm_file {
+    size_t id, level;
     struct list_head node;
 
     struct iterator* (*iterator)(struct lsm_file* lsm_file);
@@ -89,13 +93,14 @@ struct bit_file {
 
     struct file* file;
     loff_t root;
-    size_t id, level;
     uint32_t first_key, last_key;
 };
 
 struct lsm_file* bit_file_create(struct file* file, loff_t root, size_t id, size_t level, uint32_t first_key, uint32_t last_key);
 
 struct lsm_file_builder {
+    size_t size;
+
     int (*add_entry)(struct lsm_file_builder* builder, struct entry* entry);
     struct lsm_file* (*complete)(struct lsm_file_builder* builder);
     void (*destroy)(struct lsm_file_builder* builder);
@@ -122,12 +127,15 @@ struct bit_builder {
 struct lsm_file_builder* bit_builder_create(struct file* file, size_t begin, size_t id, size_t level);
 
 struct lsm_level {
+    size_t level;
+
     bool (*is_full)(struct lsm_level* lsm_level);
     int (*add_file)(struct lsm_level* lsm_level, struct lsm_file* file);
     int (*remove_file)(struct lsm_level* lsm_level, size_t id);
     int (*search)(struct lsm_level* lsm_level, uint32_t key, void* val);
     struct lsm_file* (*pick_demoted_file)(struct lsm_level* lsm_level);
     int (*find_relative_files)(struct lsm_level* lsm_level, struct lsm_file* file, struct list_head* relatives);
+    struct lsm_file_builder* (*get_builder)(struct lsm_level* lsm_level, struct file* file, size_t begin, size_t id, size_t level);
     void (*destroy)(struct lsm_level* lsm_level);
 };
 
@@ -138,9 +146,11 @@ struct bit_level {
     struct bit_file** bit_files;
 };
 
+struct lsm_level* bit_level_create(size_t level, size_t capacity);
+
 struct lsm_catalogue {
     loff_t start;
-    size_t nr_disk_level, common_ratio, max_level_nr_file, total_file;
+    size_t nr_disk_level, common_ratio, max_level_nr_file, total_file, file_size;
 
     int (*alloc_file)(struct lsm_catalogue* lsm_catalogue, size_t* fd);
     int (*release_file)(struct lsm_catalogue* lsm_catalogue, size_t fd);
@@ -150,9 +160,14 @@ struct lsm_catalogue {
 };
 
 struct compaction_job {
-    struct list_head* input_files;
+    struct file* file;
+    struct lsm_catalogue* catalogue;
+    struct lsm_level *level1, *level2;
     
     int (*run)(struct compaction_job* this);
+    void (*destroy)(struct compaction_job* this);
 };
+
+struct compaction_job* compaction_job_create(struct file* file, struct lsm_catalogue* catalogue, struct lsm_level* level1, struct lsm_level* level2);
 
 #endif
