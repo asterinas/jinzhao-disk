@@ -34,6 +34,7 @@ struct entry __entry(uint32_t key, void* val);
 
 struct iterator {
     struct list_head node;
+    void* private;
 
     bool (*has_next)(struct iterator* iterator);
     int (*next)(struct iterator* iterator, void* data);
@@ -77,7 +78,7 @@ void bit_node_print(struct bit_node* bit_node);
 size_t __bit_array_len(size_t capacity, size_t nr_degree);
 
 struct lsm_file {
-    size_t id, level;
+    size_t id, level, version;
     struct list_head node;
 
     struct iterator* (*iterator)(struct lsm_file* lsm_file);
@@ -96,7 +97,7 @@ struct bit_file {
     uint32_t first_key, last_key;
 };
 
-struct lsm_file* bit_file_create(struct file* file, loff_t root, size_t id, size_t level, uint32_t first_key, uint32_t last_key);
+struct lsm_file* bit_file_create(struct file* file, loff_t root, size_t id, size_t level, size_t version, uint32_t first_key, uint32_t last_key);
 
 struct lsm_file_builder {
     size_t size;
@@ -119,12 +120,12 @@ struct bit_builder {
     loff_t begin;
     bool has_first_key;
     uint32_t first_key, last_key;
-    size_t cur, height, id, level;
+    size_t cur, height, id, level, version;
     void* buffer;
     struct bit_builder_context* ctx;
 };
 
-struct lsm_file_builder* bit_builder_create(struct file* file, size_t begin, size_t id, size_t level);
+struct lsm_file_builder* bit_builder_create(struct file* file, size_t begin, size_t id, size_t level, size_t version);
 
 struct lsm_level {
     size_t level;
@@ -133,9 +134,9 @@ struct lsm_level {
     int (*add_file)(struct lsm_level* lsm_level, struct lsm_file* file);
     int (*remove_file)(struct lsm_level* lsm_level, size_t id);
     int (*search)(struct lsm_level* lsm_level, uint32_t key, void* val);
-    struct lsm_file* (*pick_demoted_file)(struct lsm_level* lsm_level);
-    int (*find_relative_files)(struct lsm_level* lsm_level, struct lsm_file* file, struct list_head* relatives);
-    struct lsm_file_builder* (*get_builder)(struct lsm_level* lsm_level, struct file* file, size_t begin, size_t id, size_t level);
+    int (*pick_demoted_files)(struct lsm_level* lsm_level, struct list_head* demoted_files);
+    int (*find_relative_files)(struct lsm_level* lsm_level, struct list_head* files, struct list_head* relatives);
+    struct lsm_file_builder* (*get_builder)(struct lsm_level* lsm_level, struct file* file, size_t begin, size_t id, size_t level, size_t version);
     void (*destroy)(struct lsm_level* lsm_level);
 };
 
@@ -152,6 +153,7 @@ struct lsm_catalogue {
     loff_t start;
     size_t nr_disk_level, common_ratio, max_level_nr_file, total_file, file_size;
 
+    size_t (*get_next_version)(struct lsm_catalogue* lsm_catalogue);
     int (*alloc_file)(struct lsm_catalogue* lsm_catalogue, size_t* fd);
     int (*release_file)(struct lsm_catalogue* lsm_catalogue, size_t fd);
     int (*set_file_stats)(struct lsm_catalogue* lsm_catalogue, size_t fd, void* stats);

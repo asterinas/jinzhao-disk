@@ -145,7 +145,7 @@ struct lsm_file* bit_builder_complete(struct lsm_file_builder* builder) {
 
 exit:
     kernel_write(this->file, this->buffer, this->cur, &pos);
-    return bit_file_create(this->file, this->begin + this->cur - sizeof(struct bit_node), this->id, this->level, this->first_key, this->last_key);
+    return bit_file_create(this->file, this->begin + this->cur - sizeof(struct bit_node), this->id, this->level, this->version, this->first_key, this->last_key);
 }
 
 void bit_builder_destroy(struct lsm_file_builder* builder) {
@@ -160,7 +160,7 @@ void bit_builder_destroy(struct lsm_file_builder* builder) {
     }
 }
 
-int bit_builder_init(struct bit_builder* this, struct file* file, size_t begin, size_t id, size_t level) {
+int bit_builder_init(struct bit_builder* this, struct file* file, size_t begin, size_t id, size_t level, size_t version) {
     int err = 0;
     
     this->file = file;
@@ -168,6 +168,7 @@ int bit_builder_init(struct bit_builder* this, struct file* file, size_t begin, 
     this->cur = 0;
     this->id = id;
     this->level = level;
+    this->version = version;
     this->has_first_key = false;
     this->height = __bit_height(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE);
 
@@ -197,7 +198,7 @@ bad:
     return err;
 }
 
-struct lsm_file_builder* bit_builder_create(struct file* file, size_t begin, size_t id, size_t level) {
+struct lsm_file_builder* bit_builder_create(struct file* file, size_t begin, size_t id, size_t level, size_t version) {
     int err = 0;
     struct bit_builder* this = NULL;
 
@@ -205,7 +206,7 @@ struct lsm_file_builder* bit_builder_create(struct file* file, size_t begin, siz
     if (!this)
         goto bad;
     
-    err = bit_builder_init(this, file, begin, id, level);
+    err = bit_builder_init(this, file, begin, id, level, version);
     if (err)
         goto bad;
     
@@ -311,7 +312,7 @@ void bit_iterator_destroy(struct iterator* iter) {
 }
 
 
-int bit_iterator_init(struct bit_iterator* this, struct bit_file* bit_file) {
+int bit_iterator_init(struct bit_iterator* this, struct bit_file* bit_file, void* private) {
     int err = 0;
 
     this->has_next = true;
@@ -320,6 +321,7 @@ int bit_iterator_init(struct bit_iterator* this, struct bit_file* bit_file) {
     if (err)
         return err;
 
+    this->iterator.private = private;
     this->iterator.has_next = bit_iterator_has_next;
     this->iterator.next = bit_iterator_next;
     this->iterator.destroy = bit_iterator_destroy;
@@ -327,7 +329,7 @@ int bit_iterator_init(struct bit_iterator* this, struct bit_file* bit_file) {
     return 0;
 }
 
-struct iterator* bit_iterator_create(struct bit_file* bit_file) {
+struct iterator* bit_iterator_create(struct bit_file* bit_file, void* private) {
     int err = 0;
     struct bit_iterator* this;
 
@@ -335,7 +337,7 @@ struct iterator* bit_iterator_create(struct bit_file* bit_file) {
     if (!this) 
         goto bad;
 
-    err = bit_iterator_init(this, bit_file);
+    err = bit_iterator_init(this, bit_file, private);
     if (err)
         goto bad;
 
@@ -349,7 +351,7 @@ bad:
 struct iterator* bit_file_iterator(struct lsm_file* lsm_file) {
     struct bit_file* this = container_of(lsm_file, struct bit_file, lsm_file);
 
-    return bit_iterator_create(this);
+    return bit_iterator_create(this, lsm_file);
 }
 
 uint32_t bit_file_get_first_key(struct lsm_file* lsm_file) {
@@ -375,6 +377,7 @@ void* bit_file_get_stats(struct lsm_file* lsm_file) {
     stats->last_key = this->last_key;
     stats->id = this->lsm_file.id;
     stats->level = this->lsm_file.level;
+    stats->version = this->lsm_file.version;
     return stats;
 }
 
@@ -385,7 +388,7 @@ void bit_file_destroy(struct lsm_file* lsm_file) {
         kfree(this);
 }
 
-int bit_file_init(struct bit_file* this, struct file* file, loff_t root, size_t id, size_t level, uint32_t first_key, uint32_t last_key) {
+int bit_file_init(struct bit_file* this, struct file* file, loff_t root, size_t id, size_t level, size_t version, uint32_t first_key, uint32_t last_key) {
     int err = 0;
     
     this->file = file;
@@ -395,6 +398,7 @@ int bit_file_init(struct bit_file* this, struct file* file, loff_t root, size_t 
 
     this->lsm_file.id = id;
     this->lsm_file.level = level;
+    this->lsm_file.version = version;
     this->lsm_file.search = bit_file_search;
     this->lsm_file.iterator = bit_file_iterator;
     this->lsm_file.get_first_key = bit_file_get_first_key;
@@ -404,7 +408,7 @@ int bit_file_init(struct bit_file* this, struct file* file, loff_t root, size_t 
     return err;
 }
 
-struct lsm_file* bit_file_create(struct file* file, loff_t root, size_t id, size_t level, uint32_t first_key, uint32_t last_key) {
+struct lsm_file* bit_file_create(struct file* file, loff_t root, size_t id, size_t level, size_t version, uint32_t first_key, uint32_t last_key) {
     int err = 0;
     struct bit_file* this = NULL;
 
@@ -414,7 +418,7 @@ struct lsm_file* bit_file_create(struct file* file, loff_t root, size_t id, size
         goto bad;
     }
 
-    err = bit_file_init(this, file, root, id, level, first_key, last_key);
+    err = bit_file_init(this, file, root, id, level, version, first_key, last_key);
     if (err) {
         err = -EAGAIN;
         goto bad;
@@ -529,12 +533,22 @@ int bit_level_remove_file(struct lsm_level* lsm_level, size_t id) {
     return -EINVAL;
 }
 
-struct lsm_file* bit_level_pick_demoted_file(struct lsm_level* lsm_level) {
+int bit_level_pick_demoted_files(struct lsm_level* lsm_level, struct list_head* demoted_files) {
+    size_t i;
     struct bit_level* this = container_of(lsm_level, struct bit_level, lsm_level);
 
+    INIT_LIST_HEAD(demoted_files);
     if (!this->size)
-        return NULL;
-    return &this->bit_files[0]->lsm_file;
+        return 0;
+
+    if (this->lsm_level.level != 0) {
+        list_add_tail(&this->bit_files[0]->lsm_file.node, demoted_files);
+        return 0;
+    }
+
+    for (i = 0; i < this->size; ++i) 
+        list_add_tail(&this->bit_files[i]->lsm_file.node, demoted_files);
+    return 0;
 }
  
 // should carefully check bit level has files
@@ -563,20 +577,27 @@ int bit_level_lower_bound(struct bit_level* this, uint32_t key) {
     return low;
 }
 
-int bit_level_find_relative_files(struct lsm_level* lsm_level, struct lsm_file* file, struct list_head* relatives) {
+
+int bit_level_find_relative_files(struct lsm_level* lsm_level, struct list_head* files, struct list_head* relatives) {
     size_t pos;
+    struct lsm_file* file;
+    uint32_t first_key = 0xffffffff, last_key = 0;
     struct bit_level* this = container_of(lsm_level, struct bit_level, lsm_level);
 
     INIT_LIST_HEAD(relatives);
     if (!this->size)
-        return -ENODATA;
+        return 0;
 
-    if (file->get_last_key(file) < bit_level_get_first_key(this) || 
-      file->get_first_key(file) > bit_level_get_last_key(this)) 
-        return -ENODATA;
+    list_for_each_entry(file, files, node) {
+        first_key = min(first_key, file->get_first_key(file));
+        last_key = max(last_key, file->get_last_key(file));
+    }
+
+    if (last_key < bit_level_get_first_key(this) || first_key > bit_level_get_last_key(this)) 
+        return 0;
     
-    pos = bit_level_lower_bound(this, file->get_first_key(file));
-    while(pos < this->size && this->bit_files[pos]->first_key <= file->get_last_key(file)) {
+    pos = bit_level_lower_bound(this, first_key);
+    while(pos < this->size && this->bit_files[pos]->first_key <= last_key) {
         list_add_tail(&this->bit_files[pos]->lsm_file.node, relatives);
         pos += 1;
     }
@@ -584,8 +605,8 @@ int bit_level_find_relative_files(struct lsm_level* lsm_level, struct lsm_file* 
     return 0;
 }
 
-struct lsm_file_builder* bit_level_get_builder(struct lsm_level* lsm_level, struct file* file, size_t begin, size_t id, size_t level) {
-    return bit_builder_create(file, begin, id, level);
+struct lsm_file_builder* bit_level_get_builder(struct lsm_level* lsm_level, struct file* file, size_t begin, size_t id, size_t level, size_t version) {
+    return bit_builder_create(file, begin, id, level, version);
 }
 
 void bit_level_destroy(struct lsm_level* lsm_level) {
@@ -615,7 +636,7 @@ int bit_level_init(struct bit_level* this, size_t level, size_t capacity) {
     this->lsm_level.add_file = bit_level_add_file;
     this->lsm_level.remove_file = bit_level_remove_file;
     this->lsm_level.search = bit_level_search;
-    this->lsm_level.pick_demoted_file = bit_level_pick_demoted_file;
+    this->lsm_level.pick_demoted_files = bit_level_pick_demoted_files;
     this->lsm_level.find_relative_files = bit_level_find_relative_files;
     this->lsm_level.get_builder = bit_level_get_builder;
     this->lsm_level.destroy = bit_level_destroy;
@@ -687,15 +708,15 @@ int compaction_job_run(struct compaction_job* this) {
         .less = kway_merge_node_less,
         .swp = kway_merge_node_swap
     };
-    struct kway_merge_node kway_merge_node;
-    struct entry entry, distinct, first;
-    struct lsm_file *file, *demoted;
+    struct kway_merge_node kway_merge_node, distinct, first;
+    struct entry entry;
+    struct lsm_file *file;
     struct iterator *iter;
-    struct list_head files, iters;
+    struct list_head demoted_files, relative_files, iters;
     struct lsm_file_builder* builder = NULL;
 
-    demoted = this->level1->pick_demoted_file(this->level1);
-    this->level2->find_relative_files(this->level2, demoted, &files);
+    this->level1->pick_demoted_files(this->level1, &demoted_files);
+    this->level2->find_relative_files(this->level2, &demoted_files, &relative_files);
 
     // if (list_empty(&files)) {
     //     // write metadata
@@ -708,12 +729,14 @@ int compaction_job_run(struct compaction_job* this) {
     // }
 
     INIT_LIST_HEAD(&iters);
-    list_for_each_entry(file, &files, node) {
+    list_for_each_entry(file, &demoted_files, node) {
         list_add_tail(&file->iterator(file)->node, &iters);
         heap.size += 1;
     }
-    list_add(&demoted->iterator(demoted)->node, &iters);
-    heap.size += 1;
+    list_for_each_entry(file, &relative_files, node) {
+        list_add_tail(&file->iterator(file)->node, &iters);
+        heap.size += 1;
+    }
 
     heap.data = kmalloc(heap.size * sizeof(struct kway_merge_node), GFP_KERNEL);
     if (!heap.data) {
@@ -729,12 +752,12 @@ int compaction_job_run(struct compaction_job* this) {
         }
     }
 
-    distinct = ((struct kway_merge_node*)heap.data)->entry;
+    distinct = *(struct kway_merge_node*)heap.data;
     this->catalogue->alloc_file(this->catalogue, &fd);
-    builder = this->level2->get_builder(this->level2, this->file, this->catalogue->start + fd * this->catalogue->file_size, fd, this->level2->level);
+    builder = this->level2->get_builder(this->level2, this->file, this->catalogue->start + fd * this->catalogue->file_size, fd, this->level2->level, this->catalogue->get_next_version(this->catalogue));
     while (heap.nr > 0) {
         iter = ((struct kway_merge_node*)heap.data)->iter;
-        first = ((struct kway_merge_node*)heap.data)->entry;
+        first = *(struct kway_merge_node*)heap.data;
         min_heap_pop(&heap, &comparator);
 
         if (iter->has_next(iter)) {
@@ -743,12 +766,14 @@ int compaction_job_run(struct compaction_job* this) {
             min_heap_push(&heap, &kway_merge_node, &comparator);
         }
 
-        if (distinct.key == first.key) {
-            distinct = first;
+        if (distinct.entry.key == first.entry.key) {
+            if (((struct lsm_file*)(distinct.iter->private))->version < ((struct lsm_file*)(first.iter->private))->version)
+                distinct = first;
             continue;
         }
-        builder->add_entry(builder, &distinct);
-        record_destroy(distinct.val);
+        
+        builder->add_entry(builder, &distinct.entry);
+        record_destroy(distinct.entry.val);
         distinct = first;
 
         if (builder->size >= DEFAULT_LSM_FILE_CAPACITY) {
@@ -758,23 +783,27 @@ int compaction_job_run(struct compaction_job* this) {
 
             this->catalogue->alloc_file(this->catalogue, &fd);
             builder->destroy(builder);
-            builder = this->level2->get_builder(this->level2, this->file, this->catalogue->start + fd * this->catalogue->file_size, fd, this->level2->level);
+            builder = this->level2->get_builder(this->level2, this->file, this->catalogue->start + fd * this->catalogue->file_size, fd, this->level2->level, this->catalogue->get_next_version(this->catalogue));
         }
     }
 
-    builder->add_entry(builder, &distinct);
+    builder->add_entry(builder, &distinct.entry);
     file = builder->complete(builder);
     this->catalogue->set_file_stats(this->catalogue, file->id, file->get_stats(file));
     this->level2->add_file(this->level2, file);
 
-    this->catalogue->release_file(this->catalogue, demoted->id);
-    this->level1->remove_file(this->level1, demoted->id);
-    list_for_each_entry(file, &files, node) {
+    list_for_each_entry(file, &demoted_files, node) {
+        this->catalogue->release_file(this->catalogue, file->id);
+        this->level1->remove_file(this->level1, file->id);
+    }
+    list_for_each_entry(file, &relative_files, node) {
         this->catalogue->release_file(this->catalogue, file->id);
         this->level2->remove_file(this->level2, file->id);
     }
 
 exit:
+    list_for_each_entry(iter, &iters, node) 
+        iter->destroy(iter);
     if (heap.data)
         kfree(heap.data);
     if (builder)

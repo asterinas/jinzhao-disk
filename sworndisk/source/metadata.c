@@ -735,6 +735,12 @@ int bitc_get_all_file_stats(struct lsm_catalogue* lsm_catalogue, struct list_hea
 	return 0;
 }
 
+size_t bitc_get_next_version(struct lsm_catalogue* lsm_catalogue) {
+	struct bit_catalogue* this = container_of(lsm_catalogue, struct bit_catalogue, lsm_catalogue);
+
+	return this->max_version++;
+}
+
 int bit_catalogue_format(struct bit_catalogue* this) {
 	int err = 0;
 
@@ -749,6 +755,20 @@ int bit_catalogue_format(struct bit_catalogue* this) {
 	return 0;
 }
 
+size_t bitc_get_current_version(struct bit_catalogue* this) {
+	size_t max_version = 0;
+	struct bit_info* info;
+	struct list_head file_stats;
+
+	bitc_get_all_file_stats(&this->lsm_catalogue, &file_stats);
+	list_for_each_entry(info, &file_stats, node) {
+		if (max_version < info->version)
+			max_version = info->version + 1;
+	}
+
+	return max_version;
+}
+
 int bit_catalogue_init(struct bit_catalogue* this, struct dm_block_manager* bm, struct superblock* superblock) {
 	int err = 0;
 	size_t max_fd;
@@ -756,24 +776,26 @@ int bit_catalogue_init(struct bit_catalogue* this, struct dm_block_manager* bm, 
 	this->bm = bm;
 	this->start = superblock->block_index_table_catalogue_start;
 	this->index_region_start = superblock->index_region_start;
-	this->nr_table = __total_bit(superblock->nr_disk_level, superblock->common_ratio, superblock->max_disk_level_capacity);
+	this->nr_bit = __total_bit(superblock->nr_disk_level, superblock->common_ratio, superblock->max_disk_level_capacity);
 
-	max_fd = (this->nr_table << 1);
+	max_fd = (this->nr_bit << 1);
 	this->bit_validity_table = seg_validator_create(bm, this->start, max_fd);
 	if (!this->bit_validity_table) {
 		err = -ENOMEM;
 		goto bad;
 	}
 
-	this->bit_infos = disk_array_create(bm, this->start + __seg_validity_table_blocks(max_fd), this->nr_table, sizeof(struct bit_info));
+	this->bit_infos = disk_array_create(bm, this->start + __seg_validity_table_blocks(max_fd), this->nr_bit, sizeof(struct bit_info));
 	if (!this->bit_infos) {
 		err = -ENOMEM;
 		goto bad;
 	}
 
+	this->max_version = bitc_get_current_version(this);
+	this->lsm_catalogue.get_next_version = bitc_get_next_version;
 	this->format = bit_catalogue_format;
 	this->lsm_catalogue.file_size = __bit_array_len(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE) * sizeof(struct bit_node);
-	this->lsm_catalogue.total_file = this->nr_table;
+	this->lsm_catalogue.total_file = this->nr_bit;
 	this->lsm_catalogue.start = this->index_region_start * SWORNDISK_METADATA_BLOCK_SIZE;
 	this->lsm_catalogue.nr_disk_level = superblock->nr_disk_level;
 	this->lsm_catalogue.common_ratio = superblock->common_ratio;
