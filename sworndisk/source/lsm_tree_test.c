@@ -482,14 +482,20 @@ int compaction_job_run_test(struct lsm_catalogue* catalogue) {
         level1->add_file(level1, bit_file);
     }
 
-    compaction_job = compaction_job_create(file, catalogue, level1, level2);
-    compaction_job->run(compaction_job);
-
     for (i = 0; i < 500000; i += 10000) {
-        err = level2->search(level2, i, &record);
+        err = level1->search(level1, i, &record);
         if (!err)
             DMINFO("lba: %ld, pba: %lld", i, record.pba);
     }
+
+    compaction_job = compaction_job_create(file, catalogue, level1, level2);
+    compaction_job->run(compaction_job);
+
+    // for (i = 0; i < 500000; i += 10000) {
+    //     err = level2->search(level2, i, &record);
+    //     if (!err)
+    //         DMINFO("lba: %ld, pba: %lld", i, record.pba);
+    // }
 
 exit:
     if (file)

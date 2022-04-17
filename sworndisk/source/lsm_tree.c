@@ -236,6 +236,8 @@ int bit_file_search_leaf(struct bit_file* this, uint32_t key, struct bit_leaf* l
 next:
     kernel_read(this->file, &bit_node, sizeof(struct bit_node), &addr);
     if (bit_node.is_leaf) {
+        if (bit_node.leaf.key != key)
+            return -ENODATA;
         *leaf = bit_node.leaf;
         return 0;
     }
@@ -508,9 +510,30 @@ int bit_level_add_file(struct lsm_level* lsm_level, struct lsm_file* file) {
     return 0;
 }
 
+int bit_level_linear_search(struct bit_level* this, uint32_t key, void* val) {
+    int err = 0;
+    bool found = false;
+    size_t i, cur_version = 0;
+
+    for (i = 0; i < this->size; ++i) {
+        if (this->bit_files[i]->lsm_file.version < cur_version)
+            continue;
+        err = bit_file_search(&this->bit_files[i]->lsm_file, key, val);
+        if (!err) {
+            found = true;
+            cur_version = this->bit_files[i]->lsm_file.version;
+        }
+    }
+    
+    return found ? 0 : -ENODATA;
+}
+
 int bit_level_search(struct lsm_level* lsm_level, uint32_t key, void* val) {
     struct bit_file* file;
     struct bit_level* this = container_of(lsm_level, struct bit_level, lsm_level);
+
+    if (lsm_level->level == 0) 
+        return bit_level_linear_search(this, key, val);
 
     file = bit_level_locate_file(this, key);
     if (!file)
