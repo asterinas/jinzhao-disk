@@ -11,11 +11,15 @@
 #define DEFAULT_MEMTABLE_CAPACITY 65536
 
 struct memtable {
-    void* (*put)(struct memtable* mt, uint32_t key, void* val);
-    int (*get)(struct memtable* mt, uint32_t key, void** p_val);
-    void* (*remove)(struct memtable* mt, uint32_t ket);
-    bool (*contains)(struct memtable* mt, uint32_t key);
-    void (*destroy)(struct memtable* mt);
+    size_t size;
+
+    void* (*put)(struct memtable* memtable, uint32_t key, void* val);
+    int (*get)(struct memtable* memtable, uint32_t key, void** p_val);
+    int (*get_all_entry)(struct memtable* memtable, struct entry** p_entry, size_t* len);
+    void* (*remove)(struct memtable* memtable, uint32_t ket);
+    bool (*contains)(struct memtable* memtable, uint32_t key);
+    void (*clear)(struct memtable* memtable);
+    void (*destroy)(struct memtable* memtable);
 };
 
 // hash memtable definition

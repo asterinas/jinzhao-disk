@@ -128,7 +128,7 @@ struct data_segment_table* data_segment_table_create(struct dm_block_manager* bm
 void data_segment_table_destroy(struct data_segment_table* this);
 
 
-struct bit_info {
+struct file_stat {
 	loff_t root;
 	size_t id, level, version;
 	uint32_t first_key, last_key;
@@ -140,7 +140,7 @@ struct bit_catalogue {
 
 	size_t nr_bit, max_version;
 	struct seg_validator* bit_validity_table;
-	struct disk_array* bit_infos;
+	struct disk_array* file_stats;
 	dm_block_t start, index_region_start;
 	struct dm_block_manager* bm;
 

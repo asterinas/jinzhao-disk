@@ -8,7 +8,7 @@
 #include "disk_structs.h"
 #include "hashmap.h"
 
-#define DEFAULT_LSM_TREE_NR_LEVEL 2
+#define DEFAULT_LSM_TREE_NR_DISK_LEVEL 2
 #define DEFAULT_LSM_FILE_CAPACITY 65536
 
 size_t __bit_array_len(size_t capacity, size_t nr_degree);
@@ -28,6 +28,8 @@ void record_destroy(void* record);
 struct entry {
     uint32_t key;
     void* val;
+
+    struct list_head node;
 };  
 
 struct entry __entry(uint32_t key, void* val);
@@ -171,5 +173,18 @@ struct compaction_job {
 };
 
 struct compaction_job* compaction_job_create(struct file* file, struct lsm_catalogue* catalogue, struct lsm_level* level1, struct lsm_level* level2);
+
+struct lsm_tree {
+    struct file* file;
+    struct lsm_catalogue* catalogue;
+    struct memtable* memtable;
+    struct lsm_level** levels;
+
+    void (*put)(struct lsm_tree* this, uint32_t key, void* val, size_t size, bool* replaced, void* old);
+    int (*search)(struct lsm_tree* this, uint32_t key, void* val);
+    void (*destroy)(struct lsm_tree* this);
+};
+
+struct lsm_tree* lsm_tree_create(const char* filename, struct lsm_catalogue* catalogue);
 
 #endif

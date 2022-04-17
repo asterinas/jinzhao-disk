@@ -19,7 +19,7 @@ struct record* record_create(dm_block_t pba, char* key, char* iv, char* mac) {
 
     record = (struct record*) kmalloc(sizeof(struct record), GFP_KERNEL);
     if (!record) {
-        DMERR("mt value create alloc mem error\n");
+        DMERR("memtable value create alloc mem error\n");
         return NULL;
     }
 
@@ -56,9 +56,9 @@ void record_destroy(void* p) {
 // hash memtable definition
 
 #define HASH_MEMTABLE_THIS_POINTER_DECLARE struct hash_memtable* this; \
-        this = container_of(mt, struct hash_memtable, memtable);
+        this = container_of(memtable, struct hash_memtable, memtable);
 
-void* hash_memtable_put(struct memtable* mt, uint32_t key, void* val) {
+void* hash_memtable_put(struct memtable* memtable, uint32_t key, void* val) {
     void* old;
     HASH_MEMTABLE_THIS_POINTER_DECLARE
 
@@ -69,7 +69,7 @@ void* hash_memtable_put(struct memtable* mt, uint32_t key, void* val) {
     return old;
 }
 
-int hash_memtable_get(struct memtable* mt, uint32_t key, void** p_val) {
+int hash_memtable_get(struct memtable* memtable, uint32_t key, void** p_val) {
     HASH_MEMTABLE_THIS_POINTER_DECLARE
 
     down_read(&this->rwsem);
@@ -80,13 +80,13 @@ int hash_memtable_get(struct memtable* mt, uint32_t key, void** p_val) {
     return 0;
 }
 
-bool hash_memtable_contains(struct memtable* mt, uint32_t key) {
+bool hash_memtable_contains(struct memtable* memtable, uint32_t key) {
     HASH_MEMTABLE_THIS_POINTER_DECLARE
 
     return hashmap_exists(&this->map, key);
 }
 
-void hash_memtable_destory(struct memtable* mt) {
+void hash_memtable_destory(struct memtable* memtable) {
     HASH_MEMTABLE_THIS_POINTER_DECLARE
 
     hashmap_destroy(&this->map);
@@ -110,9 +110,9 @@ struct memtable* hash_memtable_init(struct hash_memtable* this) {
 // radix tree memtable definition
 
 #define RADIX_TREE_MEMTABLE_THIS_POINTER_DECLARE struct radix_tree_memtable* this; \
-        this = container_of(mt, struct radix_tree_memtable, memtable);
+        this = container_of(memtable, struct radix_tree_memtable, memtable);
 
-void* radix_tree_memtable_put(struct memtable* mt, uint32_t key, void* val) {
+void* radix_tree_memtable_put(struct memtable* memtable, uint32_t key, void* val) {
     void* old;
     RADIX_TREE_MEMTABLE_THIS_POINTER_DECLARE
 
@@ -124,7 +124,7 @@ void* radix_tree_memtable_put(struct memtable* mt, uint32_t key, void* val) {
     return old;
 }
 
-int radix_tree_memtable_get(struct memtable* mt, uint32_t key, void** p_val) {
+int radix_tree_memtable_get(struct memtable* memtable, uint32_t key, void** p_val) {
     RADIX_TREE_MEMTABLE_THIS_POINTER_DECLARE
 
     down_read(&this->rwsem);
@@ -135,7 +135,7 @@ int radix_tree_memtable_get(struct memtable* mt, uint32_t key, void** p_val) {
     return 0;
 }
 
-bool radix_tree_memtable_contains(struct memtable* mt, uint32_t key) {
+bool radix_tree_memtable_contains(struct memtable* memtable, uint32_t key) {
     bool ret;
     RADIX_TREE_MEMTABLE_THIS_POINTER_DECLARE
 
@@ -146,7 +146,7 @@ bool radix_tree_memtable_contains(struct memtable* mt, uint32_t key) {
     return ret;
 }
 
-void radix_tree_memtable_destroy(struct memtable* mt) {
+void radix_tree_memtable_destroy(struct memtable* memtable) {
     RADIX_TREE_MEMTABLE_THIS_POINTER_DECLARE
 
     kfree(this);
@@ -212,7 +212,7 @@ void memtable_rbnode_destroy(struct memtable_rbnode* entry) {
 
 
 #define RBTREE_MEMTABLE_THIS_POINTER_DECLARE struct rbtree_memtable* this; \
-        this = container_of(mt, struct rbtree_memtable, memtable);
+        this = container_of(memtable, struct rbtree_memtable, memtable);
 
 // memtable interface implementation
 void* __rbtree_memtable_search(struct rb_root* root, uint32_t key) {
@@ -233,7 +233,7 @@ void* __rbtree_memtable_search(struct rb_root* root, uint32_t key) {
 	return NULL;
 }
 
-void* rbtree_memtable_put(struct memtable* mt, uint32_t key, void* val) {
+void* rbtree_memtable_put(struct memtable* memtable, uint32_t key, void* val) {
     void* oldval = NULL;
     struct rb_node* node = NULL;
     struct memtable_rbnode *old = NULL, *new = NULL;
@@ -252,11 +252,12 @@ next:
         kfree(old);
         goto next;
     }
-
+    if (!oldval)
+        memtable->size += 1;
     return oldval;
 }
 
-int rbtree_memtable_get(struct memtable* mt, uint32_t key, void** p_val) {
+int rbtree_memtable_get(struct memtable* memtable, uint32_t key, void** p_val) {
     RBTREE_MEMTABLE_THIS_POINTER_DECLARE
 
     *p_val = __rbtree_memtable_search(&this->root, key);
@@ -267,7 +268,7 @@ int rbtree_memtable_get(struct memtable* mt, uint32_t key, void** p_val) {
     return -ENODATA;
 }
 
-void* rbtree_memtable_remove(struct memtable* mt, uint32_t key) {
+void* rbtree_memtable_remove(struct memtable* memtable, uint32_t key) {
     void* val;
     struct memtable_rbnode* entry;
     struct rb_node* node;
@@ -277,6 +278,7 @@ void* rbtree_memtable_remove(struct memtable* mt, uint32_t key) {
     if (!node)
         return NULL;
     
+    memtable->size -= 1;
     rb_erase(node, &this->root);
     entry = rb_entry(node, struct memtable_rbnode, node);
     val = entry->val;
@@ -285,24 +287,51 @@ void* rbtree_memtable_remove(struct memtable* mt, uint32_t key) {
     return val;
 }
 
-bool rbtree_memtable_contains(struct memtable* mt, uint32_t key) {
+bool rbtree_memtable_contains(struct memtable* memtable, uint32_t key) {
     RBTREE_MEMTABLE_THIS_POINTER_DECLARE
 
     return __rbtree_memtable_search(&this->root, key);
 }
 
-void rbtree_memtable_destroy(struct memtable* mt) {
+int rbtree_memtable_get_all_entry(struct memtable* memtable, struct entry** p_entry, size_t* len) {
+    size_t cur = 0;
+    struct memtable_rbnode* memtable_rbnode;
+    struct rb_node* node;
+    RBTREE_MEMTABLE_THIS_POINTER_DECLARE
+
+    *len = memtable->size;
+    *p_entry = kmalloc(memtable->size * sizeof(struct entry), GFP_KERNEL);
+    if (!(*p_entry))
+        return -ENOMEM;
+
+    for (node = rb_first(&this->root); node; node = rb_next(node)) {
+        memtable_rbnode = rb_entry(node, struct memtable_rbnode, node);
+        (*p_entry)[cur].key = memtable_rbnode->key;
+        (*p_entry)[cur].val = memtable_rbnode->val;
+        cur += 1;
+    }
+
+    return 0;
+}
+
+void rbtree_memtable_clear(struct memtable* memtable) {
     struct memtable_rbnode* entry;
     RBTREE_MEMTABLE_THIS_POINTER_DECLARE
 
+    while(!RB_EMPTY_ROOT(&this->root)) {
+        entry = rb_entry(rb_first(&this->root), struct memtable_rbnode, node);
+        rb_erase(&entry->node, &this->root);
+        memtable_rbnode_destroy(entry);
+    }
+    memtable->size = 0;
+}
+
+void rbtree_memtable_destroy(struct memtable* memtable) {
+    RBTREE_MEMTABLE_THIS_POINTER_DECLARE
+
     if (!IS_ERR_OR_NULL(this)) {
-        while(!RB_EMPTY_ROOT(&this->root)) {
-            entry = rb_entry(rb_first(&this->root), struct memtable_rbnode, node);
-            rb_erase(&entry->node, &this->root);
-            memtable_rbnode_destroy(entry);
-        }
+        rbtree_memtable_clear(memtable);
         kfree(this);
-        this = NULL;
     }
 }
 
@@ -310,11 +339,14 @@ void rbtree_memtable_destroy(struct memtable* mt) {
 void rbtree_memtable_init(struct rbtree_memtable* this, size_t capacity) {
     this->root = RB_ROOT;
     // memtable
+    this->memtable.size = 0;
     this->memtable.put = rbtree_memtable_put;
     this->memtable.get = rbtree_memtable_get;
+    this->memtable.get_all_entry = rbtree_memtable_get_all_entry;
     this->memtable.contains = rbtree_memtable_contains;
     this->memtable.destroy = rbtree_memtable_destroy;
     this->memtable.remove = rbtree_memtable_remove;
+    this->memtable.clear = rbtree_memtable_clear;
 }
 
 struct memtable* rbtree_memtable_create(size_t capacity) {

@@ -397,7 +397,7 @@ exit:
 int block_index_table_catalogue_test(struct lsm_catalogue* catalogue) {
     size_t fd, i;
     struct list_head stats;
-    struct bit_info info, *pinfo;
+    struct file_stat info, *pinfo;
 
     for (i = 0; i < catalogue->total_file; ++i) {
         catalogue->alloc_file(catalogue, &fd);
@@ -507,4 +507,27 @@ exit:
     if (compaction_job)
         compaction_job->destroy(compaction_job);
     return err;
+}
+
+// lsm tree test 
+int lsm_tree_test(struct lsm_catalogue* catalogue) {
+    const char* filename = "/dev/sdb5";
+    size_t i;
+    bool replaced;
+    struct record *record, old, result;
+    struct lsm_tree* lsm_tree = lsm_tree_create(filename, catalogue);
+
+    for (i = 0; i < 1000000; ++i) {
+        record = record_create(i, NULL, NULL, NULL);
+        lsm_tree->put(lsm_tree, i, record, sizeof(struct record), &replaced, &old);
+    }
+
+    for (i = 0; i < 1000000; i += 10000) {
+        lsm_tree->search(lsm_tree, i, &result);
+        DMINFO("lba: %ld, pba: %lld", i, result.pba);
+    }
+
+    lsm_tree->destroy(lsm_tree);
+
+    return 0;
 }
