@@ -6,24 +6,20 @@
 
 #include "../../persistent-data/dm-block-manager.h"
 #include "hashmap.h"
+#include "lsm_tree.h"
 
-// memtable value
-struct record {
-    dm_block_t pba; // physical block address
-    char *mac;
-    char *key;
-    char *iv;
-};  
-
-struct record* record_create(dm_block_t pba, char* key, char* iv, char* mac);
-void record_destroy(void* record);
+#define DEFAULT_MEMTABLE_CAPACITY 65536
 
 struct memtable {
-    void* (*put)(struct memtable* mt, uint32_t key, void* val);
-    int (*get)(struct memtable* mt, uint32_t key, void** p_val);
-    void* (*remove)(struct memtable* mt, uint32_t ket);
-    bool (*contains)(struct memtable* mt, uint32_t key);
-    void (*destroy)(struct memtable* mt);
+    size_t size;
+
+    void* (*put)(struct memtable* memtable, uint32_t key, void* val);
+    int (*get)(struct memtable* memtable, uint32_t key, void** p_val);
+    int (*get_all_entry)(struct memtable* memtable, struct entry** p_entry, size_t* len);
+    void* (*remove)(struct memtable* memtable, uint32_t ket);
+    bool (*contains)(struct memtable* memtable, uint32_t key);
+    void (*clear)(struct memtable* memtable);
+    void (*destroy)(struct memtable* memtable);
 };
 
 // hash memtable definition
@@ -57,6 +53,6 @@ struct rbtree_memtable {
     struct memtable memtable;
 };
 
-struct memtable* rbtree_memtable_create(void);
+struct memtable* rbtree_memtable_create(size_t capacity);
 
 #endif

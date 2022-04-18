@@ -24,7 +24,8 @@ void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
 void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer) {
     int r;
     dm_block_t pba;
-    struct record* record;
+    bool replaced;
+    struct record* record, old;
     DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
 
     pba = (this->cur_segment * SECTOES_PER_SEGMENT + this->cur_sector) / SECTORS_PER_BLOCK;    
@@ -32,10 +33,9 @@ void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer)
     if (IS_ERR_OR_NULL(record))
         return;
 
-    record = sworndisk->memtable->put(sworndisk->memtable, lba, record);
-    if (record) {
-        sworndisk->metadata->data_segment_table->return_block(sworndisk->metadata->data_segment_table, record->pba);
-        record_destroy(record);
+    sworndisk->lsm_tree->put(sworndisk->lsm_tree, lba, record, sizeof(struct record), &replaced, &old);
+    if (replaced) {
+        sworndisk->metadata->data_segment_table->return_block(sworndisk->metadata->data_segment_table, old.pba);
     }
 
     if ((this->buffer + this->cur_sector * SECTOR_SIZE) != buffer) {

@@ -7,6 +7,7 @@
 #include "disk_structs.h"
 #include "segment_allocator.h"
 #include "../../persistent-data/dm-block-manager.h"
+#include "lsm_tree.h"
 
 #define SWORNDISK_MAX_CONCURRENT_LOCKS 6
 #define SWORNDISK_METADATA_BLOCK_SIZE 4096
@@ -30,19 +31,19 @@ struct superblock {
 	// index region
 	uint32_t common_ratio; // common ratio of adjacent disk levels
 	uint32_t nr_disk_level; // lsm tree disk level count
-	uint64_t max_disk_level_size; // sector unit
+	uint64_t max_disk_level_capacity; // sector unit
 	uint64_t index_region_start;
 
 	// journal region
 	uint32_t journal_size; // sector aligned
 	uint64_t nr_journal;
-	uint64_t cur_journal;
 	uint64_t journal_region_start;
 
 	// checkpoint region
 	uint64_t seg_validity_table_start;
 	uint64_t data_seg_table_start;
 	uint64_t reverse_index_table_start;
+	uint64_t block_index_table_catalogue_start;
 
 	// persistent client
 	struct dm_block_manager* bm;
@@ -126,6 +127,26 @@ struct data_segment_table {
 struct data_segment_table* data_segment_table_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_segment);
 void data_segment_table_destroy(struct data_segment_table* this);
 
+
+struct file_stat {
+	loff_t root;
+	size_t id, level, version;
+	uint32_t first_key, last_key;
+	struct list_head node;
+} __packed;
+
+struct bit_catalogue {
+	struct lsm_catalogue lsm_catalogue;
+
+	size_t nr_bit, max_version;
+	struct seg_validator* bit_validity_table;
+	struct disk_array* file_stats;
+	dm_block_t start, index_region_start;
+	struct dm_block_manager* bm;
+
+	int (*format)(struct bit_catalogue* this);
+};
+
 // metadata definition
 struct metadata {
 	// persistent client
@@ -137,6 +158,7 @@ struct metadata {
 	struct seg_validator* seg_validator;
 	struct reverse_index_table* reverse_index_table;
 	struct data_segment_table* data_segment_table;
+	struct bit_catalogue* bit_catalogue;
 
 	int (*format)(struct metadata* this);
 };
