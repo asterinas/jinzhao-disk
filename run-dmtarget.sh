@@ -24,7 +24,7 @@ do
 		# touch disk0
 		# touch disk1
 		# dd if=/dev/zero of=/dev/sdb6 bs=1M count=10240 # 10GB file
-		dd if=/dev/zero of=/dev/sdb5 bs=1M count=1280 # 512MB file
+		dd if=/dev/zero of=/dev/sdb5 bs=1M count=2048 # 512MB file
 		# losetup /dev/loop0 disk0
 		# losetup /dev/loop1 disk1 
 		;;

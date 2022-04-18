@@ -131,7 +131,7 @@ size_t __total_bit(size_t nr_disk_level, size_t common_ratio, size_t max_disk_le
 		capacity /= common_ratio;
 	}
 
-	return total;
+	return total + DEFAULT_LSM_LEVEL0_NR_FILE;
 }
 
 size_t __index_region_blocks(size_t nr_disk_level, size_t common_ratio, size_t max_disk_level_capacity) {
@@ -716,7 +716,7 @@ int bitc_get_all_file_stats(struct lsm_catalogue* lsm_catalogue, struct list_hea
 	int err = 0;
 	bool valid;
 	size_t i;
-	struct file_stat* info;
+	struct file_stat* stat;
 	struct bit_catalogue* this = container_of(lsm_catalogue, struct bit_catalogue, lsm_catalogue);
 
 	INIT_LIST_HEAD(stats);
@@ -725,9 +725,9 @@ int bitc_get_all_file_stats(struct lsm_catalogue* lsm_catalogue, struct list_hea
 		if (err)
 			return err;
 		if (valid) {
-			info = this->file_stats->get(this->file_stats, i);
-			if (info) {
-				list_add_tail(&info->node, stats);
+			stat = this->file_stats->get(this->file_stats, i);
+			if (stat) {
+				list_add_tail(&stat->node, stats);
 			}
 		}
 	}
@@ -903,7 +903,7 @@ int metadata_init(struct metadata* this, struct block_device* bdev) {
 		if (r)
 			goto bad;
 	}
-	
+
 	return 0;
 bad:
 	if (!IS_ERR_OR_NULL(this->bm))

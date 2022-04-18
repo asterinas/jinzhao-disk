@@ -9,6 +9,7 @@
 #include "hashmap.h"
 
 #define DEFAULT_LSM_TREE_NR_DISK_LEVEL 2
+#define DEFAULT_LSM_LEVEL0_NR_FILE 4
 #define DEFAULT_LSM_FILE_CAPACITY 65536
 
 size_t __bit_array_len(size_t capacity, size_t nr_degree);
