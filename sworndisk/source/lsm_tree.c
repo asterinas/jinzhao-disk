@@ -71,7 +71,7 @@ struct bit_node __bit_inner(struct bit_builder_context* ctx) {
 void bit_builder_buffer_flush_if_full(struct bit_builder* this) {
     loff_t pos = this->begin;
 
-    if (this->cur + this->height * sizeof(struct bit_node) > (SEGMENT_BUFFER_SIZE >> 1)) {
+    if (this->cur + this->height * sizeof(struct bit_node) > DEFAULT_BIT_BUILDER_BUFFER_SIZE) {
         kernel_write(this->file, this->buffer, this->cur, &pos);
         this->begin += this->cur;
         this->cur = 0;
@@ -132,6 +132,10 @@ struct lsm_file* bit_builder_complete(struct lsm_file_builder* builder) {
 
     bit_builder_buffer_flush_if_full(this);
     while (h < this->height - 1) {
+        if (!this->ctx[h].nr) {
+            h += 1;
+            continue;
+        }
         inner_node = __bit_inner(&this->ctx[h]);
         this->ctx[h+1].nodes[this->ctx[h+1].nr] = inner_node;
         this->ctx[h+1].pointers[this->ctx[h+1].nr].pos = this->begin + this->cur;
@@ -172,7 +176,7 @@ int bit_builder_init(struct bit_builder* this, struct file* file, size_t begin, 
     this->has_first_key = false;
     this->height = __bit_height(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE);
 
-    this->buffer = kmalloc(SEGMENT_BUFFER_SIZE, GFP_KERNEL);
+    this->buffer = kmalloc(DEFAULT_BIT_BUILDER_BUFFER_SIZE, GFP_KERNEL);
     if (!this->buffer) {
         err = -ENOMEM;
         goto bad;
@@ -234,11 +238,12 @@ int bit_file_search_leaf(struct bit_file* this, uint32_t key, struct bit_leaf* l
 
     addr = this->root;
 next:
-    // DMINFO("search kernel read at %lld", addr);
     kernel_read(this->file, &bit_node, sizeof(struct bit_node), &addr);
     if (bit_node.is_leaf) {
-        if (bit_node.leaf.key != key)
+        if (bit_node.leaf.key != key) {
             return -ENODATA;
+        }
+            
         *leaf = bit_node.leaf;
         return 0;
     }
@@ -292,8 +297,6 @@ int bit_iterator_next(struct iterator* iter, void* data) {
 
     if (!iter->has_next(iter))
         return -ENODATA;
-    
-    // todo: record create
 
     *(struct entry*)data = __entry(this->leaf.key, record_copy(&this->leaf.record));
     if (this->leaf.key >= this->bit_file->last_key) {
@@ -302,7 +305,6 @@ int bit_iterator_next(struct iterator* iter, void* data) {
     }
 
     pos = this->leaf.next.pos;
-    // DMINFO("iterator kernel read at %lld", pos);
     kernel_read(this->bit_file->file, &bit_node, sizeof(struct bit_node), &pos);
     this->leaf = bit_node.leaf;
     return 0;
@@ -322,8 +324,11 @@ int bit_iterator_init(struct bit_iterator* this, struct bit_file* bit_file, void
     this->has_next = true;
     this->bit_file = bit_file;
     err = bit_file_first_leaf(this->bit_file, &this->leaf);
-    if (err)
+    if (err) {
+        DMERR("bit_iterator_init find first leaf error");
         return err;
+    }
+       
 
     this->iterator.private = private;
     this->iterator.has_next = bit_iterator_has_next;
@@ -370,18 +375,17 @@ uint32_t bit_file_get_last_key(struct lsm_file* lsm_file) {
     return this->last_key;
 }
 
-void* bit_file_get_stats(struct lsm_file* lsm_file) {
+struct file_stat bit_file_get_stats(struct lsm_file* lsm_file) {
     struct bit_file* this = container_of(lsm_file, struct bit_file, lsm_file);
-    struct file_stat* stats = kmalloc(sizeof(struct file_stat), GFP_KERNEL);
+    struct file_stat stats = {
+        .root = this->root,
+        .first_key = this->first_key,
+        .last_key = this->last_key,
+        .id = this->lsm_file.id,
+        .level = this->lsm_file.level,
+        .version = this->lsm_file.version
+    };
     
-    if (!stats)
-        return NULL;
-    stats->root = this->root;
-    stats->first_key = this->first_key;
-    stats->last_key = this->last_key;
-    stats->id = this->lsm_file.id;
-    stats->level = this->lsm_file.level;
-    stats->version = this->lsm_file.version;
     return stats;
 }
 
@@ -439,6 +443,7 @@ bad:
 bool bit_level_is_full(struct lsm_level* lsm_level) {
     struct bit_level* this = container_of(lsm_level, struct bit_level, lsm_level);
 
+    // DMINFO("level: %ld, size: %ld, capacity: %ld", lsm_level->level, this->size, this->capacity);
     return this->size >= this->capacity;
 }
 
@@ -505,7 +510,8 @@ int bit_level_add_file(struct lsm_level* lsm_level, struct lsm_file* file) {
     if (this->size >= this->max_size)
         return -ENOSPC;
 
-    // DMINFO("add file id: %ld, level: %ld", file->id, file->level);
+    // DMINFO("add file, level: %ld, id: %ld, first key: %u, last key: %u", 
+    //   lsm_level->level, file->id, file->get_first_key(file), file->get_last_key(file));
     pos = bit_level_search_file(this, bit_file);
     if (pos + 1 < this->max_size)
         memmove(this->bit_files + pos + 1, this->bit_files + pos, (this->size - pos) * sizeof(struct bit_file*));
@@ -549,7 +555,7 @@ int bit_level_remove_file(struct lsm_level* lsm_level, size_t id) {
     size_t pos;
     struct bit_level* this = container_of(lsm_level, struct bit_level, lsm_level);
 
-    // DMINFO("remove file id: %ld, level: %ld", id, lsm_level->level);
+    // DMINFO("remove file, level: %ld, id: %ld", lsm_level->level, id);
     for (pos = 0; pos < this->size; ++pos) {
         if (this->bit_files[pos]->lsm_file.id == id) {
             memmove(this->bit_files + pos, this->bit_files + pos + 1, (this->size - pos - 1) * sizeof(struct bit_file*));
@@ -591,6 +597,12 @@ uint32_t bit_level_get_last_key(struct bit_level* this) {
 // assume there are no intersections between files
 int bit_level_lower_bound(struct bit_level* this, uint32_t key) {
     int low = 0, high = this->size - 1, mid;
+
+    if (key < this->bit_files[low]->first_key)
+        return 0;
+
+    if (key > this->bit_files[high]->last_key)
+        return high + 1;
 
     while (low < high) {
         mid = low + ((high - low) >> 1);
@@ -652,7 +664,7 @@ int bit_level_init(struct bit_level* this, size_t level, size_t capacity) {
     int err = 0;
 
     this->size = 0;
-    this->max_size = (capacity << 1);
+    this->max_size = 2 * capacity + DEFAULT_LSM_LEVEL0_NR_FILE;
     this->capacity = capacity;
     this->bit_files = kmalloc(this->max_size * sizeof(struct bit_file*), GFP_KERNEL);
     if (!this->bit_files) {
@@ -747,25 +759,14 @@ int compaction_job_run(struct compaction_job* this) {
     this->level1->pick_demoted_files(this->level1, &demoted_files);
     this->level2->find_relative_files(this->level2, &demoted_files, &relative_files);
 
-    if (list_empty(&relative_files)) {
-        list_for_each_entry(file, &demoted_files, node) {
-            // write metadata
-            file->level = this->level2->level;
-            this->catalogue->set_file_stats(this->catalogue, file->id, file->get_stats(file));
-            // move file between levels
-            this->level2->add_file(this->level2, file);
-            this->level1->remove_file(this->level1, file->id);
-        }
-        return 0;
-    }
-
     INIT_LIST_HEAD(&iters);
     list_for_each_entry(file, &demoted_files, node) {
-        list_add_tail(&file->iterator(file)->node, &iters);
+        list_add(&file->iterator(file)->node, &iters);
         heap.size += 1;
     }
+
     list_for_each_entry(file, &relative_files, node) {
-        list_add_tail(&file->iterator(file)->node, &iters);
+        list_add(&file->iterator(file)->node, &iters);
         heap.size += 1;
     }
 
@@ -798,8 +799,12 @@ int compaction_job_run(struct compaction_job* this) {
         }
 
         if (distinct.entry.key == first.entry.key) {
-            if (((struct lsm_file*)(distinct.iter->private))->version < ((struct lsm_file*)(first.iter->private))->version)
+            if (((struct lsm_file*)(distinct.iter->private))->version < ((struct lsm_file*)(first.iter->private))->version) {
+                record_destroy(distinct.entry.val);
                 distinct = first;
+            } else if (((struct lsm_file*)(distinct.iter->private))->id != ((struct lsm_file*)(first.iter->private))->id) {
+                record_destroy(first.entry.val);
+            }
             continue;
         }
         
@@ -819,17 +824,20 @@ int compaction_job_run(struct compaction_job* this) {
     }
 
     builder->add_entry(builder, &distinct.entry);
+    record_destroy(distinct.entry.val);
     file = builder->complete(builder);
     this->catalogue->set_file_stats(this->catalogue, file->id, file->get_stats(file));
     this->level2->add_file(this->level2, file);
 
     list_for_each_entry(file, &demoted_files, node) {
-        this->catalogue->release_file(this->catalogue, file->id);
         this->level1->remove_file(this->level1, file->id);
+        this->catalogue->release_file(this->catalogue, file->id);
+        file->destroy(file);
     }
     list_for_each_entry(file, &relative_files, node) {
-        this->catalogue->release_file(this->catalogue, file->id);
         this->level2->remove_file(this->level2, file->id);
+        this->catalogue->release_file(this->catalogue, file->id);
+        file->destroy(file);
     }
 
 exit:
@@ -907,10 +915,6 @@ int lsm_tree_minor_compaction(struct lsm_tree* this) {
     this->memtable->get_all_entry(this->memtable, &entries, &len);
     this->catalogue->alloc_file(this->catalogue, &fd);
     builder = this->levels[0]->get_builder(this->levels[0], this->file, this->catalogue->start + fd * this->catalogue->file_size, fd, 0, this->catalogue->get_next_version(this->catalogue));
-    if (!builder) {
-        err = -ENOMEM;
-        goto exit;
-    }
 
     for (i = 0; i < len; ++i)
         builder->add_entry(builder, &entries[i]);
@@ -920,7 +924,8 @@ int lsm_tree_minor_compaction(struct lsm_tree* this) {
     this->levels[0]->add_file(this->levels[0], file);
     this->memtable->clear(this->memtable);
 
-exit:
+    if (builder)
+        builder->destroy(builder);
     if (entries)
         kfree(entries);
     return err;
@@ -939,14 +944,15 @@ int lsm_tree_search(struct lsm_tree* this, uint32_t key, void* val) {
     
     for (i = 0; i < this->catalogue->nr_disk_level; ++i) {
         err = this->levels[i]->search(this->levels[i], key, val);
-        if (!err)
+        if (!err) {
             return 0;
+        }   
     }
     return -ENODATA;
 }
 
 
-void lsm_tree_put(struct lsm_tree* this, uint32_t key, void* val, size_t size, bool* replaced, void* old) {
+void lsm_tree_put(struct lsm_tree* this, uint32_t key, void* val, bool* replaced, void* old) {
     int err = 0;
     struct record* result = NULL;
 
@@ -978,6 +984,7 @@ void lsm_tree_destroy(struct lsm_tree* this) {
         }
         if (this->file)
             filp_close(this->file, NULL);
+        kfree(this);
     }
 }
 
@@ -1011,7 +1018,7 @@ int lsm_tree_init(struct lsm_tree* this, const char* filename, struct lsm_catalo
 
     catalogue->get_all_file_stats(catalogue, &file_stats);
     list_for_each_entry(stat, &file_stats, node) {
-        // DMINFO("load file id: %ld, level: %ld, root: %lld, version: %ld, first_key: %u, last_key: %u", stat->id, stat->level, stat->root, stat->version, stat->first_key, stat->last_key);
+        // DMINFO("load file, id: %ld, level: %ld, fist key: %u, last key: %u", stat->id, stat->level, stat->first_key, stat->last_key);
         lsm_file = bit_file_create(this->file, stat->root, stat->id, stat->level, stat->version, stat->first_key, stat->last_key);
         this->levels[stat->level]->add_file(this->levels[stat->level], lsm_file);
         kfree(stat);

@@ -9,10 +9,8 @@
 #include "hashmap.h"
 
 #define DEFAULT_LSM_TREE_NR_DISK_LEVEL 2
-#define DEFAULT_LSM_LEVEL0_NR_FILE 4
-#define DEFAULT_LSM_FILE_CAPACITY 65536
-
-size_t __bit_array_len(size_t capacity, size_t nr_degree);
+#define DEFAULT_LSM_LEVEL0_NR_FILE 1
+#define DEFAULT_LSM_FILE_CAPACITY 131072
 
 // record, lba => (pba, key, iv, mac)
 struct record {
@@ -88,7 +86,7 @@ struct lsm_file {
     uint32_t (*get_first_key)(struct lsm_file* lsm_file);
     uint32_t (*get_last_key)(struct lsm_file* lsm_file);
     int (*search)(struct lsm_file* lsm_file, uint32_t key, void* val);
-    void* (*get_stats)(struct lsm_file* lsm_file);
+    struct file_stat (*get_stats)(struct lsm_file* lsm_file);
     void (*destroy)(struct lsm_file* lsm_file);
 };
 
@@ -116,6 +114,7 @@ struct bit_builder_context {
     struct bit_node nodes[DEFAULT_BIT_DEGREE];
 };
 
+#define DEFAULT_BIT_BUILDER_BUFFER_SIZE (SEGMENT_BUFFER_SIZE >> 2)
 struct bit_builder {
     struct lsm_file_builder lsm_file_builder;
 
@@ -159,7 +158,7 @@ struct lsm_catalogue {
     size_t (*get_next_version)(struct lsm_catalogue* lsm_catalogue);
     int (*alloc_file)(struct lsm_catalogue* lsm_catalogue, size_t* fd);
     int (*release_file)(struct lsm_catalogue* lsm_catalogue, size_t fd);
-    int (*set_file_stats)(struct lsm_catalogue* lsm_catalogue, size_t fd, void* stats);
+    int (*set_file_stats)(struct lsm_catalogue* lsm_catalogue, size_t fd, struct file_stat stats);
     int (*get_file_stats)(struct lsm_catalogue* lsm_catalogue, size_t fd, void* stats);
     int (*get_all_file_stats)(struct lsm_catalogue* lsm_catalogue, struct list_head* stats);
 };
@@ -181,7 +180,7 @@ struct lsm_tree {
     struct memtable* memtable;
     struct lsm_level** levels;
 
-    void (*put)(struct lsm_tree* this, uint32_t key, void* val, size_t size, bool* replaced, void* old);
+    void (*put)(struct lsm_tree* this, uint32_t key, void* val, bool* replaced, void* old);
     int (*search)(struct lsm_tree* this, uint32_t key, void* val);
     void (*destroy)(struct lsm_tree* this);
 };

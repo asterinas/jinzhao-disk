@@ -126,7 +126,7 @@ size_t __total_bit(size_t nr_disk_level, size_t common_ratio, size_t max_disk_le
 	size_t total = 0, capacity, i;
 
 	capacity = max_disk_level_capacity;
-	for (i = 0; i < nr_disk_level; ++i) {
+	for (i = 1; i < nr_disk_level; ++i) {
 		total += (capacity ? (capacity - 1) / DEFAULT_LSM_FILE_CAPACITY + 1 : 0);
 		capacity /= common_ratio;
 	}
@@ -134,11 +134,15 @@ size_t __total_bit(size_t nr_disk_level, size_t common_ratio, size_t max_disk_le
 	return total + DEFAULT_LSM_LEVEL0_NR_FILE;
 }
 
-size_t __index_region_blocks(size_t nr_disk_level, size_t common_ratio, size_t max_disk_level_capacity) {
-	size_t total_bit;
+size_t __extra_bit(size_t max_disk_level_capacity) {
+	return __total_bit(2, LSM_TREE_DISK_LEVEL_COMMON_RATIO, max_disk_level_capacity);
+}
 
-	total_bit = __total_bit(nr_disk_level, common_ratio, max_disk_level_capacity);
-	return __bytes_to_block(total_bit * __bit_array_len(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE) * sizeof(struct bit_node), SWORNDISK_METADATA_BLOCK_SIZE);
+size_t __index_region_blocks(size_t nr_disk_level, size_t common_ratio, size_t max_disk_level_capacity) {
+	size_t total_bit = __total_bit(nr_disk_level, common_ratio, max_disk_level_capacity);
+	size_t extra_bit = __extra_bit(max_disk_level_capacity);
+
+	return __bytes_to_block((total_bit + extra_bit)* __bit_array_len(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE) * sizeof(struct bit_node), SWORNDISK_METADATA_BLOCK_SIZE);
 }
 
 size_t __journal_region_blocks(size_t nr_journal, size_t journal_size) {
@@ -692,10 +696,15 @@ int bitc_release_file(struct lsm_catalogue* lsm_catalogue, size_t fd) {
 	return 0;
 }
 
-int bitc_set_file_stats(struct lsm_catalogue* lsm_catalogue, size_t fd, void* stats) {
+void file_stat_print(struct file_stat stat) {
+	DMINFO("file stat, id: %ld, level: %ld, root: %lld, first key: %u, last key: %u",
+	  stat.id, stat.level, stat.root, stat.first_key, stat.last_key);
+}
+
+int bitc_set_file_stats(struct lsm_catalogue* lsm_catalogue, size_t fd, struct file_stat stats) {
 	struct bit_catalogue* this = container_of(lsm_catalogue, struct bit_catalogue, lsm_catalogue);
 
-	return this->file_stats->set(this->file_stats, fd, stats);
+	return this->file_stats->set(this->file_stats, fd, &stats);
 }
 
 int bitc_get_file_stats(struct lsm_catalogue* lsm_catalogue, size_t fd, void* stats) {
@@ -731,7 +740,6 @@ int bitc_get_all_file_stats(struct lsm_catalogue* lsm_catalogue, struct list_hea
 			}
 		}
 	}
-
 	return 0;
 }
 
@@ -778,14 +786,14 @@ int bit_catalogue_init(struct bit_catalogue* this, struct dm_block_manager* bm, 
 	this->index_region_start = superblock->index_region_start;
 	this->nr_bit = __total_bit(superblock->nr_disk_level, superblock->common_ratio, superblock->max_disk_level_capacity);
 
-	max_fd = (this->nr_bit << 1);
+	max_fd = this->nr_bit + __extra_bit(superblock->max_disk_level_capacity);
 	this->bit_validity_table = seg_validator_create(bm, this->start, max_fd);
 	if (!this->bit_validity_table) {
 		err = -ENOMEM;
 		goto bad;
 	}
 
-	this->file_stats = disk_array_create(bm, this->start + __seg_validity_table_blocks(max_fd), this->nr_bit, sizeof(struct file_stat));
+	this->file_stats = disk_array_create(bm, this->start + __seg_validity_table_blocks(max_fd), max_fd, sizeof(struct file_stat));
 	if (!this->file_stats) {
 		err = -ENOMEM;
 		goto bad;
@@ -799,7 +807,7 @@ int bit_catalogue_init(struct bit_catalogue* this, struct dm_block_manager* bm, 
 	this->lsm_catalogue.start = this->index_region_start * SWORNDISK_METADATA_BLOCK_SIZE;
 	this->lsm_catalogue.nr_disk_level = superblock->nr_disk_level;
 	this->lsm_catalogue.common_ratio = superblock->common_ratio;
-	this->lsm_catalogue.max_level_nr_file = __total_bit(1, superblock->common_ratio, superblock->max_disk_level_capacity);
+	this->lsm_catalogue.max_level_nr_file = __total_bit(2, superblock->common_ratio, superblock->max_disk_level_capacity);
 	this->lsm_catalogue.alloc_file = bitc_alloc_file;
 	this->lsm_catalogue.release_file = bitc_release_file;
 	this->lsm_catalogue.set_file_stats = bitc_set_file_stats;
