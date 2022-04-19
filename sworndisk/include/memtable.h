@@ -8,7 +8,7 @@
 #include "hashmap.h"
 #include "lsm_tree.h"
 
-#define DEFAULT_MEMTABLE_CAPACITY 65536
+#define DEFAULT_MEMTABLE_CAPACITY DEFAULT_LSM_FILE_CAPACITY
 
 struct memtable {
     size_t size;

@@ -158,7 +158,7 @@ exit:
 // block index table add file test
 extern int64_t bit_file_cmp(struct bit_file* file1, struct bit_file* file2);
 int block_index_table_add_file_test() {
-    size_t capacity = 65536, i;
+    size_t capacity = 100, i;
     struct lsm_file* file;
     struct lsm_level* level = bit_level_create(0, capacity);
     struct bit_level* bit_level = container_of(level, struct bit_level, lsm_level);
@@ -167,7 +167,7 @@ int block_index_table_add_file_test() {
     for (i = 0; i < (capacity << 1); ++i) {
         get_random_bytes(&first_key, sizeof(first_key));
         get_random_bytes(&last_key, sizeof(last_key));
-        file = bit_file_create(NULL, 0, 0, 0, first_key, last_key, 0);
+        file = bit_file_create(NULL, 0, 0, 0, 0, first_key, last_key);
         level->add_file(level, file);
     }
 
@@ -402,7 +402,7 @@ int block_index_table_catalogue_test(struct lsm_catalogue* catalogue) {
     for (i = 0; i < catalogue->total_file; ++i) {
         catalogue->alloc_file(catalogue, &fd);
         info.id = fd;
-        catalogue->set_file_stats(catalogue, i, &info);
+        catalogue->set_file_stats(catalogue, i, info);
     }
 
     for (i = 0; i < catalogue->total_file; i += 2) {
@@ -519,7 +519,7 @@ int lsm_tree_test(struct lsm_catalogue* catalogue) {
 
     for (i = 0; i < 1000000; ++i) {
         record = record_create(i, NULL, NULL, NULL);
-        lsm_tree->put(lsm_tree, i, record, sizeof(struct record), &replaced, &old);
+        lsm_tree->put(lsm_tree, i, record, &replaced, &old);
     }
 
     for (i = 0; i < 1000000; i += 10000) {

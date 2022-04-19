@@ -135,6 +135,8 @@ struct file_stat {
 	struct list_head node;
 } __packed;
 
+void file_stat_print(struct file_stat stat);
+
 struct bit_catalogue {
 	struct lsm_catalogue lsm_catalogue;
 

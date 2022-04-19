@@ -52,21 +52,29 @@ void process_deferred_bios(struct work_struct *ws) {
 
 	while ((bio = bio_list_pop(&bios))) {
         if (bio_op(bio) == REQ_OP_READ) {
+            down_read(&sworndisk->rwsem);
             r = sworndisk->lsm_tree->search(sworndisk->lsm_tree, bio_get_block_address(bio), &record);
-            if (r)
+            if (r) {
+                up_read(&sworndisk->rwsem);
                 goto bad;
+            }
+                
             bio_set_sector(bio, record.pba * SECTORS_PER_BLOCK + bio_block_sector_offset(bio));
             r = sworndisk->seg_buffer->query_bio(sworndisk->seg_buffer, bio);
             if (!r) {
                 bio_endio(bio);
+                up_read(&sworndisk->rwsem);
                 goto next;
             }
             submit_bio(bio);
+            up_read(&sworndisk->rwsem);
         }
 
         if (bio_op(bio) == REQ_OP_WRITE) {
+            down_write(&sworndisk->rwsem);
             sworndisk->seg_buffer->push_bio(sworndisk->seg_buffer, bio);
             bio_endio(bio);
+            up_write(&sworndisk->rwsem);
         }
 
 next:
@@ -175,6 +183,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 		goto bad;
     }
 
+    init_rwsem(&sworndisk->rwsem);
     spin_lock_init(&sworndisk->lock);
 	bio_list_init(&sworndisk->deferred_bios);
     sworndisk->seg_buffer = segbuf_create(sworndisk);
