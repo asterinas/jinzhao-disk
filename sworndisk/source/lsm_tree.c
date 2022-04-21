@@ -904,20 +904,21 @@ exit:
 
 int lsm_tree_minor_compaction(struct lsm_tree* this) {
     int err = 0;
-    size_t fd, i, len;
+    size_t fd;
     struct lsm_file* file;
     struct lsm_file_builder* builder;
-    struct entry* entries = NULL;
+    struct memtable_rbnode* memtable_rbnode;
+    struct list_head entries;
 
     if (this->levels[0]->is_full(this->levels[0]))
         lsm_tree_major_compaction(this, 0);
 
-    this->memtable->get_all_entry(this->memtable, &entries, &len);
+    this->memtable->get_all_entry(this->memtable, &entries);
     this->catalogue->alloc_file(this->catalogue, &fd);
     builder = this->levels[0]->get_builder(this->levels[0], this->file, this->catalogue->start + fd * this->catalogue->file_size, fd, 0, this->catalogue->get_next_version(this->catalogue));
 
-    for (i = 0; i < len; ++i)
-        builder->add_entry(builder, &entries[i]);
+    list_for_each_entry(memtable_rbnode, &entries, list) 
+        builder->add_entry(builder, (struct entry*)memtable_rbnode);
 
     file = builder->complete(builder);
     this->catalogue->set_file_stats(this->catalogue, file->id, file->get_stats(file));
@@ -926,8 +927,6 @@ int lsm_tree_minor_compaction(struct lsm_tree* this) {
 
     if (builder)
         builder->destroy(builder);
-    if (entries)
-        kfree(entries);
     return err;
 }
 

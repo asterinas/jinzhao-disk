@@ -293,22 +293,15 @@ bool rbtree_memtable_contains(struct memtable* memtable, uint32_t key) {
     return __rbtree_memtable_search(&this->root, key);
 }
 
-int rbtree_memtable_get_all_entry(struct memtable* memtable, struct entry** p_entry, size_t* len) {
-    size_t cur = 0;
+int rbtree_memtable_get_all_entry(struct memtable* memtable, struct list_head* entries) {
     struct memtable_rbnode* memtable_rbnode;
     struct rb_node* node;
     RBTREE_MEMTABLE_THIS_POINTER_DECLARE
 
-    *len = memtable->size;
-    *p_entry = kmalloc(memtable->size * sizeof(struct entry), GFP_KERNEL);
-    if (!(*p_entry))
-        return -ENOMEM;
-
+    INIT_LIST_HEAD(entries);
     for (node = rb_first(&this->root); node; node = rb_next(node)) {
         memtable_rbnode = rb_entry(node, struct memtable_rbnode, node);
-        (*p_entry)[cur].key = memtable_rbnode->key;
-        (*p_entry)[cur].val = memtable_rbnode->val;
-        cur += 1;
+        list_add_tail(&memtable_rbnode->list, entries);
     }
 
     return 0;

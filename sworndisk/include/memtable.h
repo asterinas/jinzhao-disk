@@ -15,7 +15,7 @@ struct memtable {
 
     void* (*put)(struct memtable* memtable, uint32_t key, void* val);
     int (*get)(struct memtable* memtable, uint32_t key, void** p_val);
-    int (*get_all_entry)(struct memtable* memtable, struct entry** p_entry, size_t* len);
+    int (*get_all_entry)(struct memtable* memtable, struct list_head* entries);
     void* (*remove)(struct memtable* memtable, uint32_t ket);
     bool (*contains)(struct memtable* memtable, uint32_t key);
     void (*clear)(struct memtable* memtable);
@@ -44,6 +44,8 @@ struct memtable* radix_tree_memtable_init(struct radix_tree_memtable* this);
 struct memtable_rbnode {
     uint32_t key;
     void* val;
+    struct list_head list;
+
     void (*dtr_fn)(void*);
     struct rb_node node;
 };

@@ -9,8 +9,8 @@
 #include "hashmap.h"
 
 #define DEFAULT_LSM_TREE_NR_DISK_LEVEL 2
-#define DEFAULT_LSM_LEVEL0_NR_FILE 1
-#define DEFAULT_LSM_FILE_CAPACITY 131072
+#define DEFAULT_LSM_LEVEL0_NR_FILE 4
+#define DEFAULT_LSM_FILE_CAPACITY 1048576
 
 // record, lba => (pba, key, iv, mac)
 struct record {
