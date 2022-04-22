@@ -91,7 +91,7 @@ static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
 
     sworndisk = target->private;    
     bio_set_dev(bio, sworndisk->data_dev->bdev);
-    if (bio_op(bio) == REQ_OP_WRITE && bio_sectors(bio) > SECTORS_PER_BLOCK)
+    if (bio_sectors(bio) > SECTORS_PER_BLOCK)
         dm_accept_partial_bio(bio, SECTORS_PER_BLOCK);
 
     switch (bio_op(bio)) {

@@ -41,9 +41,7 @@ void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer)
     if ((this->buffer + this->cur_sector * SECTOR_SIZE) != buffer) {
         memcpy(this->buffer + this->cur_sector * SECTOR_SIZE, buffer, DATA_BLOCK_SIZE);
     } 
-    // sworndisk->cipher->encrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, 
-    //     record->key, AES_GCM_KEY_SIZE, record->iv, record->mac, AES_GCM_AUTH_SIZE, lba);
-    memcpy(this->pipe + this->cur_sector * SECTOR_SIZE, buffer, DATA_BLOCK_SIZE);
+
     sworndisk->metadata->reverse_index_table->set(sworndisk->metadata->reverse_index_table, pba, lba);
 
     this->cur_sector += SECTORS_PER_BLOCK;
@@ -74,27 +72,24 @@ void segbuf_flush_bios(struct segment_buffer* buf) {
         .count = SECTOES_PER_SEGMENT
     };
 
+    memcpy(this->pipe, this->buffer, SEGMENT_BUFFER_SIZE);
     dm_io(&req, 1, &region, &sync_error_bits);
     if (sync_error_bits) 
         DMERR("segment buffer flush error\n");
 }
 
 int segbuf_query_bio(struct segment_buffer* buf, struct bio* bio) {
-    sector_t bi_sector, begin, end, trans;
+    sector_t bi_sector, begin, end;
     DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
 
     bi_sector = bio_get_sector(bio);
     begin = this->cur_segment * SECTOES_PER_SEGMENT;
     end = begin + this->cur_sector;
 
-    if (bi_sector < begin || bi_sector >= end)
+    if (bi_sector < begin || bi_sector + bio_sectors(bio) > end)
         return -ENODATA;
-    
-    trans = min((sector_t)bio_sectors(bio), end - bi_sector);
-    bio_set_data(bio, this->buffer + (bi_sector - begin) * SECTOR_SIZE, trans * SECTOR_SIZE);
-    if (trans < bio_sectors(bio)) {
-        bio_split(bio, trans, GFP_KERNEL, &fs_bio_set);
-    }
+
+    bio_set_data(bio, this->buffer + (bi_sector - begin) * SECTOR_SIZE, bio_get_data_len(bio));
     return 0;
 }
 
