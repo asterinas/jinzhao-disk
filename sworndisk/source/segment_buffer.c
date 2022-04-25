@@ -13,12 +13,32 @@
 
 // assume bio has only one segment
 void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
-    dm_block_t lba;
+    int err = 0;
+    void* buffer;
+    loff_t addr;
+    dm_block_t lba, buf_begin, buf_end;
+    struct record record;
     DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
-    
+
     lba = bio_get_block_address(bio);
-    bio_get_data(bio, this->buffer + (this->cur_sector + bio_block_sector_offset(bio)) * SECTOR_SIZE, bio_get_data_len(bio));
-    buf->push_block(buf, lba, this->buffer + this->cur_sector * SECTOR_SIZE);
+    buffer = this->buffer + this->cur_sector * SECTOR_SIZE;
+    err = sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &record);
+    if (!err) {
+        buf_begin = this->cur_segment * BLOCKS_PER_SEGMENT;
+        buf_end = buf_begin + this->cur_sector / SECTORS_PER_BLOCK;
+
+        if (record.pba < buf_begin || record.pba >= buf_end) {
+            if (bio_sectors(bio) < SECTORS_PER_BLOCK) {
+                addr = record.pba * DATA_BLOCK_SIZE;
+                kernel_read(sworndisk->data_region, buffer, DATA_BLOCK_SIZE, &addr);
+            }
+        } else {
+            buffer = this->buffer + (record.pba - buf_begin) * DATA_BLOCK_SIZE;
+        }
+    }
+
+    bio_get_data(bio, buffer + bio_block_sector_offset(bio) * SECTOR_SIZE, bio_get_data_len(bio));
+    buf->push_block(buf, lba, buffer);
 }
 
 void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer) {
@@ -27,6 +47,9 @@ void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer)
     bool replaced;
     struct record* record, old;
     DEFAULT_SEGMENT_BUFFER_THIS_POINT_DECLARE
+
+    if (buffer >= this->buffer && buffer < this->buffer + this->cur_sector * SECTOR_SIZE)
+        return;
 
     pba = (this->cur_segment * SECTOES_PER_SEGMENT + this->cur_sector) / SECTORS_PER_BLOCK;    
     record = record_create(pba, NULL, NULL, NULL);
