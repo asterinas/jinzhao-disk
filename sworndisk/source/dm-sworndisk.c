@@ -33,7 +33,6 @@ void defer_bio(struct dm_sworndisk_target *sworndisk, struct bio *bio) {
     spin_unlock_irqrestore(&sworndisk->lock, flags);
     queue_work(sworndisk->wq, &sworndisk->deferred_bio_worker);
 }
-
 void process_deferred_bios(struct work_struct *ws) {
     int r; 
 	unsigned long flags;
@@ -87,12 +86,15 @@ bad:
 
 static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
 {
+    sector_t block_aligned;
     struct dm_sworndisk_target* sworndisk;
 
     sworndisk = target->private;    
     bio_set_dev(bio, sworndisk->data_dev->bdev);
-    if (bio_sectors(bio) > SECTORS_PER_BLOCK)
-        dm_accept_partial_bio(bio, SECTORS_PER_BLOCK);
+
+    block_aligned = SECTORS_PER_BLOCK - bio_block_sector_offset(bio);
+    if (bio_sectors(bio) > block_aligned)
+        dm_accept_partial_bio(bio, block_aligned);
 
     switch (bio_op(bio)) {
         case REQ_OP_READ:
@@ -153,15 +155,24 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
             goto bad;
     }
 
+    sworndisk->data_region = filp_open(argv[0], O_RDWR, 0);
+    if (!sworndisk->data_region) {
+        target->error = "could not open sworndisk data region";
+        ret = -EAGAIN;
+		goto bad;
+    }
+
     sworndisk->metadata = metadata_create(sworndisk->metadata_dev->bdev);
     if (!sworndisk->metadata) {
         target->error = "could not create sworndisk metadata";
+        ret = -EAGAIN;
 		goto bad;
     }
 
     sworndisk->wq = alloc_workqueue("dm-" DM_MSG_PREFIX, WQ_MEM_RECLAIM, 0);
 	if (!sworndisk->wq) {
 		target->error = "could not create workqueue for sworndisk";
+        ret = -EAGAIN;
 		goto bad;
 	}
 
@@ -174,6 +185,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
     sworndisk->cipher = aes_gcm_cipher_init(kmalloc(sizeof(struct aes_gcm_cipher), GFP_KERNEL));
     if (!sworndisk->cipher) {
         target->error = "could not create sworndisk cipher";
+        ret = -EAGAIN;
 		goto bad;
     }
     sworndisk->seg_allocator = sa_create(sworndisk);
@@ -188,7 +200,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 	bio_list_init(&sworndisk->deferred_bios);
     sworndisk->seg_buffer = segbuf_create(sworndisk);
     if (!sworndisk->seg_buffer) {
-        target->error = "could not create sworndisk segment allocator";
+        target->error = "could not create sworndisk segment buffer";
         ret = -EAGAIN;
         goto bad;
     } 
@@ -198,6 +210,8 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
     return 0;
 
 bad:
+    if (sworndisk->data_region)
+        filp_close(sworndisk->data_region, NULL);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
     if (sworndisk->wq) 
@@ -221,6 +235,8 @@ bad:
 static void dm_sworndisk_target_dtr(struct dm_target *ti)
 {
     struct dm_sworndisk_target *sworndisk = (struct dm_sworndisk_target *) ti->private;
+    if (sworndisk->data_region)
+        filp_close(sworndisk->data_region, NULL);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
     if (sworndisk->wq) 
