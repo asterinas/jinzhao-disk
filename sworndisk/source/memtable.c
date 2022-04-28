@@ -5,7 +5,7 @@
 #include "../include/memtable.h"
 #include "../include/crypto.h"
 
-// memtable value definition
+// memtable record definition
 void __copy_or_random(void* dst, void* src, size_t len) {
     if (src == NULL) {
         get_random_bytes(dst, len);

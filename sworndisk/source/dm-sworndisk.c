@@ -33,6 +33,53 @@ void defer_bio(struct dm_sworndisk_target *sworndisk, struct bio *bio) {
     spin_unlock_irqrestore(&sworndisk->lock, flags);
     queue_work(sworndisk->wq, &sworndisk->deferred_bio_worker);
 }
+
+struct sworndisk_read_work {
+    struct bio* bio;
+    struct record record;
+    struct dm_sworndisk_target* sworndisk;
+    struct work_struct work;
+};
+
+void sworndisk_read_work_fn(struct work_struct* ws);
+struct sworndisk_read_work* sworndisk_read_work_create(struct dm_sworndisk_target* sworndisk, struct bio* bio, struct record record) {
+    struct sworndisk_read_work* read_work = kmalloc(sizeof(struct sworndisk_read_work), GFP_KERNEL);
+
+    if (!read_work)
+        return NULL;
+
+    *read_work = (struct sworndisk_read_work) {
+        .sworndisk = sworndisk,
+        .bio = bio,
+        .record = record
+    };
+    INIT_WORK(&read_work->work, sworndisk_read_work_fn);
+    return read_work;
+}
+
+void sworndisk_read_work_fn(struct work_struct* ws) {
+    struct sworndisk_read_work* ctx = container_of(ws, struct sworndisk_read_work, work);
+    struct dm_sworndisk_target* sworndisk = ctx->sworndisk;
+    struct bio* bio = ctx->bio;
+    struct record record = ctx->record;
+    loff_t addr = record.pba * DATA_BLOCK_SIZE;
+    void* buffer = kmalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
+
+    if (!buffer)
+        goto exit;
+
+    kernel_read(sworndisk->data_region, buffer, DATA_BLOCK_SIZE, &addr);
+    sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, 
+        record.key, AES_GCM_KEY_SIZE, record.iv, AES_GCM_IV_SIZE, record.mac, AES_GCM_AUTH_SIZE, record.pba);
+    bio_set_data(bio, buffer + bio_block_sector_offset(bio) * SECTOR_SIZE, bio_get_data_len(bio));
+
+exit:
+    if (buffer)
+        kfree(buffer);
+    bio_endio(bio);
+    up_read(&sworndisk->rwsem);
+}
+
 void process_deferred_bios(struct work_struct *ws) {
     int r; 
 	unsigned long flags;
@@ -51,6 +98,9 @@ void process_deferred_bios(struct work_struct *ws) {
 
 	while ((bio = bio_list_pop(&bios))) {
         if (bio_op(bio) == REQ_OP_READ) {
+            dm_block_t lba = bio_get_block_address(bio);
+            struct sworndisk_read_work* read_work;
+
             down_read(&sworndisk->rwsem);
             r = sworndisk->lsm_tree->search(sworndisk->lsm_tree, bio_get_block_address(bio), &record);
             if (r) {
@@ -65,8 +115,13 @@ void process_deferred_bios(struct work_struct *ws) {
                 up_read(&sworndisk->rwsem);
                 goto next;
             }
-            submit_bio(bio);
-            up_read(&sworndisk->rwsem);
+
+            DMINFO("read work on %lld", lba);
+            read_work = sworndisk_read_work_create(sworndisk, bio, record);
+            if (read_work)
+                schedule_work(&read_work->work);
+            else 
+                up_read(&sworndisk->rwsem);
         }
 
         if (bio_op(bio) == REQ_OP_WRITE) {
@@ -210,18 +265,21 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
     return 0;
 
 bad:
-    if (sworndisk->data_region)
-        filp_close(sworndisk->data_region, NULL);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
     if (sworndisk->wq) 
         destroy_workqueue(sworndisk->wq);
+    if (sworndisk->seg_allocator)
+        sworndisk->seg_allocator->destroy(sworndisk->seg_allocator);
+    if (sworndisk->data_region)
+        filp_close(sworndisk->data_region, NULL);
     if (sworndisk->lsm_tree) 
         sworndisk->lsm_tree->destroy(sworndisk->lsm_tree);
     if (sworndisk->metadata)
         metadata_destroy(sworndisk->metadata);
-    if (sworndisk->seg_allocator)
-        sworndisk->seg_allocator->destroy(sworndisk->seg_allocator);
+
+    dm_put_device(target, sworndisk->data_dev);
+    dm_put_device(target, sworndisk->metadata_dev);
     if (sworndisk)
         kfree(sworndisk);
     DMERR("Exit : %s with ERROR", __func__);
@@ -235,18 +293,18 @@ bad:
 static void dm_sworndisk_target_dtr(struct dm_target *ti)
 {
     struct dm_sworndisk_target *sworndisk = (struct dm_sworndisk_target *) ti->private;
-    if (sworndisk->data_region)
-        filp_close(sworndisk->data_region, NULL);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
     if (sworndisk->wq) 
         destroy_workqueue(sworndisk->wq);
+    if (sworndisk->seg_allocator)
+        sworndisk->seg_allocator->destroy(sworndisk->seg_allocator);
+    if (sworndisk->data_region)
+        filp_close(sworndisk->data_region, NULL);
     if (sworndisk->lsm_tree) 
         sworndisk->lsm_tree->destroy(sworndisk->lsm_tree);
     if (sworndisk->metadata)
         metadata_destroy(sworndisk->metadata);
-    if (sworndisk->seg_allocator)
-        sworndisk->seg_allocator->destroy(sworndisk->seg_allocator);
 
     dm_put_device(ti, sworndisk->data_dev);
     dm_put_device(ti, sworndisk->metadata_dev);

@@ -29,42 +29,26 @@ sector_t bio_block_sector_offset(struct bio* bio) {
 }
 
 void __bio_data_transfer(struct bio* bio, char* buffer, size_t len) {
-    bool has_next;
     char* kaddr;
-    size_t offset;
-    struct bio *total, *split;
+    size_t offset = 0;
+    struct bio *total = NULL, *split = NULL;
 
     total = bio_clone_fast(bio, GFP_KERNEL, &fs_bio_set);
-    if (IS_ERR_OR_NULL(total))
-        return;
-    
-    offset = 0;
-    has_next = true;
-next:
-    if (bio_sectors(total) > 1) {
-        split = bio_split(total, 1, GFP_KERNEL, &fs_bio_set);
-        if (IS_ERR_OR_NULL(split))
+    while (split != total) {
+        split = (bio_sectors(total) > 1 ? bio_split(total, 1, GFP_KERNEL, &fs_bio_set) : total);
+        if (offset + bio_get_data_len(split) > len)
             return;
-    } else {
-        split = total;
-        has_next = false;
-    }
 
-    if (offset + bio_get_data_len(split) > len)
-        return;
+        kaddr = kmap_atomic(bio_page(split));
+        if (bio_op(bio) == REQ_OP_WRITE)
+            memcpy(buffer + offset, kaddr + bio_offset(split), bio_get_data_len(split));
+        else if(bio_op(bio) == REQ_OP_READ)
+            memcpy(kaddr + bio_offset(split), buffer + offset, bio_get_data_len(split));
+        kunmap_atomic(kaddr);
 
-    kaddr = kmap_atomic(bio_page(split));
-    if (bio_op(bio) == REQ_OP_WRITE)
-        memcpy(buffer + offset, kaddr + bio_offset(split), bio_get_data_len(split));
-    else if(bio_op(bio) == REQ_OP_READ)
-        memcpy(kaddr + bio_offset(split), buffer + offset, bio_get_data_len(split));
-    kunmap_atomic(kaddr);
-
-    offset += bio_get_data_len(split);
-    bio_put(split);
-
-    if (has_next)
-        goto next;
+        offset += bio_get_data_len(split);
+        bio_put(split);
+    }   
 }
 
 void bio_get_data(struct bio* bio, char* buffer, size_t len) {

@@ -21,7 +21,7 @@ int aes_gcm_get_random_iv(char** p_iv, int iv_len) {
     return __get_random_bytes(p_iv, iv_len);
 }
 
-int aes_gcm_cipher_encrypt(struct aead_cipher *ac, char* data, int len, char* key, int key_len, char* iv, char* mac, int mac_len, uint64_t seq) {
+int aes_gcm_cipher_encrypt(struct aead_cipher *ac, char* data, int len, char* key, int key_len, char* iv, int iv_len, char* mac, int mac_len, uint64_t seq) {
     int r;
     struct aead_request* req;
     struct scatterlist sg[AEAD_MSG_NR_PART];
@@ -34,12 +34,12 @@ int aes_gcm_cipher_encrypt(struct aead_cipher *ac, char* data, int len, char* ke
     }
     sg_init_table(sg, AEAD_MSG_NR_PART);
     sg_set_buf(&sg[0], &seq, sizeof(uint64_t));
-    sg_set_buf(&sg[1], iv, AES_GCM_IV_SIZE);
+    sg_set_buf(&sg[1], iv, iv_len);
     sg_set_buf(&sg[2], data, len);
     sg_set_buf(&sg[3], mac, mac_len);
     
     aead_request_set_crypt(req, sg, sg, len, iv);
-    aead_request_set_ad(req, sizeof(uint64_t)+AES_GCM_IV_SIZE);
+    aead_request_set_ad(req, sizeof(uint64_t)+iv_len);
 
     r = crypto_aead_setkey(ag->tfm, key, key_len);
     if (r) {
@@ -57,7 +57,7 @@ exit:
     return r;
 }
 
-int aes_gcm_cipher_decrypt(struct aead_cipher *ac, char* data, int len, char* key, int key_len, char* iv, char* mac, int mac_len, uint64_t seq) {
+int aes_gcm_cipher_decrypt(struct aead_cipher *ac, char* data, int len, char* key, int key_len, char* iv, int iv_len, char* mac, int mac_len, uint64_t seq) {
     int r;
     struct aead_request* req;
     struct scatterlist sg[AEAD_MSG_NR_PART];
@@ -70,12 +70,12 @@ int aes_gcm_cipher_decrypt(struct aead_cipher *ac, char* data, int len, char* ke
     }
     sg_init_table(sg, AEAD_MSG_NR_PART);
     sg_set_buf(&sg[0], &seq, sizeof(uint64_t));
-    sg_set_buf(&sg[1], iv, AES_GCM_IV_SIZE);
+    sg_set_buf(&sg[1], iv, iv_len);
     sg_set_buf(&sg[2], data, len);
     sg_set_buf(&sg[3], mac, mac_len);
 
     aead_request_set_crypt(req, sg, sg, len+mac_len, iv);
-    aead_request_set_ad(req, sizeof(uint64_t)+AES_GCM_IV_SIZE);
+    aead_request_set_ad(req, sizeof(uint64_t) + iv_len);
 
     r = crypto_aead_setkey(ag->tfm, key, key_len);
     if (r) {

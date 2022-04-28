@@ -11,8 +11,8 @@
 #define AES_GCM_AUTH_SIZE 16
 
 struct aead_cipher {
-    int (*encrypt)(struct aead_cipher* ci, char* data, int len, char* key, int key_len, char* iv, char* mac, int mac_len, uint64_t seq);
-    int (*decrypt)(struct aead_cipher* ci, char* data, int len, char* key, int key_len, char* iv, char* mac, int mac_len, uint64_t seq);
+    int (*encrypt)(struct aead_cipher* ci, char* data, int len, char* key, int key_len, char* iv, int iv_len, char* mac, int mac_len, uint64_t seq);
+    int (*decrypt)(struct aead_cipher* ci, char* data, int len, char* key, int key_len, char* iv, int iv_len, char* mac, int mac_len, uint64_t seq);
     int (*get_random_key)(char** p_key, int key_len);
     int (*get_random_iv)(char** p_iv, int iv_len);
 };
