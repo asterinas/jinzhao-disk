@@ -78,6 +78,8 @@ exit:
         kfree(buffer);
     bio_endio(bio);
     up_read(&sworndisk->rwsem);
+    if (ctx)
+        kfree(ctx);
 }
 
 void process_deferred_bios(struct work_struct *ws) {
@@ -85,8 +87,6 @@ void process_deferred_bios(struct work_struct *ws) {
 	unsigned long flags;
 	struct bio_list bios;
 	struct bio* bio;
-    
-    struct record record;
     struct dm_sworndisk_target *sworndisk;
 
     sworndisk = container_of(ws, struct dm_sworndisk_target, deferred_bio_worker);
@@ -98,7 +98,7 @@ void process_deferred_bios(struct work_struct *ws) {
 
 	while ((bio = bio_list_pop(&bios))) {
         if (bio_op(bio) == REQ_OP_READ) {
-            dm_block_t lba = bio_get_block_address(bio);
+            struct record record = {0};
             struct sworndisk_read_work* read_work;
 
             down_read(&sworndisk->rwsem);
@@ -116,7 +116,6 @@ void process_deferred_bios(struct work_struct *ws) {
                 goto next;
             }
 
-            DMINFO("read work on %lld", lba);
             read_work = sworndisk_read_work_create(sworndisk, bio, record);
             if (read_work)
                 schedule_work(&read_work->work);
@@ -210,7 +209,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
             goto bad;
     }
 
-    sworndisk->data_region = filp_open(argv[0], O_RDWR, 0);
+    sworndisk->data_region = filp_open(argv[0], O_RDWR | O_LARGEFILE, 0);
     if (!sworndisk->data_region) {
         target->error = "could not open sworndisk data region";
         ret = -EAGAIN;

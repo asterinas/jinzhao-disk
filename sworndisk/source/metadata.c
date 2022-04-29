@@ -536,6 +536,9 @@ int data_segment_table_return_block(struct data_segment_table* this, dm_block_t 
 	victim = this->remove_victim(this, segment_id);
 	victim_destroy(victim);
 	
+	if (!victim && entry->nr_valid_block < BLOCKS_PER_SEGMENT - 1)
+		goto exit;
+
 	victim = victim_create(segment_id, entry->nr_valid_block, entry->block_validity_table);
 	if (IS_ERR_OR_NULL(victim)) {
 		err = -ENOMEM;

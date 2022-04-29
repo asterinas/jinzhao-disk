@@ -2,6 +2,7 @@
 
 #include "../include/dm_sworndisk.h"
 #include "../include/crypto.h"
+#include "../include/segment_buffer.h"
 
 int __get_random_bytes(char** p_data, unsigned int len) {
     *p_data = kzalloc(len+1, GFP_KERNEL);
@@ -84,7 +85,15 @@ int aes_gcm_cipher_decrypt(struct aead_cipher *ac, char* data, int len, char* ke
     }
     r = crypto_aead_decrypt(req);
     if (r == -EBADMSG) {
-        DMERR("gcm(aes) authentication failed");
+        char mac_hex[(AES_GCM_AUTH_SIZE << 1) + 1] = {0};
+        char key_hex[(AES_GCM_KEY_SIZE << 1) + 1] = {0};
+        char iv_hex[(AES_GCM_IV_SIZE << 1) + 1] = {0};
+
+        btox(key_hex, key, AES_GCM_KEY_SIZE << 1);
+        btox(iv_hex, iv, AES_GCM_IV_SIZE << 1);
+        btox(mac_hex, mac, AES_GCM_AUTH_SIZE << 1);
+        DMWARN("gcm(aes) authentication failed, key: %s, iv: %s, mac: %s, seq: %llu, checksum: %u", 
+            key_hex, iv_hex, mac_hex, seq, dm_bm_checksum(data, len, 0));
         goto exit;
     } else if (r) {
         DMERR("gcm(aes) decryption error\n");

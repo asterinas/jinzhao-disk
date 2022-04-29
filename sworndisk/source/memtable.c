@@ -17,7 +17,7 @@ void __copy_or_random(void* dst, void* src, size_t len) {
 struct record* record_create(dm_block_t pba, char* key, char* iv, char* mac) {
     struct record* record;
 
-    record = (struct record*) kmalloc(sizeof(struct record), GFP_KERNEL);
+    record = (struct record*) kzalloc(sizeof(struct record), GFP_KERNEL);
     if (!record) {
         DMERR("memtable value create alloc mem error\n");
         return NULL;
@@ -38,7 +38,7 @@ struct record* record_copy(struct record* old) {
     if (!old)
         return NULL;
 
-    new = kmalloc(sizeof(struct record), GFP_KERNEL);
+    new = kzalloc(sizeof(struct record), GFP_KERNEL);
     if (!new)
         return NULL;
     

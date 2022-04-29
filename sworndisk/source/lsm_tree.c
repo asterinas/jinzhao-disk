@@ -1,10 +1,15 @@
 #include <linux/bsearch.h>
+#include <linux/slab.h>
+#include <linux/mempool.h>
 
 #include "../include/dm_sworndisk.h"
 #include "../include/lsm_tree.h"
 #include "../include/segment_buffer.h"
 #include "../include/memtable.h"
 #include "../include/metadata.h"
+
+struct kmem_cache* builder_buffer_cache;
+static mempool_t* builder_buffer_mempool;
 
 // block index table node implementaion
 void bit_node_print(struct bit_node* bit_node) {
@@ -71,7 +76,7 @@ struct bit_node __bit_inner(struct bit_builder_context* ctx) {
 void bit_builder_buffer_flush_if_full(struct bit_builder* this) {
     loff_t pos = this->begin;
 
-    if (this->cur + this->height * sizeof(struct bit_node) > DEFAULT_BIT_BUILDER_BUFFER_SIZE) {
+    if (this->cur + this->height * sizeof(struct bit_node) > DEFAULT_LSM_FILE_BUILDER_BUFFER_SIZE) {
         kernel_write(this->file, this->buffer, this->cur, &pos);
         this->begin += this->cur;
         this->cur = 0;
@@ -176,7 +181,7 @@ int bit_builder_init(struct bit_builder* this, struct file* file, size_t begin, 
     this->has_first_key = false;
     this->height = __bit_height(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE);
 
-    this->buffer = kmalloc(DEFAULT_BIT_BUILDER_BUFFER_SIZE, GFP_KERNEL);
+    this->buffer = mempool_alloc(builder_buffer_mempool, GFP_KERNEL);
     if (!this->buffer) {
         err = -ENOMEM;
         goto bad;
@@ -196,7 +201,7 @@ int bit_builder_init(struct bit_builder* this, struct file* file, size_t begin, 
     return 0;
 bad:
     if (this->buffer)
-        kfree(this->buffer);
+        mempool_free(this->buffer, builder_buffer_mempool);
     if (this->ctx)
         kfree(this->ctx);
     return err;
@@ -983,6 +988,10 @@ void lsm_tree_destroy(struct lsm_tree* this) {
         }
         if (this->file)
             filp_close(this->file, NULL);
+        if (builder_buffer_mempool)
+            mempool_destroy(builder_buffer_mempool); 
+        if (builder_buffer_cache)
+            kmem_cache_destroy(builder_buffer_cache);
         kfree(this);
     }
 }
@@ -999,6 +1008,13 @@ int lsm_tree_init(struct lsm_tree* this, const char* filename, struct lsm_catalo
         err = -EINVAL;
         goto bad;
     }
+
+    builder_buffer_cache = kmem_cache_create("builder_buffer", DEFAULT_LSM_FILE_BUILDER_BUFFER_SIZE, 0, SLAB_RED_ZONE, NULL);
+    if (!builder_buffer_cache)
+        goto bad;
+    builder_buffer_mempool = mempool_create_slab_pool(DEFAULT_LSM_FILE_BUILDER_BUFFER_MEMPOOL_SIZE, builder_buffer_cache);
+    if (!builder_buffer_mempool)
+        goto bad;
 
     this->catalogue = catalogue;
     this->memtable = rbtree_memtable_create(DEFAULT_MEMTABLE_CAPACITY);
@@ -1033,6 +1049,11 @@ bad:
         filp_close(this->file, NULL);
     if (this->levels) 
         kfree(this->levels);
+    if (builder_buffer_mempool)
+        mempool_destroy(builder_buffer_mempool); 
+    if (builder_buffer_cache)
+        kmem_cache_destroy(builder_buffer_cache);
+
     return err;
 }
 

@@ -34,8 +34,7 @@ int sa_get_next_free_segment(struct segment_allocator* al, size_t *seg) {
 }
 
 void sa_clean(struct segment_allocator* al) {
-    int r;
-    bool valid;
+    int err;
     size_t clean = 0;
     struct victim* victim = NULL;
     void* buffer = kmalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
@@ -45,8 +44,9 @@ void sa_clean(struct segment_allocator* al) {
     if (!buffer) goto exit;
     while(clean < LEAST_CLEAN_SEGMENT_ONCE && 
       !sworndisk->metadata->data_segment_table->victim_empty(sworndisk->metadata->data_segment_table)) {
-        victim = sworndisk->metadata->data_segment_table->pop_victim(sworndisk->metadata->data_segment_table);
+        bool valid;
 
+        victim = sworndisk->metadata->data_segment_table->pop_victim(sworndisk->metadata->data_segment_table);
         if (victim->nr_valid_block) {
             size_t offset;
 
@@ -57,24 +57,20 @@ void sa_clean(struct segment_allocator* al) {
                 struct record record;
 
                 pba = victim->segment_id * BLOCKS_PER_SEGMENT + offset;
-                sworndisk->metadata->reverse_index_table->get(sworndisk->metadata->reverse_index_table, pba, &lba);
-
                 addr = pba * DATA_BLOCK_SIZE;
                 kernel_read(sworndisk->data_region, buffer, DATA_BLOCK_SIZE, &addr);
-
+                sworndisk->metadata->reverse_index_table->get(sworndisk->metadata->reverse_index_table, pba, &lba);
                 sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &record);
-                sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, 
+                err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, 
                     record.key, AES_GCM_KEY_SIZE, record.iv, AES_GCM_IV_SIZE, record.mac, AES_GCM_AUTH_SIZE, record.pba);
-                sworndisk->seg_buffer->push_block(sworndisk->seg_buffer, lba, buffer);
+                if (!err)
+                    sworndisk->seg_buffer->push_block(sworndisk->seg_buffer, lba, buffer);
                 offset = find_next_bit(victim->block_validity_table, BLOCKS_PER_SEGMENT, offset + 1);
             }
         }
 
-        r = sworndisk->metadata->seg_validator->test_and_return(sworndisk->metadata->seg_validator, victim->segment_id, &valid);
-        if (r)
-            goto exit;
-
-        if (valid) {
+        err = sworndisk->metadata->seg_validator->test_and_return(sworndisk->metadata->seg_validator, victim->segment_id, &valid);
+        if (!err && valid) {
             clean += 1;
             this->nr_valid_segment -= 1;
         }
@@ -98,20 +94,12 @@ void sa_destroy(struct segment_allocator* al) {
     if (!IS_ERR_OR_NULL(this)) {
         if (!IS_ERR_OR_NULL(this->io_client))
             dm_io_client_destroy(this->io_client);
-        if (!IS_ERR_OR_NULL(this->buffer))
-            kfree(this->buffer);
         kfree(this);
     }
 }
 
 int sa_init(struct default_segment_allocator* this, struct dm_sworndisk_target* sworndisk) {
     int err = 0;
-
-    this->buffer = kmalloc(SEGMENT_BUFFER_SIZE, GFP_KERNEL);
-    if (!this->buffer) {
-        err = -ENOMEM;
-        goto bad;
-    }
     
     this->io_client = dm_io_client_create();
     if (IS_ERR_OR_NULL(this->io_client)) {
@@ -131,8 +119,6 @@ int sa_init(struct default_segment_allocator* this, struct dm_sworndisk_target* 
 
     return 0;
 bad:
-    if (this->buffer)
-        kfree(this->buffer);
     if (this->io_client)
         dm_io_client_destroy(this->io_client);
     return err;

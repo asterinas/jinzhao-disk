@@ -15,10 +15,10 @@
 // record, lba => (pba, key, iv, mac)
 struct record {
     dm_block_t pba; // physical block address
-    char mac[AES_GCM_AUTH_SIZE];
-    char key[AES_GCM_KEY_SIZE];
-    char iv[AES_GCM_IV_SIZE];
-};  
+    char mac[AES_GCM_AUTH_SIZE + 1];
+    char key[AES_GCM_KEY_SIZE + 1];
+    char iv[AES_GCM_IV_SIZE + 1];
+} __packed;  
 
 struct record* record_create(dm_block_t pba, char* key, char* iv, char* mac);
 struct record* record_copy(struct record* old);
@@ -100,6 +100,8 @@ struct bit_file {
 
 struct lsm_file* bit_file_create(struct file* file, loff_t root, size_t id, size_t level, size_t version, uint32_t first_key, uint32_t last_key);
 
+#define DEFAULT_LSM_FILE_BUILDER_BUFFER_MEMPOOL_SIZE 2
+#define DEFAULT_LSM_FILE_BUILDER_BUFFER_SIZE (SEGMENT_BUFFER_SIZE >> 4)
 struct lsm_file_builder {
     size_t size;
 
@@ -114,7 +116,6 @@ struct bit_builder_context {
     struct bit_node nodes[DEFAULT_BIT_DEGREE];
 };
 
-#define DEFAULT_BIT_BUILDER_BUFFER_SIZE (SEGMENT_BUFFER_SIZE >> 2)
 struct bit_builder {
     struct lsm_file_builder lsm_file_builder;
 
