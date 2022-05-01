@@ -24,17 +24,17 @@ do
 		# touch disk0
 		# touch disk1
 		# dd if=/dev/zero of=/dev/sdb6 bs=1M count=10240 # 10GB file
-		dd if=/dev/zero of=/dev/sdb5 bs=1M count=5120 # 5GB file
+		dd if=/dev/zero of=/dev/sdb5 bs=1M count=3072 # 5GB file
 		# losetup /dev/loop0 disk0
 		# losetup /dev/loop1 disk1 
 		;;
 	w)
 		# dd if=/dev/urandom of=/dev/mapper/sworndisk  bs=512 count=100
-		dd if=/home/lnhoo/Downloads/linux-5.17.1.tar.xz of=/dev/mapper/sworndisk bs=128386124 count=1
+		dd if=/home/lnhoo/dream.txt of=/dev/mapper/sworndisk bs=8624271 count=1
 		# dd if=/dev/urandom of=/dev/mapper/sworndisk  bs=64K count=1280
 		;;
 	r)
-		dd if=/dev/mapper/sworndisk of=out bs=128386124 count=1
+		dd if=/dev/mapper/sworndisk of=out bs=8624271 count=1
 		;;
 	h)
 		;;
