@@ -58,28 +58,25 @@ struct sworndisk_read_work* sworndisk_read_work_create(struct dm_sworndisk_targe
 }
 
 void sworndisk_read_work_fn(struct work_struct* ws) {
+    int err = 0;
     struct sworndisk_read_work* ctx = container_of(ws, struct sworndisk_read_work, work);
     struct dm_sworndisk_target* sworndisk = ctx->sworndisk;
     struct bio* bio = ctx->bio;
     struct record record = ctx->record;
     loff_t addr = record.pba * DATA_BLOCK_SIZE;
-    void* buffer = kmalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
-
-    if (!buffer)
-        goto exit;
+    void* buffer = kzalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
 
     kernel_read(sworndisk->data_region, buffer, DATA_BLOCK_SIZE, &addr);
-    sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, 
-        record.key, AES_GCM_KEY_SIZE, record.iv, AES_GCM_IV_SIZE, record.mac, AES_GCM_AUTH_SIZE, record.pba);
-    bio_set_data(bio, buffer + bio_block_sector_offset(bio) * SECTOR_SIZE, bio_get_data_len(bio));
+    err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, record.key, record.iv, record.mac, record.pba, buffer);
+    if (!err)
+        bio_set_data(bio, buffer + bio_block_sector_offset(bio) * SECTOR_SIZE, bio_get_data_len(bio));
 
-exit:
     if (buffer)
         kfree(buffer);
-    bio_endio(bio);
-    up_read(&sworndisk->rwsem);
     if (ctx)
         kfree(ctx);
+    bio_endio(bio);
+    up_read(&sworndisk->rwsem);
 }
 
 void process_deferred_bios(struct work_struct *ws) {
@@ -118,9 +115,10 @@ void process_deferred_bios(struct work_struct *ws) {
 
             read_work = sworndisk_read_work_create(sworndisk, bio, record);
             if (read_work)
-                schedule_work(&read_work->work);
-            else 
+                queue_work(sworndisk->wq, &read_work->work);
+            else {
                 up_read(&sworndisk->rwsem);
+            }
         }
 
         if (bio_op(bio) == REQ_OP_WRITE) {
@@ -236,7 +234,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
         ret = -EAGAIN;
 		goto bad;
     }
-    sworndisk->cipher = aes_gcm_cipher_init(kmalloc(sizeof(struct aes_gcm_cipher), GFP_KERNEL));
+    sworndisk->cipher = aes_gcm_cipher_create();
     if (!sworndisk->cipher) {
         target->error = "could not create sworndisk cipher";
         ret = -EAGAIN;
@@ -276,6 +274,8 @@ bad:
         sworndisk->lsm_tree->destroy(sworndisk->lsm_tree);
     if (sworndisk->metadata)
         metadata_destroy(sworndisk->metadata);
+    if (sworndisk->cipher)
+        sworndisk->cipher->destroy(sworndisk->cipher);
 
     dm_put_device(target, sworndisk->data_dev);
     dm_put_device(target, sworndisk->metadata_dev);
@@ -304,6 +304,8 @@ static void dm_sworndisk_target_dtr(struct dm_target *ti)
         sworndisk->lsm_tree->destroy(sworndisk->lsm_tree);
     if (sworndisk->metadata)
         metadata_destroy(sworndisk->metadata);
+    if (sworndisk->cipher)
+        sworndisk->cipher->destroy(sworndisk->cipher);
 
     dm_put_device(ti, sworndisk->data_dev);
     dm_put_device(ti, sworndisk->metadata_dev);

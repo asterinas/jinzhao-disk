@@ -1,4 +1,6 @@
 #include <linux/random.h>
+#include <linux/delay.h>
+#include <linux/semaphore.h>
 
 #include "../include/dm_sworndisk.h"
 #include "../include/crypto.h"
@@ -22,68 +24,101 @@ int aes_gcm_get_random_iv(char** p_iv, int iv_len) {
     return __get_random_bytes(p_iv, iv_len);
 }
 
-int aes_gcm_cipher_encrypt(struct aead_cipher *ac, char* data, int len, char* key, int key_len, char* iv, int iv_len, char* mac, int mac_len, uint64_t seq) {
+int aes_gcm_cipher_encrypt(struct aead_cipher *ac, char* data, int len, char* key, char* iv, char* mac, uint64_t seq, char* out) {
     int r;
     struct aead_request* req;
-    struct scatterlist sg[AEAD_MSG_NR_PART];
-    struct aes_gcm_cipher* ag = container_of(ac, struct aes_gcm_cipher, interface);
+    struct scatterlist sg_in[AEAD_MSG_NR_PART], sg_out[AEAD_MSG_NR_PART];
+    DECLARE_CRYPTO_WAIT(wait);
+    struct aes_gcm_cipher* this = container_of(ac, struct aes_gcm_cipher, aead_cipher);
 
-    req = aead_request_alloc(ag->tfm, GFP_KERNEL);
+    sg_init_table(sg_in, AEAD_MSG_NR_PART);
+    sg_set_buf(&sg_in[0], &seq, sizeof(uint64_t));
+    sg_set_buf(&sg_in[1], iv, this->iv_size);
+    sg_set_buf(&sg_in[2], data, len);
+    sg_set_buf(&sg_in[3], mac, this->auth_size);
+
+    sg_init_table(sg_out, AEAD_MSG_NR_PART);
+    sg_set_buf(&sg_out[0], &seq, sizeof(uint64_t));
+    sg_set_buf(&sg_out[1], iv, this->iv_size);
+    sg_set_buf(&sg_out[2], out, len);
+    sg_set_buf(&sg_out[3], mac, this->auth_size);
+
+    r = mutex_lock_interruptible(&this->lock);
+    if (r)
+        goto exit;
+    
+    crypto_aead_setauthsize(this->tfm, this->auth_size);
+    req = aead_request_alloc(this->tfm, GFP_KERNEL);
     if (!req) {
         DMERR("could not allocate aead request\n");
         goto exit;
     }
-    sg_init_table(sg, AEAD_MSG_NR_PART);
-    sg_set_buf(&sg[0], &seq, sizeof(uint64_t));
-    sg_set_buf(&sg[1], iv, iv_len);
-    sg_set_buf(&sg[2], data, len);
-    sg_set_buf(&sg[3], mac, mac_len);
     
-    aead_request_set_crypt(req, sg, sg, len, iv);
-    aead_request_set_ad(req, sizeof(uint64_t)+iv_len);
+    aead_request_set_crypt(req, sg_in, sg_out, len, iv);
+    aead_request_set_ad(req, sizeof(uint64_t) + this->iv_size);
 
-    r = crypto_aead_setkey(ag->tfm, key, key_len);
+    r = crypto_aead_setkey(this->tfm, key, this->key_size);
     if (r) {
         DMERR("gcm(aes) key could not be set\n");
         goto exit;
     }
-    r = crypto_aead_encrypt(req);
+
+    aead_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG | CRYPTO_TFM_REQ_MAY_SLEEP, crypto_req_done, &wait);
+    r = crypto_wait_req(crypto_aead_encrypt(req), &wait);
     if (r)  {
         DMERR("gcm(aes) encrypt error");
         goto exit;
     }
+
 exit:
     if (req)
         aead_request_free(req);
+    mutex_unlock(&this->lock);
     return r;
 }
 
-int aes_gcm_cipher_decrypt(struct aead_cipher *ac, char* data, int len, char* key, int key_len, char* iv, int iv_len, char* mac, int mac_len, uint64_t seq) {
-    int r;
+int aes_gcm_cipher_decrypt(struct aead_cipher *ac, char* data, int len, char* key, char* iv, char* mac, uint64_t seq, char* out) {
+    int r = 0;
+    uint32_t checksum = dm_bm_checksum(data, len, 0);
     struct aead_request* req;
-    struct scatterlist sg[AEAD_MSG_NR_PART];
-    struct aes_gcm_cipher* ag = container_of(ac, struct aes_gcm_cipher, interface);
+    struct scatterlist sg_in[AEAD_MSG_NR_PART], sg_out[AEAD_MSG_NR_PART];
+    DECLARE_CRYPTO_WAIT(wait);
+    struct aes_gcm_cipher* this = container_of(ac, struct aes_gcm_cipher, aead_cipher);
 
-    req = aead_request_alloc(ag->tfm, GFP_KERNEL);
+    sg_init_table(sg_in, AEAD_MSG_NR_PART);
+    sg_set_buf(&sg_in[0], &seq, sizeof(uint64_t));
+    sg_set_buf(&sg_in[1], iv, this->iv_size);
+    sg_set_buf(&sg_in[2], data, len);
+    sg_set_buf(&sg_in[3], mac, this->auth_size);
+
+    sg_init_table(sg_out, AEAD_MSG_NR_PART);
+    sg_set_buf(&sg_out[0], &seq, sizeof(uint64_t));
+    sg_set_buf(&sg_out[1], iv, this->iv_size);
+    sg_set_buf(&sg_out[2], out, len);
+    sg_set_buf(&sg_out[3], mac, this->auth_size);
+
+    r = mutex_lock_interruptible(&this->lock);
+    if (r)
+        goto exit;
+
+    crypto_aead_setauthsize(this->tfm, this->auth_size);
+    req = aead_request_alloc(this->tfm, GFP_KERNEL);
     if (!req) {
         DMERR("could not allocate aead request\n");
         goto exit;
     }
-    sg_init_table(sg, AEAD_MSG_NR_PART);
-    sg_set_buf(&sg[0], &seq, sizeof(uint64_t));
-    sg_set_buf(&sg[1], iv, iv_len);
-    sg_set_buf(&sg[2], data, len);
-    sg_set_buf(&sg[3], mac, mac_len);
 
-    aead_request_set_crypt(req, sg, sg, len+mac_len, iv);
-    aead_request_set_ad(req, sizeof(uint64_t) + iv_len);
+    aead_request_set_crypt(req, sg_in, sg_out, len + this->auth_size, iv);
+    aead_request_set_ad(req, sizeof(uint64_t) + this->iv_size);
 
-    r = crypto_aead_setkey(ag->tfm, key, key_len);
+    r = crypto_aead_setkey(this->tfm, key, this->key_size);
     if (r) {
         DMERR("gcm(aes) key could not be set\n");
         goto exit;
     }
-    r = crypto_aead_decrypt(req);
+
+    aead_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG | CRYPTO_TFM_REQ_MAY_SLEEP, crypto_req_done, &wait);
+    r = crypto_wait_req(crypto_aead_decrypt(req), &wait);
     if (r == -EBADMSG) {
         char mac_hex[(AES_GCM_AUTH_SIZE << 1) + 1] = {0};
         char key_hex[(AES_GCM_KEY_SIZE << 1) + 1] = {0};
@@ -92,33 +127,64 @@ int aes_gcm_cipher_decrypt(struct aead_cipher *ac, char* data, int len, char* ke
         btox(key_hex, key, AES_GCM_KEY_SIZE << 1);
         btox(iv_hex, iv, AES_GCM_IV_SIZE << 1);
         btox(mac_hex, mac, AES_GCM_AUTH_SIZE << 1);
-        DMWARN("gcm(aes) authentication failed, key: %s, iv: %s, mac: %s, seq: %llu, checksum: %u", 
-            key_hex, iv_hex, mac_hex, seq, dm_bm_checksum(data, len, 0));
+        DMWARN("gcm(aes) authentication failed, key: %s, iv: %s, mac: %s, seq: %llu, checksum: %u, data: %s", 
+            key_hex, iv_hex, mac_hex, seq, checksum, data);
         goto exit;
     } else if (r) {
         DMERR("gcm(aes) decryption error\n");
         goto exit;
 	}
+
 exit:
     if (req)
         aead_request_free(req);
+    mutex_unlock(&this->lock);
     return r;
 }
 
-struct aead_cipher* aes_gcm_cipher_init(struct aes_gcm_cipher *ag) {
-    ag->tfm = crypto_alloc_aead("gcm(aes)", 0, 0);
-    if (IS_ERR(ag->tfm)) {
-        DMERR("could not allocate aead handler\n");
-        return NULL;
-    }
-    ag->block_size = AES_GCM_BLOCK_SIZE;
-    ag->auth_size = AES_GCM_AUTH_SIZE;
-    ag->iv_size = AES_GCM_IV_SIZE;
-    ag->key_size = AES_GCM_KEY_SIZE;
+void aes_gcm_cipher_destroy(struct aead_cipher* ac) {
+    struct aes_gcm_cipher* this = container_of(ac, struct aes_gcm_cipher, aead_cipher);
+    
+    crypto_free_aead(this->tfm);
+    kfree(this);
+}
 
-    ag->interface.get_random_key = aes_gcm_get_random_key;
-    ag->interface.get_random_iv = aes_gcm_get_random_iv;
-    ag->interface.encrypt = aes_gcm_cipher_encrypt;
-    ag->interface.decrypt = aes_gcm_cipher_decrypt;
-    return &ag->interface;
+int aes_gcm_cipher_init(struct aes_gcm_cipher *this) {
+    this->tfm = crypto_alloc_aead("gcm(aes)", 0, 0);
+    if (IS_ERR(this->tfm)) {
+        DMERR("could not allocate aead handler\n");
+        return -ENOMEM;
+    }
+
+    mutex_init(&this->lock);
+    this->block_size = crypto_aead_blocksize(this->tfm);
+    this->auth_size = crypto_aead_authsize(this->tfm);
+    this->iv_size = crypto_aead_ivsize(this->tfm);
+    this->key_size = AES_GCM_KEY_SIZE;
+
+    this->aead_cipher.get_random_key = aes_gcm_get_random_key;
+    this->aead_cipher.get_random_iv = aes_gcm_get_random_iv;
+    this->aead_cipher.encrypt = aes_gcm_cipher_encrypt;
+    this->aead_cipher.decrypt = aes_gcm_cipher_decrypt;
+    this->aead_cipher.destroy = aes_gcm_cipher_destroy;
+    return 0;
+}
+
+struct aead_cipher* aes_gcm_cipher_create() {
+    int err = 0;
+    struct aes_gcm_cipher* this;
+
+    this = kmalloc(sizeof(struct aes_gcm_cipher), GFP_KERNEL);
+    if (!this)
+        goto bad;
+
+    err = aes_gcm_cipher_init(this);
+    if (err)
+        goto bad;
+
+    return &this->aead_cipher;
+bad:
+    if (this)
+        kfree(this);
+    return NULL;
 }

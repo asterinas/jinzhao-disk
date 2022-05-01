@@ -30,11 +30,11 @@ do
 		;;
 	w)
 		# dd if=/dev/urandom of=/dev/mapper/sworndisk  bs=512 count=100
-		dd if=/home/lnhoo/Downloads/linux-5.17.1.tar.xz of=/dev/mapper/sworndisk bs=128386124 count=1
+		dd if=/home/lnhoo/dream.txt of=/dev/mapper/sworndisk bs=8624271 count=1
 		# dd if=/dev/urandom of=/dev/mapper/sworndisk  bs=64K count=1280
 		;;
 	r)
-		dd if=/dev/mapper/sworndisk of=out bs=128386124 count=1
+		dd if=/dev/mapper/sworndisk of=out bs=8624271 count=1
 		;;
 	h)
 		;;

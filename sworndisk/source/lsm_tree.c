@@ -8,8 +8,8 @@
 #include "../include/memtable.h"
 #include "../include/metadata.h"
 
-struct kmem_cache* builder_buffer_cache;
-static mempool_t* builder_buffer_mempool;
+// static struct kmem_cache* builder_buffer_cache;
+// static mempool_t* builder_buffer_mempool;
 
 // block index table node implementaion
 void bit_node_print(struct bit_node* bit_node) {
@@ -164,7 +164,7 @@ void bit_builder_destroy(struct lsm_file_builder* builder) {
         if (!IS_ERR_OR_NULL(this->ctx))
             kfree(this->ctx);
         if (!IS_ERR_OR_NULL(this->buffer))
-            kfree(this->buffer);
+            vfree(this->buffer);
         kfree(this);
     }
 }
@@ -181,7 +181,8 @@ int bit_builder_init(struct bit_builder* this, struct file* file, size_t begin, 
     this->has_first_key = false;
     this->height = __bit_height(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE);
 
-    this->buffer = mempool_alloc(builder_buffer_mempool, GFP_KERNEL);
+    // this->buffer = mempool_alloc(builder_buffer_mempool, GFP_KERNEL);
+    this->buffer = vmalloc(DEFAULT_LSM_FILE_BUILDER_BUFFER_SIZE);
     if (!this->buffer) {
         err = -ENOMEM;
         goto bad;
@@ -201,7 +202,8 @@ int bit_builder_init(struct bit_builder* this, struct file* file, size_t begin, 
     return 0;
 bad:
     if (this->buffer)
-        mempool_free(this->buffer, builder_buffer_mempool);
+        // mempool_free(this->buffer, builder_buffer_mempool);
+        vfree(this->buffer);
     if (this->ctx)
         kfree(this->ctx);
     return err;
@@ -988,10 +990,10 @@ void lsm_tree_destroy(struct lsm_tree* this) {
         }
         if (this->file)
             filp_close(this->file, NULL);
-        if (builder_buffer_mempool)
-            mempool_destroy(builder_buffer_mempool); 
-        if (builder_buffer_cache)
-            kmem_cache_destroy(builder_buffer_cache);
+        // if (builder_buffer_mempool)
+        //     mempool_destroy(builder_buffer_mempool); 
+        // if (builder_buffer_cache)
+        //     kmem_cache_destroy(builder_buffer_cache);
         kfree(this);
     }
 }
@@ -1009,12 +1011,12 @@ int lsm_tree_init(struct lsm_tree* this, const char* filename, struct lsm_catalo
         goto bad;
     }
 
-    builder_buffer_cache = kmem_cache_create("builder_buffer", DEFAULT_LSM_FILE_BUILDER_BUFFER_SIZE, 0, SLAB_RED_ZONE, NULL);
-    if (!builder_buffer_cache)
-        goto bad;
-    builder_buffer_mempool = mempool_create_slab_pool(DEFAULT_LSM_FILE_BUILDER_BUFFER_MEMPOOL_SIZE, builder_buffer_cache);
-    if (!builder_buffer_mempool)
-        goto bad;
+    // builder_buffer_cache = kmem_cache_create("builder_buffer", DEFAULT_LSM_FILE_BUILDER_BUFFER_SIZE, 0, SLAB_RED_ZONE, NULL);
+    // if (!builder_buffer_cache)
+    //     goto bad;
+    // builder_buffer_mempool = mempool_create_slab_pool(DEFAULT_LSM_FILE_BUILDER_BUFFER_MEMPOOL_SIZE, builder_buffer_cache);
+    // if (!builder_buffer_mempool)
+    //     goto bad;
 
     this->catalogue = catalogue;
     this->memtable = rbtree_memtable_create(DEFAULT_MEMTABLE_CAPACITY);
@@ -1049,10 +1051,10 @@ bad:
         filp_close(this->file, NULL);
     if (this->levels) 
         kfree(this->levels);
-    if (builder_buffer_mempool)
-        mempool_destroy(builder_buffer_mempool); 
-    if (builder_buffer_cache)
-        kmem_cache_destroy(builder_buffer_cache);
+    // if (builder_buffer_mempool)
+    //     mempool_destroy(builder_buffer_mempool); 
+    // if (builder_buffer_cache)
+    //     kmem_cache_destroy(builder_buffer_cache);
 
     return err;
 }

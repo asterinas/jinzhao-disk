@@ -37,7 +37,8 @@ void sa_clean(struct segment_allocator* al) {
     int err;
     size_t clean = 0;
     struct victim* victim = NULL;
-    void* buffer = kmalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
+    void* buffer = kzalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
+    void* plaintext = kzalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
     DEFAULT_SEGMENT_ALLOCATOR_THIS_POINTER_DECLARE
 
     this->status = SEGMENT_CLEANING;
@@ -62,9 +63,9 @@ void sa_clean(struct segment_allocator* al) {
                 sworndisk->metadata->reverse_index_table->get(sworndisk->metadata->reverse_index_table, pba, &lba);
                 sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &record);
                 err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, 
-                    record.key, AES_GCM_KEY_SIZE, record.iv, AES_GCM_IV_SIZE, record.mac, AES_GCM_AUTH_SIZE, record.pba);
+                    record.key, record.iv, record.mac, record.pba, plaintext);
                 if (!err)
-                    sworndisk->seg_buffer->push_block(sworndisk->seg_buffer, lba, buffer);
+                    sworndisk->seg_buffer->push_block(sworndisk->seg_buffer, lba, plaintext);
                 offset = find_next_bit(victim->block_validity_table, BLOCKS_PER_SEGMENT, offset + 1);
             }
         }
@@ -84,6 +85,8 @@ exit:
         victim_destroy(victim);
     if (buffer)
         kfree(buffer);
+    if (plaintext)
+        kfree(plaintext);
 
     this->status = SEGMENT_ALLOCATING;
 }
