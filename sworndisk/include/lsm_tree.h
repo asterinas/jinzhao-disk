@@ -96,10 +96,12 @@ struct bit_file {
 
     struct file* file;
     loff_t root;
+    char root_key[AES_GCM_KEY_SIZE];
+    char root_iv[AES_GCM_IV_SIZE];
     uint32_t first_key, last_key;
 };
 
-struct lsm_file* bit_file_create(struct file* file, loff_t root, size_t id, size_t level, size_t version, uint32_t first_key, uint32_t last_key);
+struct lsm_file* bit_file_create(struct file* file, loff_t root, size_t id, size_t level, size_t version, uint32_t first_key, uint32_t last_key, char* root_key, char* root_iv);
 
 #define DEFAULT_LSM_FILE_BUILDER_BUFFER_MEMPOOL_SIZE 2
 #define DEFAULT_LSM_FILE_BUILDER_BUFFER_SIZE SEGMENT_BUFFER_SIZE
@@ -127,6 +129,8 @@ struct bit_builder {
     size_t cur, height, id, level, version;
     void* buffer;
     struct bit_builder_context* ctx;
+    char next_key[AES_GCM_KEY_SIZE];
+    char next_iv[AES_GCM_IV_SIZE];
 };
 
 struct lsm_file_builder* bit_builder_create(struct file* file, size_t begin, size_t id, size_t level, size_t version);
@@ -182,12 +186,13 @@ struct lsm_tree {
     struct memtable* memtable;
     struct lsm_level** levels;
     struct cache* cache;
+    struct aead_cipher* cipher;
 
     void (*put)(struct lsm_tree* this, uint32_t key, void* val, bool* replaced, void* old);
     int (*search)(struct lsm_tree* this, uint32_t key, void* val);
     void (*destroy)(struct lsm_tree* this);
 };
 
-struct lsm_tree* lsm_tree_create(const char* filename, struct lsm_catalogue* catalogue);
+struct lsm_tree* lsm_tree_create(const char* filename, struct lsm_catalogue* catalogue, struct aead_cipher* cipher);
 
 #endif
