@@ -7,9 +7,10 @@
 #include "crypto.h"
 #include "disk_structs.h"
 #include "hashmap.h"
+#include "cache.h"
 
 #define DEFAULT_LSM_TREE_NR_DISK_LEVEL 2
-#define DEFAULT_LSM_LEVEL0_NR_FILE 1
+#define DEFAULT_LSM_LEVEL0_NR_FILE 4
 #define DEFAULT_LSM_FILE_CAPACITY 1048576
 
 // record, lba => (pba, key, iv, mac)
@@ -180,6 +181,7 @@ struct lsm_tree {
     struct lsm_catalogue* catalogue;
     struct memtable* memtable;
     struct lsm_level** levels;
+    struct cache* cache;
 
     void (*put)(struct lsm_tree* this, uint32_t key, void* val, bool* replaced, void* old);
     int (*search)(struct lsm_tree* this, uint32_t key, void* val);

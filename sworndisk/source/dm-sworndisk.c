@@ -22,8 +22,8 @@
 #include "../include/metadata.h"
 #include "../include/bio_operate.h"
 #include "../include/segment_buffer.h"
+#include "../include/cache.h"
 
-#include "../include/lsm_tree_test.h"
 
 void defer_bio(struct dm_sworndisk_target *sworndisk, struct bio *bio) {
 	unsigned long flags;
@@ -256,7 +256,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
         ret = -EAGAIN;
         goto bad;
     } 
-
+    
     INIT_WORK(&sworndisk->deferred_bio_worker, process_deferred_bios);
     target->private = sworndisk;
     return 0;
