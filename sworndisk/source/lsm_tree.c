@@ -8,8 +8,6 @@
 #include "../include/memtable.h"
 #include "../include/metadata.h"
 
-// static struct kmem_cache* builder_buffer_cache;
-// static mempool_t* builder_buffer_mempool;
 
 // block index table node implementaion
 void bit_node_print(struct bit_node* bit_node) {
@@ -942,15 +940,23 @@ int lsm_tree_search(struct lsm_tree* this, uint32_t key, void* val) {
     size_t i;
     struct record* record;
 
+    record = this->cache->get(this->cache, key);
+    if (record) {
+        *(struct record*)val = *record;
+        return 0;
+    }
+
     err = this->memtable->get(this->memtable, key, (void**)&record);
     if (!err) {
         *(struct record*)val = *record;
+        this->cache->put(this->cache, key, record, record_destroy);
         return 0;
     } 
     
     for (i = 0; i < this->catalogue->nr_disk_level; ++i) {
         err = this->levels[i]->search(this->levels[i], key, val);
         if (!err) {
+            this->cache->put(this->cache, key, record_copy(val), record_destroy);
             return 0;
         }   
     }
@@ -960,17 +966,15 @@ int lsm_tree_search(struct lsm_tree* this, uint32_t key, void* val) {
 
 void lsm_tree_put(struct lsm_tree* this, uint32_t key, void* val, bool* replaced, void* old) {
     int err = 0;
-    struct record* result = NULL;
 
     *replaced = false;
     err = lsm_tree_search(this, key, old);
     if (!err)
         *replaced = true;
 
-    result = this->memtable->put(this->memtable, key, val);
-    if (result)
-        record_destroy(result);
-    
+    this->memtable->put(this->memtable, key, val);
+    this->cache->put(this->cache, key, val, record_destroy);
+
     if (this->memtable->size >= DEFAULT_MEMTABLE_CAPACITY) 
         lsm_tree_minor_compaction(this);
 }
@@ -982,7 +986,8 @@ void lsm_tree_destroy(struct lsm_tree* this) {
         if (!IS_ERR_OR_NULL(this->memtable)) {
             if (this->memtable->size)
                 lsm_tree_minor_compaction(this);
-            this->memtable->destroy(this->memtable);
+            // this->memtable->destroy(this->memtable);
+            this->cache->destroy(this->cache);
         }  
         if (!IS_ERR_OR_NULL(this->levels)) {
             for (i = 0; i < this->catalogue->nr_disk_level; ++i)
@@ -990,10 +995,6 @@ void lsm_tree_destroy(struct lsm_tree* this) {
         }
         if (this->file)
             filp_close(this->file, NULL);
-        // if (builder_buffer_mempool)
-        //     mempool_destroy(builder_buffer_mempool); 
-        // if (builder_buffer_cache)
-        //     kmem_cache_destroy(builder_buffer_cache);
         kfree(this);
     }
 }
@@ -1010,13 +1011,6 @@ int lsm_tree_init(struct lsm_tree* this, const char* filename, struct lsm_catalo
         err = -EINVAL;
         goto bad;
     }
-
-    // builder_buffer_cache = kmem_cache_create("builder_buffer", DEFAULT_LSM_FILE_BUILDER_BUFFER_SIZE, 0, SLAB_RED_ZONE, NULL);
-    // if (!builder_buffer_cache)
-    //     goto bad;
-    // builder_buffer_mempool = mempool_create_slab_pool(DEFAULT_LSM_FILE_BUILDER_BUFFER_MEMPOOL_SIZE, builder_buffer_cache);
-    // if (!builder_buffer_mempool)
-    //     goto bad;
 
     this->catalogue = catalogue;
     this->memtable = rbtree_memtable_create(DEFAULT_MEMTABLE_CAPACITY);
@@ -1041,6 +1035,7 @@ int lsm_tree_init(struct lsm_tree* this, const char* filename, struct lsm_catalo
         kfree(stat);
     }
 
+    this->cache = lru_cache_create(DEFAULT_LSM_FILE_CAPACITY << 2);
     this->put = lsm_tree_put;
     this->search = lsm_tree_search;
     this->destroy = lsm_tree_destroy;
@@ -1051,10 +1046,6 @@ bad:
         filp_close(this->file, NULL);
     if (this->levels) 
         kfree(this->levels);
-    // if (builder_buffer_mempool)
-    //     mempool_destroy(builder_buffer_mempool); 
-    // if (builder_buffer_cache)
-    //     kmem_cache_destroy(builder_buffer_cache);
 
     return err;
 }
