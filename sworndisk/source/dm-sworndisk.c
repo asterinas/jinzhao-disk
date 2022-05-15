@@ -24,6 +24,7 @@
 #include "../include/segment_buffer.h"
 #include "../include/cache.h"
 
+#include "../include/lsm_tree_test.h"
 
 void defer_bio(struct dm_sworndisk_target *sworndisk, struct bio *bio) {
 	unsigned long flags;
@@ -228,18 +229,20 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 		goto bad;
 	}
 
-    sworndisk->lsm_tree = lsm_tree_create(argv[1], &sworndisk->metadata->bit_catalogue->lsm_catalogue);
-    if (!sworndisk->lsm_tree) {
-        target->error = "could not create sworndisk lsm tree";
-        ret = -EAGAIN;
-		goto bad;
-    }
     sworndisk->cipher = aes_gcm_cipher_create();
     if (!sworndisk->cipher) {
         target->error = "could not create sworndisk cipher";
         ret = -EAGAIN;
 		goto bad;
     }
+
+    sworndisk->lsm_tree = lsm_tree_create(argv[1], &sworndisk->metadata->bit_catalogue->lsm_catalogue, sworndisk->cipher);
+    if (!sworndisk->lsm_tree) {
+        target->error = "could not create sworndisk lsm tree";
+        ret = -EAGAIN;
+		goto bad;
+    }
+
     sworndisk->seg_allocator = sa_create(sworndisk);
     if (!sworndisk->seg_allocator) {
         target->error = "could not create sworndisk segment allocator";

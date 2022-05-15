@@ -163,11 +163,12 @@ int block_index_table_add_file_test() {
     struct lsm_level* level = bit_level_create(0, capacity);
     struct bit_level* bit_level = container_of(level, struct bit_level, lsm_level);
     uint32_t first_key, last_key;
+    char root_key[AES_GCM_KEY_SIZE], root_iv[AES_GCM_IV_SIZE];
 
     for (i = 0; i < (capacity << 1); ++i) {
         get_random_bytes(&first_key, sizeof(first_key));
         get_random_bytes(&last_key, sizeof(last_key));
-        file = bit_file_create(NULL, 0, 0, 0, 0, first_key, last_key);
+        file = bit_file_create(NULL, 0, 0, 0, 0, first_key, last_key, root_key, root_iv);
         level->add_file(level, file);
     }
 
@@ -190,11 +191,12 @@ int block_index_table_level_locate_file_test() {
     struct lsm_level* level = bit_level_create(0, capacity);
     struct bit_level* bit_level = container_of(level, struct bit_level, lsm_level);
     uint32_t first_key, last_key, key;
+     char root_key[AES_GCM_KEY_SIZE], root_iv[AES_GCM_IV_SIZE];
 
     for (i = 0; i < (capacity << 1); ++i) {
         first_key = 1000 * i;
         last_key = 1000 * (i + 1) - 1;
-        file = bit_file_create(NULL, 0, 0, 0, first_key, last_key, 0);
+        file = bit_file_create(NULL, 0, 0, 0, first_key, last_key, 0, root_key, root_iv);
         level->add_file(level, file);
     }
 
@@ -510,12 +512,12 @@ exit:
 }
 
 // lsm tree test 
-int lsm_tree_test(struct lsm_catalogue* catalogue) {
+int lsm_tree_test(struct lsm_catalogue* catalogue, struct aead_cipher* cipher) {
     const char* filename = "/dev/sdb5";
     size_t i;
     bool replaced;
     struct record *record, old, result;
-    struct lsm_tree* lsm_tree = lsm_tree_create(filename, catalogue);
+    struct lsm_tree* lsm_tree = lsm_tree_create(filename, catalogue, cipher);
 
     for (i = 0; i < 1000000; ++i) {
         record = record_create(i, NULL, NULL, NULL);

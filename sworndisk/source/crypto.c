@@ -79,11 +79,15 @@ exit:
 
 int aes_gcm_cipher_decrypt(struct aead_cipher *ac, char* data, int len, char* key, char* iv, char* mac, uint64_t seq, char* out) {
     int r = 0;
-    uint32_t checksum = dm_bm_checksum(data, len, 0);
+    uint32_t checksum = 0;
     struct aead_request* req;
     struct scatterlist sg_in[AEAD_MSG_NR_PART], sg_out[AEAD_MSG_NR_PART];
     DECLARE_CRYPTO_WAIT(wait);
     struct aes_gcm_cipher* this = container_of(ac, struct aes_gcm_cipher, aead_cipher);
+
+#ifdef DEBUG_CRYPT
+    checksum = dm_bm_checksum(data, len, 0);
+#endif
 
     sg_init_table(sg_in, AEAD_MSG_NR_PART);
     sg_set_buf(&sg_in[0], &seq, sizeof(uint64_t));
@@ -127,8 +131,8 @@ int aes_gcm_cipher_decrypt(struct aead_cipher *ac, char* data, int len, char* ke
         btox(key_hex, key, AES_GCM_KEY_SIZE << 1);
         btox(iv_hex, iv, AES_GCM_IV_SIZE << 1);
         btox(mac_hex, mac, AES_GCM_AUTH_SIZE << 1);
-        DMWARN("gcm(aes) authentication failed, key: %s, iv: %s, mac: %s, seq: %llu, checksum: %u, data: %s", 
-            key_hex, iv_hex, mac_hex, seq, checksum, data);
+        DMWARN("gcm(aes) authentication failed, key: %s, iv: %s, mac: %s, seq: %llu, checksum: %u", 
+            key_hex, iv_hex, mac_hex, seq, checksum);
         goto exit;
     } else if (r) {
         DMERR("gcm(aes) decryption error\n");
