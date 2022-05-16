@@ -160,7 +160,7 @@ size_t __data_seg_table_blocks(size_t nr_segment) {
 }
 
 size_t __reverse_index_table_blocks(size_t nr_segment, size_t blocks_per_seg) {
-	return __disk_array_blocks(nr_segment * blocks_per_seg, sizeof(struct data_segment_entry), SWORNDISK_METADATA_BLOCK_SIZE);
+	return __disk_array_blocks(nr_segment * blocks_per_seg, sizeof(struct reverse_index_entry), SWORNDISK_METADATA_BLOCK_SIZE);
 }
 
 int superblock_init(struct superblock* this, struct dm_block_manager* bm, bool* should_format) {

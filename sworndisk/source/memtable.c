@@ -232,8 +232,7 @@ void* rbtree_memtable_put(struct memtable* memtable, uint32_t key, void* val) {
     struct memtable_rbnode *old = NULL, *new = NULL;
     RBTREE_MEMTABLE_THIS_POINTER_DECLARE
 
-    // new = memtable_rbnode_create(key, val, record_destroy);
-    new = memtable_rbnode_create(key, val, NULL);
+    new = memtable_rbnode_create(key, val, record_destroy);
     if (!new)
         return NULL;
 

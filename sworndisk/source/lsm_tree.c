@@ -978,7 +978,7 @@ int lsm_tree_search(struct lsm_tree* this, uint32_t key, void* val) {
     err = this->memtable->get(this->memtable, key, (void**)&record);
     if (!err) {
         *(struct record*)val = *record;
-        this->cache->put(this->cache, key, record, record_destroy);
+        this->cache->put(this->cache, key, record_copy(record), record_destroy);
         return 0;
     } 
     
@@ -1002,7 +1002,7 @@ void lsm_tree_put(struct lsm_tree* this, uint32_t key, void* val, bool* replaced
         *replaced = true;
 
     this->memtable->put(this->memtable, key, val);
-    this->cache->put(this->cache, key, val, record_destroy);
+    this->cache->put(this->cache, key, record_copy(val), record_destroy);
 
     if (this->memtable->size >= DEFAULT_MEMTABLE_CAPACITY) 
         lsm_tree_minor_compaction(this);
@@ -1015,7 +1015,7 @@ void lsm_tree_destroy(struct lsm_tree* this) {
         if (!IS_ERR_OR_NULL(this->memtable)) {
             if (this->memtable->size)
                 lsm_tree_minor_compaction(this);
-            // this->memtable->destroy(this->memtable);
+            this->memtable->destroy(this->memtable);
             this->cache->destroy(this->cache);
         }  
         if (!IS_ERR_OR_NULL(this->levels)) {

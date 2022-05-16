@@ -26,6 +26,8 @@
 
 #include "../include/lsm_tree_test.h"
 
+size_t NR_SEGMENT;
+
 void defer_bio(struct dm_sworndisk_target *sworndisk, struct bio *bio) {
 	unsigned long flags;
 
@@ -164,6 +166,10 @@ exit:
     return DM_MAPIO_REMAPPED;
 }
 
+sector_t dm_devsize(struct dm_dev *dev) {
+	return i_size_read(dev->bdev->bd_inode) >> SECTOR_SHIFT;
+}
+
 /*
  * This is constructor function of target gets called when we create some device of type 'dm_sworndisk_target'.
  * i.e on execution of command 'dmsetup create'. It gets called per device.
@@ -208,6 +214,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
             goto bad;
     }
 
+    NR_SEGMENT = div_u64(dm_devsize(sworndisk->data_dev), SECTOES_PER_SEGMENT);
     sworndisk->data_region = filp_open(argv[0], O_RDWR | O_LARGEFILE, 0);
     if (!sworndisk->data_region) {
         target->error = "could not open sworndisk data region";
