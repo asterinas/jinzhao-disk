@@ -515,13 +515,12 @@ exit:
 int lsm_tree_test(struct lsm_catalogue* catalogue, struct aead_cipher* cipher) {
     const char* filename = "/dev/sdb5";
     size_t i;
-    bool replaced;
-    struct record *record, old, result;
+    struct record *record, result;
     struct lsm_tree* lsm_tree = lsm_tree_create(filename, catalogue, cipher);
 
     for (i = 0; i < 1000000; ++i) {
         record = record_create(i, NULL, NULL, NULL);
-        lsm_tree->put(lsm_tree, i, record, &replaced, &old);
+        lsm_tree->put(lsm_tree, i, record);
     }
 
     for (i = 0; i < 1000000; i += 10000) {

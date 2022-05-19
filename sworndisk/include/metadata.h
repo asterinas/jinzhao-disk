@@ -160,8 +160,8 @@ struct metadata {
 	struct superblock* superblock;
 	// checkpoint region
 	struct seg_validator* seg_validator;
-	struct reverse_index_table* reverse_index_table;
-	struct data_segment_table* data_segment_table;
+	struct reverse_index_table* rit;
+	struct data_segment_table* dst;
 	struct bit_catalogue* bit_catalogue;
 
 	int (*format)(struct metadata* this);

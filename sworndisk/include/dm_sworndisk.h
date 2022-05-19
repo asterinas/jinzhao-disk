@@ -13,9 +13,16 @@ struct dm_sworndisk_target {
     struct dm_dev* data_dev;
     struct dm_dev* metadata_dev;
     struct workqueue_struct* wq;
+    // workers
     struct work_struct deferred_bio_worker;
+    struct work_struct read_bio_worker;
+    struct work_struct write_bio_worker;
+    // bio lists
     struct bio_list deferred_bios;
-	struct metadata* metadata;
+    struct bio_list read_bios;
+    struct bio_list write_bios;
+    // sworndisk components
+	struct metadata* meta;
     struct segment_buffer* seg_buffer;
     struct segment_allocator* seg_allocator;
     struct lsm_tree* lsm_tree;

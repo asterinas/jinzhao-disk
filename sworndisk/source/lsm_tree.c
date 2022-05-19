@@ -993,14 +993,7 @@ int lsm_tree_search(struct lsm_tree* this, uint32_t key, void* val) {
 }
 
 
-void lsm_tree_put(struct lsm_tree* this, uint32_t key, void* val, bool* replaced, void* old) {
-    int err = 0;
-
-    *replaced = false;
-    err = lsm_tree_search(this, key, old);
-    if (!err)
-        *replaced = true;
-
+void lsm_tree_put(struct lsm_tree* this, uint32_t key, void* val) {
     this->memtable->put(this->memtable, key, val);
     this->cache->put(this->cache, key, record_copy(val), record_destroy);
 
@@ -1066,7 +1059,7 @@ int lsm_tree_init(struct lsm_tree* this, const char* filename, struct lsm_catalo
         kfree(stat);
     }
 
-    this->cache = lru_cache_create(DEFAULT_LSM_FILE_CAPACITY << 2);
+    this->cache = lru_cache_create(DEFAULT_LSM_FILE_CAPACITY << 4);
     this->put = lsm_tree_put;
     this->search = lsm_tree_search;
     this->destroy = lsm_tree_destroy;

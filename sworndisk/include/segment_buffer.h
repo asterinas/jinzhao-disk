@@ -16,8 +16,10 @@
 
 void btox(char *xp, const char *bb, int n);
 
+#define MODIFY_IN_MEM_BUFFER 0
+#define PUSH_NEW_BLOCK 1
 struct segment_buffer {
-    void (*push_bio)(struct segment_buffer* buf, struct bio* bio);
+    int (*push_bio)(struct segment_buffer* buf, struct bio* bio);
     void (*push_block)(struct segment_buffer* buf, dm_block_t lba, void* buffer);
     int (*query_bio)(struct segment_buffer* buf, struct bio* bio);
     void (*flush_bios)(struct segment_buffer* buf);

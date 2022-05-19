@@ -863,11 +863,11 @@ int metadata_format(struct metadata* this) {
 	if (r)
 		return r;
 	
-	r = this->reverse_index_table->format(this->reverse_index_table);
+	r = this->rit->format(this->rit);
 	if (r)
 		return r;
 
-	r = this->data_segment_table->format(this->data_segment_table);
+	r = this->dst->format(this->dst);
 	if (r)
 		return r;
 
@@ -895,13 +895,13 @@ int metadata_init(struct metadata* this, struct block_device* bdev) {
 	if (IS_ERR_OR_NULL(this->seg_validator))
 		goto bad;
 
-	this->reverse_index_table = reverse_index_table_create(this->bm, 
+	this->rit = reverse_index_table_create(this->bm, 
 	  this->superblock->reverse_index_table_start, this->superblock->nr_segment * this->superblock->blocks_per_seg);
-	if (IS_ERR_OR_NULL(this->reverse_index_table))
+	if (IS_ERR_OR_NULL(this->rit))
 		goto bad;
 
-	this->data_segment_table = data_segment_table_create(this->bm, this->superblock->data_seg_table_start, this->superblock->nr_segment);
-	if (IS_ERR_OR_NULL(this->data_segment_table))
+	this->dst = data_segment_table_create(this->bm, this->superblock->data_seg_table_start, this->superblock->nr_segment);
+	if (IS_ERR_OR_NULL(this->dst))
 		goto bad;
 
 	this->bit_catalogue = bit_catalogue_create(this->bm, this->superblock);
@@ -921,8 +921,8 @@ bad:
 		dm_block_manager_destroy(this->bm);
 	superblock_destroy(this->superblock);
 	seg_validator_destroy(this->seg_validator);
-	reverse_index_table_destroy(this->reverse_index_table);
-	data_segment_table_destroy(this->data_segment_table);
+	reverse_index_table_destroy(this->rit);
+	data_segment_table_destroy(this->dst);
 	bit_catalogue_destroy(this->bit_catalogue);
 	return -EAGAIN;
 }
@@ -950,8 +950,8 @@ void metadata_destroy(struct metadata* this) {
 		}
 		superblock_destroy(this->superblock);
 		seg_validator_destroy(this->seg_validator);
-		reverse_index_table_destroy(this->reverse_index_table);
-		data_segment_table_destroy(this->data_segment_table);
+		reverse_index_table_destroy(this->rit);
+		data_segment_table_destroy(this->dst);
 		bit_catalogue_destroy(this->bit_catalogue);
 		kfree(this);
 	}

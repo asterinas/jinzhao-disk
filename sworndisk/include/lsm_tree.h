@@ -188,7 +188,7 @@ struct lsm_tree {
     struct cache* cache;
     struct aead_cipher* cipher;
 
-    void (*put)(struct lsm_tree* this, uint32_t key, void* val, bool* replaced, void* old);
+    void (*put)(struct lsm_tree* this, uint32_t key, void* val);
     int (*search)(struct lsm_tree* this, uint32_t key, void* val);
     void (*destroy)(struct lsm_tree* this);
 };

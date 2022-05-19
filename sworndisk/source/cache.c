@@ -3,6 +3,7 @@
 #include <linux/radix-tree.h>
 
 #include "../include/cache.h"
+#include "../include/memtable.h"
 #include "../include/dm_sworndisk.h"
 
 struct lru_cache_node {
@@ -35,6 +36,7 @@ void lru_cache_node_destroy(struct lru_cache_node* node) {
 struct lru_cache {
     struct cache cache;
 
+    struct mutex lock;
     size_t size, capacity;
     struct radix_tree_root root;
     struct list_head entries;
@@ -43,17 +45,22 @@ struct lru_cache {
 int lru_cache_put(struct cache* cache, uint64_t key, void* val, void (*dtr_fn)(void*)) {
     struct lru_cache* this = container_of(cache, struct lru_cache, cache);
     struct lru_cache_node* node = NULL;
+    
+    mutex_lock(&this->lock);
+    node = radix_tree_lookup(&this->root, key);
+    if (node) {
+        if (node->dtr_fn)
+            node->dtr_fn(node->val);
+        node->val = val;
+        node->dtr_fn = dtr_fn;
+        list_del(&node->list);
+        list_add(&node->list, &this->entries);
+        mutex_unlock(&this->lock);
+        return 0;
+    }
 
     while (this->size >= this->capacity) {
         node = list_last_entry(&this->entries, struct lru_cache_node, list);
-        list_del(&node->list);
-        radix_tree_delete(&this->root, node->key);
-        lru_cache_node_destroy(node);
-        this->size -= 1;
-    }
-    
-    node = radix_tree_lookup(&this->root, key);
-    if (node) {
         list_del(&node->list);
         radix_tree_delete(&this->root, node->key);
         lru_cache_node_destroy(node);
@@ -64,6 +71,7 @@ int lru_cache_put(struct cache* cache, uint64_t key, void* val, void (*dtr_fn)(v
     radix_tree_insert(&this->root, key, node);
     list_add(&node->list, &this->entries);
     this->size += 1;
+    mutex_unlock(&this->lock);
     return 0;
 }
 
@@ -71,12 +79,16 @@ void* lru_cache_get(struct cache* cache, uint64_t key) {
     struct lru_cache* this = container_of(cache, struct lru_cache, cache);
     struct lru_cache_node* node = NULL;
 
+    mutex_lock(&this->lock);
     node = radix_tree_lookup(&this->root, key);
-    if (!node)
+    if (!node) {
+        mutex_unlock(&this->lock);
         return NULL;
+    }
 
     list_del(&node->list);
     list_add(&node->list, &this->entries);
+    mutex_unlock(&this->lock);
     return node->val;
 }
 
@@ -84,14 +96,15 @@ void lru_cache_delete(struct cache* cache, uint64_t key) {
     struct lru_cache* this = container_of(cache, struct lru_cache, cache);
     struct lru_cache_node* node = NULL;
 
-    node = radix_tree_lookup(&this->root, key);
-    if (!node)
-        return;
+    mutex_lock(&this->lock);
+    node = radix_tree_delete(&this->root, key);
+    if (node) {
+        list_del(&node->list);
+        lru_cache_node_destroy(node);
+        this->size -= 1;
+    }
     
-    list_del(&node->list);
-    radix_tree_delete(&this->root, key);
-    lru_cache_node_destroy(node);
-    this->size -= 1;
+    mutex_unlock(&this->lock);
 }
 
 void lru_cache_destroy(struct cache* cache) {
@@ -106,6 +119,7 @@ void lru_cache_destroy(struct cache* cache) {
 void lru_cache_init(struct lru_cache* this, size_t capacity) {
     this->size = 0;
     this->capacity = capacity;
+    mutex_init(&this->lock);
     INIT_RADIX_TREE(&this->root, GFP_KERNEL);
     INIT_LIST_HEAD(&this->entries);
 
