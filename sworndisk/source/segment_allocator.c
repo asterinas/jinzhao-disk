@@ -14,16 +14,16 @@ int sa_get_next_free_segment(struct segment_allocator* al, size_t *seg) {
     int r;
     DEFAULT_SEGMENT_ALLOCATOR_THIS_POINTER_DECLARE 
 
-    r = sworndisk->metadata->seg_validator->next(sworndisk->metadata->seg_validator, seg);
+    r = sworndisk->meta->seg_validator->next(sworndisk->meta->seg_validator, seg);
     if (r)
         return r;
     
-    r = sworndisk->metadata->seg_validator->take(sworndisk->metadata->seg_validator, *seg);
+    r = sworndisk->meta->seg_validator->take(sworndisk->meta->seg_validator, *seg);
     if (r)
         return r;
 
     this->nr_valid_segment += 1;
-    r = sworndisk->metadata->data_segment_table->take_segment(sworndisk->metadata->data_segment_table, *seg);
+    r = sworndisk->meta->dst->take_segment(sworndisk->meta->dst, *seg);
     if (r)
         return r;
 
@@ -35,7 +35,7 @@ int sa_get_next_free_segment(struct segment_allocator* al, size_t *seg) {
 
 void sa_clean(struct segment_allocator* al) {
     int err;
-    size_t clean = 0;
+    size_t clean = 0, target = LEAST_CLEAN_SEGMENT_ONCE * BLOCKS_PER_SEGMENT;
     struct victim* victim = NULL;
     void* buffer = kzalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
     void* plaintext = kzalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
@@ -43,11 +43,10 @@ void sa_clean(struct segment_allocator* al) {
 
     this->status = SEGMENT_CLEANING;
     if (!buffer) goto exit;
-    while(clean < LEAST_CLEAN_SEGMENT_ONCE && 
-      !sworndisk->metadata->data_segment_table->victim_empty(sworndisk->metadata->data_segment_table)) {
+    while(clean < target && !sworndisk->meta->dst->victim_empty(sworndisk->meta->dst)) {
         bool valid;
 
-        victim = sworndisk->metadata->data_segment_table->pop_victim(sworndisk->metadata->data_segment_table);
+        victim = sworndisk->meta->dst->pop_victim(sworndisk->meta->dst);
         if (victim->nr_valid_block) {
             size_t offset;
 
@@ -60,7 +59,7 @@ void sa_clean(struct segment_allocator* al) {
                 pba = victim->segment_id * BLOCKS_PER_SEGMENT + offset;
                 addr = pba * DATA_BLOCK_SIZE;
                 kernel_read(sworndisk->data_region, buffer, DATA_BLOCK_SIZE, &addr);
-                sworndisk->metadata->reverse_index_table->get(sworndisk->metadata->reverse_index_table, pba, &lba);
+                sworndisk->meta->rit->get(sworndisk->meta->rit, pba, &lba);
                 sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &record);
                 err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, 
                     record.key, record.iv, record.mac, record.pba, plaintext);
@@ -70,9 +69,9 @@ void sa_clean(struct segment_allocator* al) {
             }
         }
 
-        err = sworndisk->metadata->seg_validator->test_and_return(sworndisk->metadata->seg_validator, victim->segment_id, &valid);
+        err = sworndisk->meta->seg_validator->test_and_return(sworndisk->meta->seg_validator, victim->segment_id, &valid);
         if (!err && valid) {
-            clean += 1;
+            clean += (BLOCKS_PER_SEGMENT - victim->nr_valid_block);
             this->nr_valid_segment -= 1;
         }
 
@@ -116,7 +115,7 @@ int sa_init(struct default_segment_allocator* this, struct dm_sworndisk_target* 
     this->segment_allocator.clean = sa_clean;
     this->segment_allocator.destroy = sa_destroy;
 
-    err = sworndisk->metadata->seg_validator->valid_segment_count(sworndisk->metadata->seg_validator, &this->nr_valid_segment);
+    err = sworndisk->meta->seg_validator->valid_segment_count(sworndisk->meta->seg_validator, &this->nr_valid_segment);
     if (err) 
         goto bad;
 

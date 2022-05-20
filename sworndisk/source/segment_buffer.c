@@ -16,7 +16,7 @@ void btox(char *xp, const char *bb, int n)  {
     while (--n >= 0) xp[n] = xx[(bb[n>>1] >> ((1 - (n&1)) << 2)) & 0xF];
 }
 
-void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
+int segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
     int err = 0;
     void *buffer, *pipe;
     struct record record = {0};
@@ -25,6 +25,10 @@ void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
 
     buffer = this->buffer + this->cur_sector * SECTOR_SIZE;
     pipe = this->pipe + this->cur_sector * SECTOR_SIZE;
+
+    if (bio_sectors(bio) >= SECTORS_PER_BLOCK)
+        goto fill_buffer;
+
     err = sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &record);
     if (!err) {
         dm_block_t buf_begin, buf_end;
@@ -32,17 +36,13 @@ void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
         buf_begin = this->cur_segment * BLOCKS_PER_SEGMENT;
         buf_end = buf_begin + this->cur_sector / SECTORS_PER_BLOCK;
         if (record.pba < buf_begin || record.pba >= buf_end) {
-            if (bio_sectors(bio) < SECTORS_PER_BLOCK) {
-                loff_t addr;
+            loff_t addr;
 
-                addr = record.pba * DATA_BLOCK_SIZE;
-                kernel_read(sworndisk->data_region, buffer, DATA_BLOCK_SIZE, &addr);
-                sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, 
-                    record.key, record.iv, record.mac, record.pba, buffer);
-            }
+            addr = record.pba * DATA_BLOCK_SIZE;
+            kernel_read(sworndisk->data_region, buffer, DATA_BLOCK_SIZE, &addr);
+            sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, 
+                record.key, record.iv, record.mac, record.pba, buffer);
         } else {
-            bool replaced;
-            struct record old = {0};
 #ifdef DEBUG_CRYPT
             char str[512] = {0}, mac_hex[(AES_GCM_AUTH_SIZE << 1) + 1] = {0};
             char key_hex[(AES_GCM_KEY_SIZE << 1) + 1] = {0};
@@ -54,7 +54,7 @@ void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
             bio_get_data(bio, buffer + bio_block_sector_offset(bio) * SECTOR_SIZE, bio_get_data_len(bio));
             sworndisk->cipher->encrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, 
                 record.key, record.iv, record.mac, record.pba, pipe);
-            sworndisk->lsm_tree->put(sworndisk->lsm_tree, lba, record_copy(&record), &replaced, &old);
+            sworndisk->lsm_tree->put(sworndisk->lsm_tree, lba, record_copy(&record));
 #ifdef DEBUG_CRYPT
             btox(key_hex, record.key, AES_GCM_KEY_SIZE << 1);
             btox(iv_hex, record.iv, AES_GCM_IV_SIZE << 1);
@@ -63,19 +63,21 @@ void segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
                 record.pba, key_hex, iv_hex, mac_hex, dm_bm_checksum(pipe, DATA_BLOCK_SIZE, 0));
             kernel_write(this->crypt_info, str, strlen(str), &this->crypt_info_pos);
 #endif
-            return;
+            return MODIFY_IN_MEM_BUFFER;
         }
     }
 
+fill_buffer:
     bio_get_data(bio, buffer + bio_block_sector_offset(bio) * SECTOR_SIZE, bio_get_data_len(bio));
     buf->push_block(buf, lba, buffer);
+    return PUSH_NEW_BLOCK;
 }
 
 void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer) {
     dm_block_t pba;
     void *pipe = NULL, *block = NULL;
-    bool replaced;
-    struct record* record, old;
+    bool exists = false;
+    struct record *record, pre;
 
 #ifdef DEBUG_CRYPT
     char str[512] = {0};
@@ -84,6 +86,8 @@ void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer)
     char iv_hex[(AES_GCM_IV_SIZE << 1) + 1] = {0};
 #endif
     DEFAULT_SEGMENT_BUFFER_THIS_POINTER_DECLARE
+
+    exists = !(sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &pre));
 
     pba = (this->cur_segment * SECTOES_PER_SEGMENT + this->cur_sector) / SECTORS_PER_BLOCK;
     record = record_create(pba, NULL, NULL, NULL);
@@ -102,10 +106,10 @@ void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer)
     kernel_write(this->crypt_info, str, strlen(str), &this->crypt_info_pos);
 #endif
 
-    sworndisk->lsm_tree->put(sworndisk->lsm_tree, lba, record, &replaced, &old);
-    if (replaced)
-        sworndisk->metadata->data_segment_table->return_block(sworndisk->metadata->data_segment_table, old.pba);
-    sworndisk->metadata->reverse_index_table->set(sworndisk->metadata->reverse_index_table, pba, lba);
+    sworndisk->lsm_tree->put(sworndisk->lsm_tree, lba, record);
+    sworndisk->meta->rit->set(sworndisk->meta->rit, pba, lba);
+    if (exists)
+        sworndisk->meta->dst->return_block(sworndisk->meta->dst, pre.pba);
 
     this->cur_sector += SECTORS_PER_BLOCK;
     if (this->cur_sector >= SECTOES_PER_SEGMENT) {

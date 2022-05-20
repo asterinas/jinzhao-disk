@@ -142,7 +142,7 @@ size_t __index_region_blocks(size_t nr_disk_level, size_t common_ratio, size_t m
 	size_t total_bit = __total_bit(nr_disk_level, common_ratio, max_disk_level_capacity);
 	size_t extra_bit = __extra_bit(max_disk_level_capacity);
 
-	return __bytes_to_block((total_bit + extra_bit)* __bit_array_len(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE) * sizeof(struct bit_node), SWORNDISK_METADATA_BLOCK_SIZE);
+	return __bytes_to_block((total_bit + extra_bit)* calculate_bit_size(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE), SWORNDISK_METADATA_BLOCK_SIZE);
 }
 
 size_t __journal_region_blocks(size_t nr_journal, size_t journal_size) {
@@ -805,7 +805,7 @@ int bit_catalogue_init(struct bit_catalogue* this, struct dm_block_manager* bm, 
 	this->max_version = bitc_get_current_version(this);
 	this->lsm_catalogue.get_next_version = bitc_get_next_version;
 	this->format = bit_catalogue_format;
-	this->lsm_catalogue.file_size = __bit_array_len(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE) * sizeof(struct bit_node);
+	this->lsm_catalogue.file_size = calculate_bit_size(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE);
 	this->lsm_catalogue.total_file = this->nr_bit;
 	this->lsm_catalogue.start = this->index_region_start * SWORNDISK_METADATA_BLOCK_SIZE;
 	this->lsm_catalogue.nr_disk_level = superblock->nr_disk_level;
@@ -863,11 +863,11 @@ int metadata_format(struct metadata* this) {
 	if (r)
 		return r;
 	
-	r = this->reverse_index_table->format(this->reverse_index_table);
+	r = this->rit->format(this->rit);
 	if (r)
 		return r;
 
-	r = this->data_segment_table->format(this->data_segment_table);
+	r = this->dst->format(this->dst);
 	if (r)
 		return r;
 
@@ -895,13 +895,13 @@ int metadata_init(struct metadata* this, struct block_device* bdev) {
 	if (IS_ERR_OR_NULL(this->seg_validator))
 		goto bad;
 
-	this->reverse_index_table = reverse_index_table_create(this->bm, 
+	this->rit = reverse_index_table_create(this->bm, 
 	  this->superblock->reverse_index_table_start, this->superblock->nr_segment * this->superblock->blocks_per_seg);
-	if (IS_ERR_OR_NULL(this->reverse_index_table))
+	if (IS_ERR_OR_NULL(this->rit))
 		goto bad;
 
-	this->data_segment_table = data_segment_table_create(this->bm, this->superblock->data_seg_table_start, this->superblock->nr_segment);
-	if (IS_ERR_OR_NULL(this->data_segment_table))
+	this->dst = data_segment_table_create(this->bm, this->superblock->data_seg_table_start, this->superblock->nr_segment);
+	if (IS_ERR_OR_NULL(this->dst))
 		goto bad;
 
 	this->bit_catalogue = bit_catalogue_create(this->bm, this->superblock);
@@ -921,8 +921,8 @@ bad:
 		dm_block_manager_destroy(this->bm);
 	superblock_destroy(this->superblock);
 	seg_validator_destroy(this->seg_validator);
-	reverse_index_table_destroy(this->reverse_index_table);
-	data_segment_table_destroy(this->data_segment_table);
+	reverse_index_table_destroy(this->rit);
+	data_segment_table_destroy(this->dst);
 	bit_catalogue_destroy(this->bit_catalogue);
 	return -EAGAIN;
 }
@@ -950,8 +950,8 @@ void metadata_destroy(struct metadata* this) {
 		}
 		superblock_destroy(this->superblock);
 		seg_validator_destroy(this->seg_validator);
-		reverse_index_table_destroy(this->reverse_index_table);
-		data_segment_table_destroy(this->data_segment_table);
+		reverse_index_table_destroy(this->rit);
+		data_segment_table_destroy(this->dst);
 		bit_catalogue_destroy(this->bit_catalogue);
 		kfree(this);
 	}
