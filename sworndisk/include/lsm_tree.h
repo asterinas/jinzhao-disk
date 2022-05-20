@@ -52,13 +52,16 @@ struct bit_pointer {
 } __packed;
 
 struct bit_child {
+    bool is_leaf: 1;
     uint32_t key;
     struct bit_pointer pointer;
 } __packed;
 
+#define BIT_LEAF_LEN DEFAULT_BIT_DEGREE
 struct bit_leaf {
-    uint32_t key;
-    struct record record;
+    size_t nr_record;
+    uint32_t keys[BIT_LEAF_LEN];
+    struct record records[BIT_LEAF_LEN];
     struct bit_pointer next;
 } __packed;
 
@@ -67,6 +70,13 @@ struct bit_inner {
     struct bit_child children[DEFAULT_BIT_DEGREE];
 } __packed;
 
+
+#define BIT_NODE_SIZE sizeof(struct bit_node)
+#define BIT_LEAF_SIZE sizeof(struct bit_leaf)
+#define BIT_INNER_SIZE sizeof(struct bit_inner)
+#define BIT_NODE_UNION_SIZE max(BIT_LEAF_SIZE, BIT_INNER_SIZE)
+#define BIT_LEAF_NODE_SIZE (BIT_NODE_SIZE - BIT_NODE_UNION_SIZE + BIT_LEAF_SIZE)
+#define BIT_INNER_NODE_SIZE (BIT_NODE_SIZE - BIT_NODE_UNION_SIZE + BIT_INNER_SIZE)
 struct bit_node {
     bool is_leaf: 1;
     union {
@@ -78,6 +88,7 @@ struct bit_node {
 
 void bit_node_print(struct bit_node* bit_node);
 size_t __bit_array_len(size_t capacity, size_t nr_degree);
+size_t calculate_bit_size(size_t nr_record, size_t nr_degree);
 
 struct lsm_file {
     size_t id, level, version;
@@ -131,6 +142,7 @@ struct bit_builder {
     struct bit_builder_context* ctx;
     char next_key[AES_GCM_KEY_SIZE];
     char next_iv[AES_GCM_IV_SIZE];
+    struct bit_leaf cur_leaf;
 };
 
 struct lsm_file_builder* bit_builder_create(struct file* file, size_t begin, size_t id, size_t level, size_t version);

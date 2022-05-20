@@ -1,6 +1,7 @@
 #include <linux/bsearch.h>
 #include <linux/slab.h>
 #include <linux/mempool.h>
+#include <linux/random.h>
 
 #include "../include/dm_sworndisk.h"
 #include "../include/lsm_tree.h"
@@ -17,8 +18,10 @@ void bit_node_print(struct bit_node* bit_node) {
 
     DMINFO("is leaf: %d", bit_node->is_leaf);
     if (bit_node->is_leaf) {
-        DMINFO("key: %d", bit_node->leaf.key);
-        DMINFO("value: %lld", bit_node->leaf.record.pba);
+        for (i = 0; i < BIT_LEAF_LEN; ++i) {
+            DMINFO("\tkey: %d", bit_node->leaf.keys[i]);
+            DMINFO("\tvalue: %lld", bit_node->leaf.records[i].pba);
+        }
         DMINFO("next: %ld", bit_node->leaf.next.pos);
     } else {
         for (i = 0; i < bit_node->inner.nr_child; ++i) {
@@ -29,14 +32,46 @@ void bit_node_print(struct bit_node* bit_node) {
     }
 }
 
-// block index table builder implementaion
-size_t __bit_height(size_t capacity, size_t nr_degree) {
-    size_t height = 1, size = 1;
+int bit_node_encode(struct bit_node* node, char* key, char* iv) {
+    char* mac = NULL;
+    size_t data_len = BIT_INNER_NODE_SIZE - AES_GCM_AUTH_SIZE;
 
-    if (!capacity)
+    if (node->is_leaf)
+        data_len = BIT_LEAF_NODE_SIZE - AES_GCM_AUTH_SIZE;
+    mac = ((char*)node) + data_len;
+    return global_cipher->encrypt(global_cipher, (char*)node, data_len, key, iv, mac, 0, (char*)node);
+}
+
+// we don't know whether the node is leaf when decrypting
+int bit_node_decode(char* data, bool is_leaf, char* key, char* iv) {
+    int err = 0;
+    char* mac = NULL;
+    size_t len = BIT_INNER_NODE_SIZE - AES_GCM_AUTH_SIZE;
+
+    if (is_leaf)
+        len = BIT_LEAF_NODE_SIZE - AES_GCM_AUTH_SIZE;
+    mac = data + len;
+    err = global_cipher->decrypt(global_cipher, data, len, key, iv, mac, 0, data);
+    if (err)
+        return err;
+
+    memcpy(((struct bit_node*)data)->mac, mac, AES_GCM_AUTH_SIZE);
+    return 0;
+}
+
+// block index table builder implementaion
+size_t __bit_height(size_t nr_record, size_t nr_degree) {
+    uint32_t rem = 0;
+    size_t height = 1, size = 1, nr_leaf;
+
+    if (!nr_record)
         return 0;
 
-    while(size < capacity) {
+    nr_leaf = div_u64_rem(nr_record, BIT_LEAF_LEN, &rem);
+    if (rem)
+        nr_leaf += 1;
+
+    while(size < nr_leaf) {
         height += 1;
         size *= nr_degree;
     }
@@ -44,18 +79,37 @@ size_t __bit_height(size_t capacity, size_t nr_degree) {
     return height;
 }
 
-size_t __bit_array_len(size_t capacity, size_t nr_degree) {
-    size_t len = 0, size = 1;
+size_t __bit_array_len(size_t nr_record, size_t nr_degree) {
+    uint32_t rem = 0;
+    size_t len = 0, size = 1, nr_leaf;
 
-    if (!capacity)
+    if (!nr_record)
         return 0;
     
-    while (size < capacity) {
+    nr_leaf = div_u64_rem(nr_record, BIT_LEAF_LEN, &rem);
+    if (rem)
+        nr_leaf += 1;
+
+    while (size < nr_leaf) {
         len += size;
         size *= nr_degree;
     }
 
-    return len + capacity;
+    return len + nr_leaf;
+}
+
+size_t calculate_bit_size(size_t nr_record, size_t nr_degree) {
+    uint32_t rem = 0;
+    size_t nr_leaf;
+
+    if (!nr_record)
+        return 0;
+    
+    nr_leaf = div_u64_rem(nr_record, BIT_LEAF_LEN, &rem);
+    if (rem)
+        nr_leaf += 1;
+    
+    return (__bit_array_len(nr_record, nr_degree) - nr_leaf) * BIT_INNER_NODE_SIZE + nr_leaf * BIT_LEAF_NODE_SIZE;
 }
 
 struct bit_node __bit_inner(struct bit_builder_context* ctx) {
@@ -66,7 +120,8 @@ struct bit_node __bit_inner(struct bit_builder_context* ctx) {
     };
 
     for (i = 0; i < ctx->nr; ++i) {
-        node.inner.children[i].key = ctx->nodes[i].is_leaf ? ctx->nodes[i].leaf.key : ctx->nodes[i].inner.children[ctx->nodes[i].inner.nr_child - 1].key;
+        node.inner.children[i].is_leaf = ctx->nodes[i].is_leaf;
+        node.inner.children[i].key = ctx->nodes[i].is_leaf ? ctx->nodes[i].leaf.keys[ctx->nodes[i].leaf.nr_record-1] : ctx->nodes[i].inner.children[ctx->nodes[i].inner.nr_child - 1].key;
         node.inner.children[i].pointer = ctx->pointers[i];
     }
 
@@ -84,31 +139,38 @@ void bit_builder_buffer_flush_if_full(struct bit_builder* this) {
 }
 
 int bit_builder_add_entry(struct lsm_file_builder* builder, struct entry* entry) {
-    struct bit_node inner_node, leaf_node = {
-        .is_leaf = true,
-        .leaf.key = entry->key,
-        .leaf.record = *(struct record*)(entry->val)
-    };
-    size_t h = 0, cur;
     struct bit_builder* this = container_of(builder, struct bit_builder, lsm_file_builder);
+    struct bit_node inner_node, *leaf_node = NULL;
+    size_t h = 0, cur, nr_record = this->cur_leaf.nr_record;
     struct bit_pointer pointer = {
         .pos = this->begin + this->cur,
     };
-
-    memcpy(pointer.key, this->next_key, AES_GCM_KEY_SIZE);
-    memcpy(pointer.iv, this->next_iv, AES_GCM_IV_SIZE);
 
     if (!this->has_first_key) {
         this->first_key = entry->key;
         this->has_first_key = true;
     } 
     this->last_key = entry->key;
+    this->lsm_file_builder.size += 1;
 
-    this->ctx[h].nodes[this->ctx[h].nr] = leaf_node;
-    this->ctx[h].pointers[this->ctx[h].nr]  = pointer;
+    this->cur_leaf.keys[nr_record] = entry->key;
+    this->cur_leaf.records[nr_record] = *(struct record*)entry->val;
+    this->cur_leaf.nr_record += 1;
+    if (this->cur_leaf.nr_record < BIT_LEAF_LEN)
+        goto exit;
+
+    memcpy(pointer.key, this->next_key, AES_GCM_KEY_SIZE);
+    memcpy(pointer.iv, this->next_iv, AES_GCM_IV_SIZE);
+
+    leaf_node = kmalloc(sizeof(struct bit_node), GFP_KERNEL);
+    leaf_node->is_leaf = true;
+    leaf_node->leaf = this->cur_leaf;
+
+    this->ctx[h].nodes[this->ctx[h].nr] = *leaf_node;
+    this->ctx[h].pointers[this->ctx[h].nr] = pointer;
     bit_builder_buffer_flush_if_full(this);
     cur = this->cur;
-    this->cur += sizeof(struct bit_node);
+    this->cur += BIT_LEAF_NODE_SIZE;
 
 
     this->ctx[h].nr += 1;
@@ -118,35 +180,61 @@ int bit_builder_add_entry(struct lsm_file_builder* builder, struct entry* entry)
         inner_node = __bit_inner(&this->ctx[h]);
         this->ctx[h+1].nodes[this->ctx[h+1].nr] = inner_node;
         ptr->pos = this->begin + this->cur;
-        global_cipher->encrypt(global_cipher, (char*)&inner_node, sizeof(inner_node) - AES_GCM_AUTH_SIZE, ptr->key, ptr->iv, inner_node.mac, 0, (char*)&inner_node);
-        memcpy(this->buffer + this->cur, &inner_node, sizeof(struct bit_node));
-        this->cur += sizeof(struct bit_node);
+        // generate random key and iv
+        get_random_bytes(ptr->key, AES_GCM_KEY_SIZE);
+        get_random_bytes(ptr->iv, AES_GCM_IV_SIZE);
+        bit_node_encode(&inner_node, ptr->key, ptr->iv);
+        memcpy(this->buffer + this->cur, &inner_node, BIT_INNER_NODE_SIZE);
+        this->cur += BIT_INNER_NODE_SIZE;
 
         this->ctx[h+1].nr += 1;
         this->ctx[h].nr = 0;
         h += 1;
     }
 
-    leaf_node.leaf.next.pos = this->begin + this->cur;
-    memcpy(leaf_node.leaf.next.key, this->next_key, AES_GCM_KEY_SIZE);
-    memcpy(leaf_node.leaf.next.iv, this->next_iv, AES_GCM_IV_SIZE);
-    global_cipher->encrypt(global_cipher, (char*)&leaf_node, sizeof(leaf_node) - AES_GCM_AUTH_SIZE, pointer.key, pointer.iv, leaf_node.mac, 0, (char*)&leaf_node);
-    memcpy(this->buffer + cur, &leaf_node, sizeof(struct bit_node));
-    this->lsm_file_builder.size += 1;
+    leaf_node->leaf.next.pos = this->begin + this->cur;
+    // generate random key and iv
+    get_random_bytes(this->next_key, AES_GCM_KEY_SIZE);
+    get_random_bytes(this->next_iv, AES_GCM_IV_SIZE);
+    memcpy(leaf_node->leaf.next.key, this->next_key, AES_GCM_KEY_SIZE);
+    memcpy(leaf_node->leaf.next.iv, this->next_iv, AES_GCM_IV_SIZE);
+    bit_node_encode(leaf_node, pointer.key, pointer.iv);
+    memcpy(this->buffer + cur, leaf_node, BIT_LEAF_NODE_SIZE);
+    this->cur_leaf.nr_record = 0;
+
+exit:
+    if (leaf_node)
+        kfree(leaf_node);
     return 0;
 }
 
 struct lsm_file* bit_builder_complete(struct lsm_file_builder* builder) {
     struct bit_builder* this = container_of(builder, struct bit_builder, lsm_file_builder);
-    size_t h = 0;
+    size_t h = 0, cur;
     loff_t pos = this->begin;
-    struct bit_node inner_node;
-    struct bit_pointer* root_pointer;
+    struct bit_node inner_node, leaf_node = (struct bit_node) {
+        .is_leaf = true,
+        .leaf = this->cur_leaf
+    };
+    struct bit_pointer *root_pointer, pointer = {
+        .pos = this->begin + this->cur,
+    };
 
     if (this->ctx[this->height-1].nr) 
         goto exit;
 
     bit_builder_buffer_flush_if_full(this);
+
+    if (this->cur_leaf.nr_record > 0) {
+        memcpy(pointer.key, this->next_key, AES_GCM_KEY_SIZE);
+        memcpy(pointer.iv, this->next_iv, AES_GCM_IV_SIZE);
+
+        this->ctx[h].nodes[this->ctx[h].nr] = leaf_node;
+        this->ctx[h].pointers[this->ctx[h].nr] = pointer;
+        cur = this->cur;
+        this->cur += BIT_LEAF_NODE_SIZE;
+    }
+
     while (h < this->height - 1) {
         struct bit_pointer* ptr = &(this->ctx[h+1].pointers[this->ctx[h+1].nr]);
 
@@ -158,19 +246,26 @@ struct lsm_file* bit_builder_complete(struct lsm_file_builder* builder) {
         inner_node = __bit_inner(&this->ctx[h]);
         this->ctx[h+1].nodes[this->ctx[h+1].nr] = inner_node;
         ptr->pos = this->begin + this->cur;
-        global_cipher->encrypt(global_cipher, (char*)&inner_node, sizeof(inner_node) - AES_GCM_AUTH_SIZE, ptr->key, ptr->iv, inner_node.mac, 0, (char*)&inner_node);
-        memcpy(this->buffer + this->cur, &inner_node, sizeof(struct bit_node));
-        this->cur += sizeof(struct bit_node);
+        get_random_bytes(ptr->key, AES_GCM_KEY_SIZE);
+        get_random_bytes(ptr->iv, AES_GCM_IV_SIZE);
+        bit_node_encode(&inner_node, ptr->key, ptr->iv);
+        memcpy(this->buffer + this->cur, &inner_node, BIT_INNER_NODE_SIZE);
+        this->cur += BIT_INNER_NODE_SIZE;
 
         this->ctx[h+1].nr += 1;
         this->ctx[h].nr = 0;
         h += 1;
     }
 
+    if (this->cur_leaf.nr_record > 0) {
+        bit_node_encode(&leaf_node, pointer.key, pointer.iv);
+        memcpy(this->buffer + cur, &leaf_node, BIT_LEAF_NODE_SIZE);
+    }
+
 exit:
     kernel_write(this->file, this->buffer, this->cur, &pos);
     root_pointer = &(this->ctx[this->height - 1].pointers[0]);
-    return bit_file_create(this->file, this->begin + this->cur - sizeof(struct bit_node), this->id, this->level, this->version, this->first_key, this->last_key,
+    return bit_file_create(this->file, this->begin + this->cur - BIT_INNER_NODE_SIZE, this->id, this->level, this->version, this->first_key, this->last_key,
         root_pointer->key, root_pointer->iv);
 }
 
@@ -198,7 +293,9 @@ int bit_builder_init(struct bit_builder* this, struct file* file, size_t begin, 
     this->has_first_key = false;
     this->height = __bit_height(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE);
 
-    // this->buffer = mempool_alloc(builder_buffer_mempool, GFP_KERNEL);
+    // generate random key and iv
+    get_random_bytes(this->next_key, AES_GCM_KEY_SIZE);
+    get_random_bytes(this->next_iv, AES_GCM_IV_SIZE);
     this->buffer = vmalloc(DEFAULT_LSM_FILE_BUILDER_BUFFER_SIZE);
     if (!this->buffer) {
         err = -ENOMEM;
@@ -255,7 +352,9 @@ struct entry __entry(uint32_t key, void* val) {
 }
 
 int bit_file_search_leaf(struct bit_file* this, uint32_t key, struct bit_leaf* leaf) {
+    int err = 0;
     size_t i;
+    bool is_leaf = false;
     loff_t addr;
     struct bit_node bit_node;
     char encrypt_key[AES_GCM_KEY_SIZE], iv[AES_GCM_IV_SIZE];
@@ -265,18 +364,24 @@ int bit_file_search_leaf(struct bit_file* this, uint32_t key, struct bit_leaf* l
     memcpy(iv, this->root_iv, AES_GCM_IV_SIZE);
 next:
     kernel_read(this->file, &bit_node, sizeof(struct bit_node), &addr);
-    global_cipher->decrypt(global_cipher, (char*)&bit_node, sizeof(bit_node) - AES_GCM_AUTH_SIZE, encrypt_key, iv, bit_node.mac, 0, (char*)&bit_node);
-    if (bit_node.is_leaf) {
-        if (bit_node.leaf.key != key) {
-            return -ENODATA;
+    err = bit_node_decode((char*)&bit_node, is_leaf, encrypt_key, iv);
+    if (err) 
+        return -ENODATA;
+
+    if (is_leaf) {
+        for (i = 0; i < bit_node.leaf.nr_record; ++i) {
+            if (bit_node.leaf.keys[i] == key) {
+                *leaf = bit_node.leaf;
+                return 0;
+            }
         }
-            
-        *leaf = bit_node.leaf;
-        return 0;
+
+        return -ENODATA;
     }
 
     for (i = 0; i < bit_node.inner.nr_child; ++i) {
         if (key <= bit_node.inner.children[i].key) {
+            is_leaf = bit_node.inner.children[i].is_leaf;
             addr = bit_node.inner.children[i].pointer.pos;
             memcpy(encrypt_key, bit_node.inner.children[i].pointer.key, AES_GCM_KEY_SIZE);
             memcpy(iv, bit_node.inner.children[i].pointer.iv, AES_GCM_IV_SIZE);
@@ -293,6 +398,7 @@ int bit_file_first_leaf(struct bit_file* this, struct bit_leaf* leaf) {
 
 int bit_file_search(struct lsm_file* lsm_file, uint32_t key, void* val) {
     int err = 0;
+    size_t i;
     struct bit_leaf leaf;
     struct bit_file* this = container_of(lsm_file, struct bit_file, lsm_file);
 
@@ -300,14 +406,20 @@ int bit_file_search(struct lsm_file* lsm_file, uint32_t key, void* val) {
     if (err)
         return err;
 
-    *(struct record*)val = leaf.record;
-    return err;
+    for (i = 0; i < BIT_LEAF_LEN; ++i) {
+        if (leaf.keys[i] == key) {
+            *(struct record*)val = leaf.records[i];
+            return 0;
+        }
+    }
+    return -ENODATA;
 }
 
 // block index table iterator implementation
 struct bit_iterator {
     struct iterator iterator;
 
+    size_t cur_record;
     bool has_next;
     struct bit_file* bit_file;
     struct bit_leaf leaf;
@@ -321,22 +433,30 @@ bool bit_iterator_has_next(struct iterator* iter) {
 
 int bit_iterator_next(struct iterator* iter, void* data) {
     loff_t pos;
+    uint32_t key;
+    struct record record;
     struct bit_node bit_node;
     struct bit_iterator* this = container_of(iter, struct bit_iterator, iterator);
 
     if (!iter->has_next(iter))
         return -ENODATA;
 
-    *(struct entry*)data = __entry(this->leaf.key, record_copy(&this->leaf.record));
-    if (this->leaf.key >= this->bit_file->last_key) {
+    key = this->leaf.keys[this->cur_record];
+    record = this->leaf.records[this->cur_record];
+    *(struct entry*)data = __entry(key, record_copy(&record));
+    if (key >= this->bit_file->last_key) {
         this->has_next = false;
         return 0;
     }
 
-    pos = this->leaf.next.pos;
-    kernel_read(this->bit_file->file, &bit_node, sizeof(struct bit_node), &pos);
-    global_cipher->decrypt(global_cipher, (char*)&bit_node, sizeof(bit_node) - AES_GCM_AUTH_SIZE, this->leaf.next.key, this->leaf.next.iv, bit_node.mac, 0, (char*)&bit_node);
-    this->leaf = bit_node.leaf;
+    this->cur_record += 1;
+    if (this->cur_record == BIT_LEAF_LEN) {
+        pos = this->leaf.next.pos;
+        kernel_read(this->bit_file->file, &bit_node, sizeof(struct bit_node), &pos);
+        bit_node_decode((char*)&bit_node, true, this->leaf.next.key, this->leaf.next.iv);
+        this->leaf = bit_node.leaf;
+        this->cur_record = 0;
+    }
     return 0;
 }
 
@@ -351,6 +471,7 @@ void bit_iterator_destroy(struct iterator* iter) {
 int bit_iterator_init(struct bit_iterator* this, struct bit_file* bit_file, void* private) {
     int err = 0;
 
+    this->cur_record = 0;
     this->has_next = true;
     this->bit_file = bit_file;
     err = bit_file_first_leaf(this->bit_file, &this->leaf);

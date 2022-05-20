@@ -271,7 +271,8 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
         ret = -EAGAIN;
         goto bad;
     } 
-    
+
+
     INIT_WORK(&sworndisk->read_bio_worker, sworndisk_read_work_fn);
     INIT_WORK(&sworndisk->write_bio_worker, sworndisk_write_work_fn);
     INIT_WORK(&sworndisk->deferred_bio_worker, process_deferred_bios);

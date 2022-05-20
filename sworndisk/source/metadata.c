@@ -142,7 +142,7 @@ size_t __index_region_blocks(size_t nr_disk_level, size_t common_ratio, size_t m
 	size_t total_bit = __total_bit(nr_disk_level, common_ratio, max_disk_level_capacity);
 	size_t extra_bit = __extra_bit(max_disk_level_capacity);
 
-	return __bytes_to_block((total_bit + extra_bit)* __bit_array_len(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE) * sizeof(struct bit_node), SWORNDISK_METADATA_BLOCK_SIZE);
+	return __bytes_to_block((total_bit + extra_bit)* calculate_bit_size(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE), SWORNDISK_METADATA_BLOCK_SIZE);
 }
 
 size_t __journal_region_blocks(size_t nr_journal, size_t journal_size) {
@@ -805,7 +805,7 @@ int bit_catalogue_init(struct bit_catalogue* this, struct dm_block_manager* bm, 
 	this->max_version = bitc_get_current_version(this);
 	this->lsm_catalogue.get_next_version = bitc_get_next_version;
 	this->format = bit_catalogue_format;
-	this->lsm_catalogue.file_size = __bit_array_len(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE) * sizeof(struct bit_node);
+	this->lsm_catalogue.file_size = calculate_bit_size(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE);
 	this->lsm_catalogue.total_file = this->nr_bit;
 	this->lsm_catalogue.start = this->index_region_start * SWORNDISK_METADATA_BLOCK_SIZE;
 	this->lsm_catalogue.nr_disk_level = superblock->nr_disk_level;
