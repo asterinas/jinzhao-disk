@@ -27,7 +27,7 @@
 #include "../include/lsm_tree_test.h"
 
 size_t NR_SEGMENT;
-
+struct dm_sworndisk_target* sworndisk = NULL;
 
 void bio_list_add_safe(struct dm_sworndisk_target* sworndisk, struct bio_list* list, struct bio* bio) {
     unsigned long flags;
@@ -57,75 +57,64 @@ void schedule_read_bio(struct dm_sworndisk_target* sworndisk, struct bio* bio) {
     queue_work(sworndisk->wq, &sworndisk->read_bio_worker);
 }
 
-void schedule_write_bio(struct dm_sworndisk_target* sworndisk, struct bio* bio) {
-    bio_list_add_safe(sworndisk, &sworndisk->write_bios, bio);
-    queue_work(sworndisk->wq, &sworndisk->write_bio_worker);
-}
-
-void sworndisk_read_work_fn(struct work_struct* ws) {
+void sworndisk_do_read(struct bio* bio) {
     int err = 0;
-    struct dm_sworndisk_target* sworndisk = container_of(ws, struct dm_sworndisk_target, read_bio_worker);
-    struct bio* bio = NULL;
-    struct bio_list bios;
-    void* buffer = kzalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
+    loff_t addr;
+    struct record record;
+    void* buffer = kmalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
 
-    bio_list_take_safe(sworndisk, &bios, &sworndisk->read_bios);
-
-    while ((bio = bio_list_pop(&bios))) {
-        loff_t addr;
-        struct record record;
-
-        down_read(&sworndisk->rwsem);
-        err = sworndisk->lsm_tree->search(sworndisk->lsm_tree, bio_get_block_address(bio), &record);
-        if (err) {
-            bio_endio(bio);
-            up_read(&sworndisk->rwsem);
-            continue;
-        }
-        
-        bio_set_sector(bio, record.pba * SECTORS_PER_BLOCK + bio_block_sector_offset(bio));
-        err = sworndisk->seg_buffer->query_bio(sworndisk->seg_buffer, bio);
-        if (!err) {
-            bio_endio(bio);
-            up_read(&sworndisk->rwsem);
-            continue;
-        }
-
-        addr = record.pba * DATA_BLOCK_SIZE;
-        kernel_read(sworndisk->data_region, buffer, DATA_BLOCK_SIZE, &addr);
-        err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, record.key, record.iv, record.mac, record.pba, buffer);
-        if (!err)
-            bio_set_data(bio, buffer + bio_block_sector_offset(bio) * SECTOR_SIZE, bio_get_data_len(bio));
+    down_read(&sworndisk->rwsem);
+    err = sworndisk->lsm_tree->search(sworndisk->lsm_tree, bio_get_block_address(bio), &record);
+    if (err) {
         bio_endio(bio);
         up_read(&sworndisk->rwsem);
+        goto exit;
+    }
+    
+    bio_set_sector(bio, record.pba * SECTORS_PER_BLOCK + bio_block_sector_offset(bio));
+    err = sworndisk->seg_buffer->query_bio(sworndisk->seg_buffer, bio);
+    if (!err) {
+        bio_endio(bio);
+        up_read(&sworndisk->rwsem);
+        goto exit;
     }
 
+    addr = record.pba * DATA_BLOCK_SIZE;
+    kernel_read(sworndisk->data_region, buffer, DATA_BLOCK_SIZE, &addr);
+    err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, record.key, record.iv, record.mac, record.pba, buffer);
+    if (!err)
+        bio_set_data(bio, buffer + bio_block_sector_offset(bio) * SECTOR_SIZE, bio_get_data_len(bio));
+    bio_endio(bio);
+    up_read(&sworndisk->rwsem);
+
+exit:
     if (buffer)
         kfree(buffer);
 }
 
-void sworndisk_write_work_fn(struct work_struct* ws) {
-    struct dm_sworndisk_target* sworndisk = container_of(ws, struct dm_sworndisk_target, write_bio_worker);
+void sworndisk_read_work_fn(struct work_struct* ws) {
     struct bio* bio = NULL;
     struct bio_list bios;
 
-    bio_list_take_safe(sworndisk, &bios, &sworndisk->write_bios);
+    bio_list_take_safe(sworndisk, &bios, &sworndisk->read_bios);
 
     while ((bio = bio_list_pop(&bios))) {
-        down_write(&sworndisk->rwsem);
-        sworndisk->seg_buffer->push_bio(sworndisk->seg_buffer, bio);
-        bio_endio(bio);
-        up_write(&sworndisk->rwsem);
+        sworndisk_do_read(bio);
     }
+}
+
+void sworndisk_do_write(struct bio* bio) {
+    down_write(&sworndisk->rwsem);
+    sworndisk->seg_buffer->push_bio(sworndisk->seg_buffer, bio);
+    bio_endio(bio);
+    up_write(&sworndisk->rwsem);
 }
 
 void process_deferred_bios(struct work_struct *ws) {
 	unsigned long flags;
 	struct bio_list bios;
 	struct bio* bio;
-    struct dm_sworndisk_target *sworndisk;
 
-    sworndisk = container_of(ws, struct dm_sworndisk_target, deferred_bio_worker);
 	bio_list_init(&bios);
 	spin_lock_irqsave(&sworndisk->lock, flags);
 	bio_list_merge(&bios, &sworndisk->deferred_bios);
@@ -138,7 +127,7 @@ void process_deferred_bios(struct work_struct *ws) {
         }
 
         if (bio_op(bio) == REQ_OP_WRITE) {
-            schedule_write_bio(sworndisk, bio);
+            sworndisk_do_write(bio);
         }
 	}
 }
@@ -182,7 +171,6 @@ sector_t dm_devsize(struct dm_dev *dev) {
 static int dm_sworndisk_target_ctr(struct dm_target *target,
 			    unsigned int argc, char **argv)
 {
-    struct dm_sworndisk_target *sworndisk = NULL;
     unsigned long long start;
     char dummy;
     int ret;
@@ -255,7 +243,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 		goto bad;
     }
 
-    sworndisk->seg_allocator = sa_create(sworndisk);
+    sworndisk->seg_allocator = sa_create();
     if (!sworndisk->seg_allocator) {
         target->error = "could not create sworndisk segment allocator";
         ret = -EAGAIN;
@@ -265,7 +253,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
     init_rwsem(&sworndisk->rwsem);
     spin_lock_init(&sworndisk->lock);
 	bio_list_init(&sworndisk->deferred_bios);
-    sworndisk->seg_buffer = segbuf_create(sworndisk);
+    sworndisk->seg_buffer = segbuf_create();
     if (!sworndisk->seg_buffer) {
         target->error = "could not create sworndisk segment buffer";
         ret = -EAGAIN;
@@ -274,7 +262,6 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 
 
     INIT_WORK(&sworndisk->read_bio_worker, sworndisk_read_work_fn);
-    INIT_WORK(&sworndisk->write_bio_worker, sworndisk_write_work_fn);
     INIT_WORK(&sworndisk->deferred_bio_worker, process_deferred_bios);
     target->private = sworndisk;
     return 0;
@@ -316,7 +303,7 @@ static void dm_sworndisk_target_dtr(struct dm_target *ti)
         destroy_workqueue(sworndisk->wq);
     if (sworndisk->seg_allocator)
         sworndisk->seg_allocator->destroy(sworndisk->seg_allocator);
-    if (sworndisk->data_region)
+    if (sworndisk->data_region) 
         filp_close(sworndisk->data_region, NULL);
     if (sworndisk->lsm_tree) 
         sworndisk->lsm_tree->destroy(sworndisk->lsm_tree);

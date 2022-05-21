@@ -57,7 +57,7 @@ struct bit_child {
     struct bit_pointer pointer;
 } __packed;
 
-#define BIT_LEAF_LEN DEFAULT_BIT_DEGREE
+#define BIT_LEAF_LEN (DEFAULT_BIT_DEGREE << 1)
 struct bit_leaf {
     size_t nr_record;
     uint32_t keys[BIT_LEAF_LEN];
@@ -110,6 +110,8 @@ struct bit_file {
     char root_key[AES_GCM_KEY_SIZE];
     char root_iv[AES_GCM_IV_SIZE];
     uint32_t first_key, last_key;
+    rwlock_t lock;
+    struct bit_leaf cached_leaf;
 };
 
 struct lsm_file* bit_file_create(struct file* file, loff_t root, size_t id, size_t level, size_t version, uint32_t first_key, uint32_t last_key, char* root_key, char* root_iv);
@@ -197,7 +199,7 @@ struct lsm_tree {
     struct lsm_catalogue* catalogue;
     struct memtable* memtable;
     struct lsm_level** levels;
-    struct cache* cache;
+    // struct cache* cache;
     struct aead_cipher* cipher;
 
     void (*put)(struct lsm_tree* this, uint32_t key, void* val);

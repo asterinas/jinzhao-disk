@@ -5,14 +5,9 @@
 #include "../include/segment_buffer.h"
 #include "../include/segment_allocator.h"
 
-#define DEFAULT_SEGMENT_ALLOCATOR_THIS_POINTER_DECLARE struct default_segment_allocator* this; \
-            struct dm_sworndisk_target* sworndisk; \
-              this = container_of(al, struct default_segment_allocator, segment_allocator); \
-                sworndisk = this->sworndisk;
-
 int sa_get_next_free_segment(struct segment_allocator* al, size_t *seg) {
     int r;
-    DEFAULT_SEGMENT_ALLOCATOR_THIS_POINTER_DECLARE 
+    struct default_segment_allocator* this = container_of(al, struct default_segment_allocator, segment_allocator); 
 
     r = sworndisk->meta->seg_validator->next(sworndisk->meta->seg_validator, seg);
     if (r)
@@ -39,7 +34,7 @@ void sa_clean(struct segment_allocator* al) {
     struct victim* victim = NULL;
     void* buffer = kzalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
     void* plaintext = kzalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
-    DEFAULT_SEGMENT_ALLOCATOR_THIS_POINTER_DECLARE
+    struct default_segment_allocator* this = container_of(al, struct default_segment_allocator, segment_allocator); 
 
     this->status = SEGMENT_CLEANING;
     if (!buffer) goto exit;
@@ -91,26 +86,17 @@ exit:
 }
 
 void sa_destroy(struct segment_allocator* al) {
-    DEFAULT_SEGMENT_ALLOCATOR_THIS_POINTER_DECLARE
+    struct default_segment_allocator* this = container_of(al, struct default_segment_allocator, segment_allocator); 
 
     if (!IS_ERR_OR_NULL(this)) {
-        if (!IS_ERR_OR_NULL(this->io_client))
-            dm_io_client_destroy(this->io_client);
         kfree(this);
     }
 }
 
-int sa_init(struct default_segment_allocator* this, struct dm_sworndisk_target* sworndisk) {
+int sa_init(struct default_segment_allocator* this) {
     int err = 0;
-    
-    this->io_client = dm_io_client_create();
-    if (IS_ERR_OR_NULL(this->io_client)) {
-        err =  -ENOMEM;
-        goto bad;
-    }
 
     this->status = SEGMENT_ALLOCATING;
-    this->sworndisk = sworndisk;
     this->segment_allocator.get_next_free_segment = sa_get_next_free_segment;
     this->segment_allocator.clean = sa_clean;
     this->segment_allocator.destroy = sa_destroy;
@@ -121,12 +107,10 @@ int sa_init(struct default_segment_allocator* this, struct dm_sworndisk_target* 
 
     return 0;
 bad:
-    if (this->io_client)
-        dm_io_client_destroy(this->io_client);
     return err;
 }
 
-struct segment_allocator* sa_create(struct dm_sworndisk_target* sworndisk) {
+struct segment_allocator* sa_create() {
     int r;
     struct default_segment_allocator* sa;
 
@@ -134,7 +118,7 @@ struct segment_allocator* sa_create(struct dm_sworndisk_target* sworndisk) {
     if (!sa)
         return NULL;
     
-    r = sa_init(sa, sworndisk);
+    r = sa_init(sa);
     if (r)
         return NULL;
     

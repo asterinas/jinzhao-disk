@@ -10,8 +10,6 @@
 #include "memtable.h"
 #include "crypto.h"
 
-// #define DEBUG_CRYPT
-
 #define SEGMENT_BUFFER_SIZE (SECTOES_PER_SEGMENT * SECTOR_SIZE)
 
 void btox(char *xp, const char *bb, int n);
@@ -34,14 +32,8 @@ struct default_segment_buffer {
     void *buffer, *pipe;
     size_t cur_segment;
     sector_t cur_sector;
-    struct dm_sworndisk_target* sworndisk;
-
-#ifdef DEBUG_CRYPT
-    loff_t crypt_info_pos;
-    struct file* crypt_info;
-#endif
 };
 
-struct segment_buffer* segbuf_create(struct dm_sworndisk_target* sowrndisk);
+struct segment_buffer* segbuf_create(void);
 
 #endif

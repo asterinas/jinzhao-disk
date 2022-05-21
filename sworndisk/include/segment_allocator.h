@@ -24,14 +24,12 @@ struct segment_allocator {
 
 struct default_segment_allocator {
     struct segment_allocator segment_allocator;
-    struct dm_sworndisk_target* sworndisk;
     size_t nr_segment;
     size_t nr_valid_segment;
     enum segment_allocator_status status;
     void* buffer;
-    struct dm_io_client* io_client;
 };
 
-struct segment_allocator* sa_create(struct dm_sworndisk_target *sworndisk);
+struct segment_allocator* sa_create(void);
 
 #endif
