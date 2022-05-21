@@ -6,6 +6,8 @@
 
 #define DM_MSG_PREFIX "sworndisk"
 
+extern struct dm_sworndisk_target* sworndisk;
+
 /* For underlying device */
 struct dm_sworndisk_target {
     sector_t start;
@@ -16,11 +18,9 @@ struct dm_sworndisk_target {
     // workers
     struct work_struct deferred_bio_worker;
     struct work_struct read_bio_worker;
-    struct work_struct write_bio_worker;
     // bio lists
     struct bio_list deferred_bios;
     struct bio_list read_bios;
-    struct bio_list write_bios;
     // sworndisk components
 	struct metadata* meta;
     struct segment_buffer* seg_buffer;
