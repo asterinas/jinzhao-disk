@@ -1,12 +1,17 @@
 #ifndef DM_SWORNDISK_H 
 #define DM_SWORNDISK_H
 
+#include <linux/dm-io.h>
+
 #include "../../dm.h"
 #include "lsm_tree.h"
 
 #define DM_MSG_PREFIX "sworndisk"
 
 extern struct dm_sworndisk_target* sworndisk;
+extern struct bio_prefetcher prefetcher;
+int bio_prefetcher_get(struct bio_prefetcher* this, dm_block_t blkaddr, void* buffer, enum dm_io_mem_type mem_type);
+void sworndisk_read_blocks(dm_block_t blkaddr, size_t count, void* buffer, enum dm_io_mem_type mem_type);
 
 /* For underlying device */
 struct dm_sworndisk_target {
@@ -18,9 +23,11 @@ struct dm_sworndisk_target {
     // workers
     struct work_struct deferred_bio_worker;
     struct work_struct read_bio_worker;
+    struct work_struct write_bio_worker;
     // bio lists
     struct bio_list deferred_bios;
     struct bio_list read_bios;
+    struct bio_list write_bios;
     // sworndisk components
 	struct metadata* meta;
     struct segment_buffer* seg_buffer;

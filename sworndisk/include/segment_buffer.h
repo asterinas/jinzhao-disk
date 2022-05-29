@@ -35,5 +35,6 @@ struct default_segment_buffer {
 };
 
 struct segment_buffer* segbuf_create(void);
+int segbuf_query_encrypted_blocks(struct segment_buffer* buf, dm_block_t blkaddr, size_t count, void* buffer);
 
 #endif

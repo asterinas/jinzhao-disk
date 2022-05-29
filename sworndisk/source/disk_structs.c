@@ -52,7 +52,7 @@ int disk_array_format(struct disk_array* this, bool value) {
 	struct dm_block* block;
 
 	shift = 0;
-	total = this->nr_entry * this->entry_size;
+	total = __disk_array_blocks(this->nr_entry, this->entry_size, SWORNDISK_METADATA_BLOCK_SIZE) * SWORNDISK_METADATA_BLOCK_SIZE;
 	while (total > 0) {
 		r = dm_bm_write_lock(this->bm, this->start + shift, NULL, &block);
 		if (r)
