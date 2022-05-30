@@ -31,10 +31,7 @@ int segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
         buf_begin = this->cur_segment * BLOCKS_PER_SEGMENT;
         buf_end = buf_begin + this->cur_sector / SECTORS_PER_BLOCK;
         if (record.pba < buf_begin || record.pba >= buf_end) {
-            loff_t addr;
-
-            addr = record.pba * DATA_BLOCK_SIZE;
-            kernel_read(sworndisk->data_region, buffer, DATA_BLOCK_SIZE, &addr);
+            sworndisk_read_blocks(record.pba, 1, buffer, DM_IO_KMEM);
             sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, 
                 record.key, record.iv, record.mac, record.pba, buffer);
         } else {

@@ -34,7 +34,7 @@ struct dm_sworndisk_target {
     struct segment_allocator* seg_allocator;
     struct lsm_tree* lsm_tree;
     struct aead_cipher *cipher;
-    struct file* data_region;
+    // struct file* data_region;
 
     struct rw_semaphore rwsem;
 };

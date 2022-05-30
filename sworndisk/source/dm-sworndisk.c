@@ -137,7 +137,9 @@ int bio_prefetcher_get(struct bio_prefetcher* this, dm_block_t blkaddr, void* bu
     }
 
     if (!bio_prefetcher_incache(this, blkaddr)) {
-        sworndisk_read_blocks(blkaddr, this->nr_fetch, this->_buffer, DM_IO_VMA);
+        size_t remain_block = NR_SEGMENT * BLOCKS_PER_SEGMENT - blkaddr;
+
+        sworndisk_read_blocks(blkaddr, min(this->nr_fetch, remain_block), this->_buffer, DM_IO_VMA);
         this->begin = blkaddr;
         this->end = blkaddr + this->nr_fetch;
 
@@ -349,12 +351,12 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
     }
 
     NR_SEGMENT = div_u64(dm_devsize(sworndisk->data_dev), SECTOES_PER_SEGMENT);
-    sworndisk->data_region = filp_open(argv[0], O_RDWR | O_LARGEFILE, 0);
-    if (!sworndisk->data_region) {
-        target->error = "could not open sworndisk data region";
-        ret = -EAGAIN;
-		goto bad;
-    }
+    // sworndisk->data_region = filp_open(argv[0], O_RDWR | O_LARGEFILE, 0);
+    // if (!sworndisk->data_region) {
+    //     target->error = "could not open sworndisk data region";
+    //     ret = -EAGAIN;
+	// 	goto bad;
+    // }
 
     sworndisk->meta = metadata_create(sworndisk->metadata_dev->bdev);
     if (!sworndisk->meta) {
@@ -416,8 +418,8 @@ bad:
         destroy_workqueue(sworndisk->wq);
     if (sworndisk->seg_allocator)
         sworndisk->seg_allocator->destroy(sworndisk->seg_allocator);
-    if (sworndisk->data_region)
-        filp_close(sworndisk->data_region, NULL);
+    // if (sworndisk->data_region)
+    //     filp_close(sworndisk->data_region, NULL);
     if (sworndisk->lsm_tree) 
         sworndisk->lsm_tree->destroy(sworndisk->lsm_tree);
     if (sworndisk->meta)
@@ -447,8 +449,8 @@ static void dm_sworndisk_target_dtr(struct dm_target *ti)
         destroy_workqueue(sworndisk->wq);
     if (sworndisk->seg_allocator)
         sworndisk->seg_allocator->destroy(sworndisk->seg_allocator);
-    if (sworndisk->data_region) 
-        filp_close(sworndisk->data_region, NULL);
+    // if (sworndisk->data_region) 
+    //     filp_close(sworndisk->data_region, NULL);
     if (sworndisk->lsm_tree) 
         sworndisk->lsm_tree->destroy(sworndisk->lsm_tree);
     if (sworndisk->meta)
