@@ -31,10 +31,7 @@ int segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
         buf_begin = this->cur_segment * BLOCKS_PER_SEGMENT;
         buf_end = buf_begin + this->cur_sector / SECTORS_PER_BLOCK;
         if (record.pba < buf_begin || record.pba >= buf_end) {
-            loff_t addr;
-
-            addr = record.pba * DATA_BLOCK_SIZE;
-            kernel_read(sworndisk->data_region, buffer, DATA_BLOCK_SIZE, &addr);
+            sworndisk_read_blocks(record.pba, 1, buffer, DM_IO_KMEM);
             sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, 
                 record.key, record.iv, record.mac, record.pba, buffer);
         } else {
@@ -85,14 +82,41 @@ void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer)
 }
 
 void segbuf_flush_bios(struct segment_buffer* buf) {
-    int size = 0;
-    loff_t addr;
-    struct default_segment_buffer* this = container_of(buf, struct default_segment_buffer, segment_buffer);
+    // int size = 0;
+    // loff_t addr, sync_begin, sync_end;
+    // struct default_segment_buffer* this = container_of(buf, struct default_segment_buffer, segment_buffer);
 
-    addr = this->cur_segment * BLOCKS_PER_SEGMENT * DATA_BLOCK_SIZE;
-    size = kernel_write(sworndisk->data_region, this->pipe, SEGMENT_BUFFER_SIZE, &addr);
-    if (size != SEGMENT_BUFFER_SIZE)
-        DMERR("segbuf flush bio error, transferred: %d", size);
+    // addr = this->cur_segment * BLOCKS_PER_SEGMENT * DATA_BLOCK_SIZE;
+    // size = kernel_write(sworndisk->data_region, this->pipe, SEGMENT_BUFFER_SIZE, &addr);
+    // if (size != SEGMENT_BUFFER_SIZE)
+    //     DMERR("segbuf flush bio error, transferred: %d", size);
+    
+    // sync_begin = this->cur_segment * SEGMENT_BUFFER_SIZE;
+    // sync_end = sync_begin + SEGMENT_BUFFER_SIZE;
+    // vfs_fsync_range(sworndisk->data_region, sync_begin, sync_end, 0);
+
+    struct default_segment_buffer* this = container_of(buf, struct default_segment_buffer, segment_buffer);
+    unsigned long sync_error_bits;
+    struct dm_io_client* io_client = dm_io_client_create();
+    struct dm_io_request req = {
+        .bi_op = req.bi_op_flags = REQ_OP_WRITE,
+        .mem.type = DM_IO_VMA,
+        .mem.offset = 0,
+        .mem.ptr.addr = this->pipe,
+        .notify.fn = NULL,
+        .client = io_client
+    };
+    struct dm_io_region region = {
+        .bdev = sworndisk->data_dev->bdev,
+        .sector = this->cur_segment * SECTOES_PER_SEGMENT,
+        .count = SECTOES_PER_SEGMENT
+    };
+
+    dm_io(&req, 1, &region, &sync_error_bits);
+    if (sync_error_bits) 
+        DMERR("segment buffer flush error\n");
+
+    dm_io_client_destroy(io_client);
 }
 
 int segbuf_query_bio(struct segment_buffer* buf, struct bio* bio) {
@@ -107,6 +131,26 @@ int segbuf_query_bio(struct segment_buffer* buf, struct bio* bio) {
         return -ENODATA;
 
     bio_set_data(bio, this->buffer + (bi_sector - begin) * SECTOR_SIZE, bio_get_data_len(bio));
+    return 0;
+}
+
+int segbuf_query_encrypted_block(struct segment_buffer* buf, dm_block_t blkaddr, void* buffer) {
+    struct default_segment_buffer* this = container_of(buf, struct default_segment_buffer, segment_buffer);
+    dm_block_t begin = this->cur_segment * BLOCKS_PER_SEGMENT;
+    dm_block_t end = begin + div_u64(this->cur_sector, SECTORS_PER_BLOCK);
+
+    if (blkaddr < begin || blkaddr >= end)
+        return -ENODATA;
+    
+    memcpy(buffer, this->pipe + (blkaddr - begin) * DATA_BLOCK_SIZE, DATA_BLOCK_SIZE);
+    return 0;
+}
+
+int segbuf_query_encrypted_blocks(struct segment_buffer* buf, dm_block_t blkaddr, size_t count, void* buffer) {
+    size_t i;
+
+    for (i = 0; i < count; ++i) 
+        segbuf_query_encrypted_block(buf, blkaddr + i, buffer + i * DATA_BLOCK_SIZE);
     return 0;
 }
 

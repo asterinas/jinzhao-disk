@@ -57,9 +57,107 @@ void schedule_read_bio(struct dm_sworndisk_target* sworndisk, struct bio* bio) {
     queue_work(sworndisk->wq, &sworndisk->read_bio_worker);
 }
 
+void schedule_write_bio(struct dm_sworndisk_target* sworndisk, struct bio* bio) {
+    bio_list_add_safe(sworndisk, &sworndisk->write_bios, bio);
+    queue_work(sworndisk->wq, &sworndisk->write_bio_worker);
+}
+
+
+void sworndisk_read_blocks(dm_block_t blkaddr, size_t count, void* buffer, enum dm_io_mem_type mem_type) {
+    unsigned long sync_error_bits;
+    struct dm_io_client* io_client = dm_io_client_create();
+    struct dm_io_request req = {
+        .bi_op = req.bi_op_flags = REQ_OP_READ,
+        .mem.type = mem_type,
+        .mem.offset = 0,
+        .mem.ptr.addr = buffer,
+        .notify.fn = NULL,
+        .client = io_client
+    };
+    struct dm_io_region region = {
+        .bdev = sworndisk->data_dev->bdev,
+        .sector = blkaddr * SECTORS_PER_BLOCK,
+        .count = SECTORS_PER_BLOCK * count
+    };
+
+    dm_io(&req, 1, &region, &sync_error_bits);
+    if (sync_error_bits) 
+        DMERR("segment buffer read error\n");
+
+    dm_io_client_destroy(io_client);
+
+    // read data block from segment buffer
+    segbuf_query_encrypted_blocks(sworndisk->seg_buffer, blkaddr, count, buffer);
+}
+
+struct bio_prefetcher {
+    void* _buffer;
+    dm_block_t begin, end, last_blkaddr;
+    struct mutex lock;
+    size_t nr_fetch;
+} prefetcher;
+
+#define MAX_NR_FETCH (size_t)64
+#define MIN_NR_FETCH (size_t)1
+void bio_prefetcher_init(struct bio_prefetcher* this) {
+    this->_buffer = vmalloc(MAX_NR_FETCH * DATA_BLOCK_SIZE);
+    this->begin = 0;
+    this->end = 0;
+    this->last_blkaddr = 0;
+    this->nr_fetch = MAX_NR_FETCH;
+    
+    mutex_init(&this->lock);
+}
+
+bool bio_prefetcher_empty(struct bio_prefetcher* this) {
+    return (this->begin >= this->end);
+}
+
+bool bio_prefetcher_incache(struct bio_prefetcher* this, dm_block_t blkaddr) {
+    return blkaddr >= this->begin && blkaddr < this->end;
+}
+
+void bio_prefetcher_clear(struct bio_prefetcher* this) {
+    mutex_lock(&this->lock);
+    this->begin = this->end = 0;
+    mutex_unlock(&this->lock);
+}
+
+void __bio_prefetcher_destroy(struct bio_prefetcher* this) {
+    vfree(this->_buffer);
+}
+
+int bio_prefetcher_get(struct bio_prefetcher* this, dm_block_t blkaddr, void* buffer, enum dm_io_mem_type mem_type) {
+    int err = 0;
+
+    mutex_lock(&this->lock);
+    if (!bio_prefetcher_empty(this) && this->last_blkaddr + 1 != blkaddr) {
+        err = -EAGAIN;
+        goto cleanup;
+    }
+
+    if (!bio_prefetcher_incache(this, blkaddr)) {
+        size_t remain_block = NR_SEGMENT * BLOCKS_PER_SEGMENT - blkaddr;
+
+        sworndisk_read_blocks(blkaddr, min(this->nr_fetch, remain_block), this->_buffer, DM_IO_VMA);
+        this->begin = blkaddr;
+        this->end = blkaddr + this->nr_fetch;
+
+        this->nr_fetch = max(this->nr_fetch >> 1, MIN_NR_FETCH + 1);
+    } else {
+        this->nr_fetch = min(this->nr_fetch << 1, MAX_NR_FETCH);
+    }
+    
+    memcpy(buffer, this->_buffer + (blkaddr - this->begin) * DATA_BLOCK_SIZE, DATA_BLOCK_SIZE);
+cleanup:
+    this->last_blkaddr = blkaddr;
+    mutex_unlock(&this->lock);
+    return err;
+}
+
 void sworndisk_do_read(struct bio* bio) {
     int err = 0;
-    loff_t addr;
+    // loff_t addr;
     struct record record;
     void* buffer = kmalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
 
@@ -79,8 +177,11 @@ void sworndisk_do_read(struct bio* bio) {
         goto exit;
     }
 
-    addr = record.pba * DATA_BLOCK_SIZE;
-    kernel_read(sworndisk->data_region, buffer, DATA_BLOCK_SIZE, &addr);
+    // addr = record.pba * DATA_BLOCK_SIZE;
+    // kernel_read(sworndisk->data_region, buffer, DATA_BLOCK_SIZE, &addr);
+    err = bio_prefetcher_get(&prefetcher, record.pba, buffer, DM_IO_KMEM);
+    if (err == -EAGAIN) 
+        sworndisk_read_blocks(record.pba, 1, buffer, DM_IO_KMEM);
     err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, record.key, record.iv, record.mac, record.pba, buffer);
     if (!err)
         bio_set_data(bio, buffer + bio_block_sector_offset(bio) * SECTOR_SIZE, bio_get_data_len(bio));
@@ -107,7 +208,48 @@ void sworndisk_do_write(struct bio* bio) {
     down_write(&sworndisk->rwsem);
     sworndisk->seg_buffer->push_bio(sworndisk->seg_buffer, bio);
     bio_endio(bio);
+    bio_prefetcher_clear(&prefetcher);
     up_write(&sworndisk->rwsem);
+}
+
+void sworndisk_write_work_fn(struct work_struct* ws) {
+    struct bio* bio = NULL;
+    struct bio_list bios;
+
+    bio_list_take_safe(sworndisk, &bios, &sworndisk->write_bios);
+
+    while ((bio = bio_list_pop(&bios))) {
+       sworndisk_do_write(bio);
+    }
+}
+
+struct bio_reader {
+    struct bio* bio;
+    struct work_struct worker;
+};
+
+
+void bio_reader_destroy(struct bio_reader* reader) {
+    kfree(reader);
+}
+
+#define MAX_READER_COUNT (BLOCKS_PER_SEGMENT << 6)
+static struct semaphore max_reader = __SEMAPHORE_INITIALIZER(max_reader, MAX_READER_COUNT);
+void bio_reader_fn(struct work_struct* ws) {
+    struct bio_reader* reader = container_of(ws, struct bio_reader, worker);
+    sworndisk_do_read(reader->bio);
+    bio_reader_destroy(reader);
+    up(&max_reader);
+}
+
+void bio_reader_schedule(struct bio* bio) {
+    struct bio_reader* reader;
+    
+    down(&max_reader);
+    reader = kzalloc(sizeof(struct bio_reader), GFP_KERNEL);
+    reader->bio = bio;
+    INIT_WORK(&reader->worker, bio_reader_fn);
+    queue_work(sworndisk->wq, &reader->worker);
 }
 
 void process_deferred_bios(struct work_struct *ws) {
@@ -123,11 +265,11 @@ void process_deferred_bios(struct work_struct *ws) {
 
 	while ((bio = bio_list_pop(&bios))) {
         if (bio_op(bio) == REQ_OP_READ) {
-            schedule_read_bio(sworndisk, bio);
+            bio_reader_schedule(bio);
         }
 
         if (bio_op(bio) == REQ_OP_WRITE) {
-            sworndisk_do_write(bio);
+            schedule_write_bio(sworndisk, bio);
         }
 	}
 }
@@ -182,6 +324,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
         goto bad;
     }
 
+    bio_prefetcher_init(&prefetcher);
     sworndisk = kzalloc(sizeof(struct dm_sworndisk_target), GFP_KERNEL);
     if (!sworndisk) {
         DMERR("Error in kmalloc");
@@ -208,12 +351,12 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
     }
 
     NR_SEGMENT = div_u64(dm_devsize(sworndisk->data_dev), SECTOES_PER_SEGMENT);
-    sworndisk->data_region = filp_open(argv[0], O_RDWR | O_LARGEFILE, 0);
-    if (!sworndisk->data_region) {
-        target->error = "could not open sworndisk data region";
-        ret = -EAGAIN;
-		goto bad;
-    }
+    // sworndisk->data_region = filp_open(argv[0], O_RDWR | O_LARGEFILE, 0);
+    // if (!sworndisk->data_region) {
+    //     target->error = "could not open sworndisk data region";
+    //     ret = -EAGAIN;
+	// 	goto bad;
+    // }
 
     sworndisk->meta = metadata_create(sworndisk->metadata_dev->bdev);
     if (!sworndisk->meta) {
@@ -262,19 +405,21 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 
 
     INIT_WORK(&sworndisk->read_bio_worker, sworndisk_read_work_fn);
+    INIT_WORK(&sworndisk->write_bio_worker, sworndisk_write_work_fn);
     INIT_WORK(&sworndisk->deferred_bio_worker, process_deferred_bios);
     target->private = sworndisk;
     return 0;
 
 bad:
+    __bio_prefetcher_destroy(&prefetcher);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
     if (sworndisk->wq) 
         destroy_workqueue(sworndisk->wq);
     if (sworndisk->seg_allocator)
         sworndisk->seg_allocator->destroy(sworndisk->seg_allocator);
-    if (sworndisk->data_region)
-        filp_close(sworndisk->data_region, NULL);
+    // if (sworndisk->data_region)
+    //     filp_close(sworndisk->data_region, NULL);
     if (sworndisk->lsm_tree) 
         sworndisk->lsm_tree->destroy(sworndisk->lsm_tree);
     if (sworndisk->meta)
@@ -297,14 +442,15 @@ bad:
 static void dm_sworndisk_target_dtr(struct dm_target *ti)
 {
     struct dm_sworndisk_target *sworndisk = (struct dm_sworndisk_target *) ti->private;
+    __bio_prefetcher_destroy(&prefetcher);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
     if (sworndisk->wq) 
         destroy_workqueue(sworndisk->wq);
     if (sworndisk->seg_allocator)
         sworndisk->seg_allocator->destroy(sworndisk->seg_allocator);
-    if (sworndisk->data_region) 
-        filp_close(sworndisk->data_region, NULL);
+    // if (sworndisk->data_region) 
+    //     filp_close(sworndisk->data_region, NULL);
     if (sworndisk->lsm_tree) 
         sworndisk->lsm_tree->destroy(sworndisk->lsm_tree);
     if (sworndisk->meta)

@@ -15,6 +15,7 @@
 #define STRUCTURE_BLOCKS(x) (sizeof(x) ? (sizeof(x) - 1) / SWORNDISK_METADATA_BLOCK_SIZE + 1: 0) 
 
 size_t __bytes_to_block(size_t bytes, size_t block_size);
+size_t __disk_array_blocks(size_t nr_elem, size_t elem_size, size_t block_size);
 
 // superblock definition
 #define NR_SUPERBLOCK_METHOD 5
@@ -75,7 +76,6 @@ void seg_validator_destroy(struct seg_validator* this);
 
 // reverse index table definition
 struct reverse_index_entry {
-	bool valid: 1;
 	dm_block_t lba;
 } __packed;
 

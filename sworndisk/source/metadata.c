@@ -344,8 +344,7 @@ int __reverse_index_table_set_entry(struct reverse_index_table* this, dm_block_t
 int reverse_index_table_set(struct reverse_index_table* this, dm_block_t pba, dm_block_t lba) {
 	int r;
 	struct reverse_index_entry entry = {
-		.valid = true,
-		.lba = lba
+		.lba = lba,
 	};
 
 	r = __reverse_index_table_set_entry(this, pba, &entry);
@@ -363,13 +362,8 @@ int reverse_index_table_get(struct reverse_index_table* this, dm_block_t pba, dm
 	struct reverse_index_entry* entry;
 
 	entry = __reverse_index_table_get_entry(this, pba);
-	if (IS_ERR_OR_NULL(entry))
-		return -ENODATA;
-	
-	if (!entry->valid)
-		return -ENODATA;
-	
 	*lba = entry->lba;
+	kfree(entry);
 	return 0;
 }
 
@@ -527,7 +521,7 @@ int data_segment_table_return_block(struct data_segment_table* this, dm_block_t 
 	}
 
 	entry->nr_valid_block -= 1;
-	clear_bit(offset, entry->block_validity_table);
+	bitmap_clear(entry->block_validity_table, offset, 1);
 
 	err = this->array->set(this->array, segment_id, entry);
 	if (err) 
@@ -535,9 +529,6 @@ int data_segment_table_return_block(struct data_segment_table* this, dm_block_t 
 
 	victim = this->remove_victim(this, segment_id);
 	victim_destroy(victim);
-	
-	if (!victim && entry->nr_valid_block < BLOCKS_PER_SEGMENT - 1)
-		goto exit;
 
 	victim = victim_create(segment_id, entry->nr_valid_block, entry->block_validity_table);
 	if (IS_ERR_OR_NULL(victim)) {
@@ -663,7 +654,10 @@ struct data_segment_table* data_segment_table_create(struct dm_block_manager* bm
 void data_segment_table_destroy(struct data_segment_table* this) {	
 	if (!IS_ERR_OR_NULL(this)) {
 		while(!RB_EMPTY_ROOT(&this->victims)) {
-			victim_destroy(this->pop_victim(this));
+			struct victim* victim = this->pop_victim(this);
+			// if (victim)
+				// DMINFO("victim: %ld, nr_valid: %ld", victim->segment_id, victim->nr_valid_block);
+			victim_destroy(victim);
 		}
 		if (!IS_ERR_OR_NULL(this->node_list)) 
 			kfree(this->node_list);
