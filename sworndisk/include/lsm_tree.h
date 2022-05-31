@@ -8,6 +8,7 @@
 #include "disk_structs.h"
 #include "hashmap.h"
 #include "cache.h"
+#include "bloom_filter.h"
 
 #define DEFAULT_LSM_TREE_NR_DISK_LEVEL 2
 #define DEFAULT_LSM_LEVEL0_NR_FILE 4
@@ -102,6 +103,7 @@ struct lsm_file {
     void (*destroy)(struct lsm_file* lsm_file);
 };
 
+#define BIT_BLOOM_FILTER_SIZE (DEFAULT_LSM_FILE_CAPACITY << 1)
 struct bit_file {
     struct lsm_file lsm_file;
 
@@ -112,9 +114,11 @@ struct bit_file {
     uint32_t first_key, last_key;
     rwlock_t lock;
     struct bit_leaf cached_leaf;
+    loff_t filter_begin;
+    struct bloom_filter* filter;
 };
 
-struct lsm_file* bit_file_create(struct file* file, loff_t root, size_t id, size_t level, size_t version, uint32_t first_key, uint32_t last_key, char* root_key, char* root_iv);
+struct lsm_file* bit_file_create(struct file* file, loff_t root, size_t id, size_t level, size_t version, uint32_t first_key, uint32_t last_key, char* root_key, char* root_iv, loff_t filter_begin);
 
 #define DEFAULT_LSM_FILE_BUILDER_BUFFER_MEMPOOL_SIZE 2
 #define DEFAULT_LSM_FILE_BUILDER_BUFFER_SIZE SEGMENT_BUFFER_SIZE
@@ -145,6 +149,7 @@ struct bit_builder {
     char next_key[AES_GCM_KEY_SIZE];
     char next_iv[AES_GCM_IV_SIZE];
     struct bit_leaf cur_leaf;
+    struct bloom_filter* filter;
 };
 
 struct lsm_file_builder* bit_builder_create(struct file* file, size_t begin, size_t id, size_t level, size_t version);

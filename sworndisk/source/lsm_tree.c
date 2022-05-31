@@ -109,7 +109,7 @@ size_t calculate_bit_size(size_t nr_record, size_t nr_degree) {
     if (rem)
         nr_leaf += 1;
     
-    return (__bit_array_len(nr_record, nr_degree) - nr_leaf) * BIT_INNER_NODE_SIZE + nr_leaf * BIT_LEAF_NODE_SIZE;
+    return (__bit_array_len(nr_record, nr_degree) - nr_leaf) * BIT_INNER_NODE_SIZE + nr_leaf * BIT_LEAF_NODE_SIZE + BIT_BLOOM_FILTER_SIZE;
 }
 
 struct bit_node __bit_inner(struct bit_builder_context* ctx) {
@@ -152,6 +152,7 @@ int bit_builder_add_entry(struct lsm_file_builder* builder, struct entry* entry)
     } 
     this->last_key = entry->key;
     this->lsm_file_builder.size += 1;
+    bloom_filter_add(this->filter, &entry->key, sizeof(uint32_t));
 
     this->cur_leaf.keys[nr_record] = entry->key;
     this->cur_leaf.records[nr_record] = *(struct record*)entry->val;
@@ -214,7 +215,7 @@ exit:
 struct lsm_file* bit_builder_complete(struct lsm_file_builder* builder) {
     struct bit_builder* this = container_of(builder, struct bit_builder, lsm_file_builder);
     size_t h = 0, cur;
-    loff_t pos = this->begin;
+    loff_t addr = this->begin, root, filter_begin;
     struct bit_node *inner_node = NULL, *leaf_node = NULL;
     struct bit_pointer *root_pointer, pointer = {
         .pos = this->begin + this->cur,
@@ -272,10 +273,13 @@ exit:
     if (inner_node)
         kfree(inner_node);
 
-    kernel_write(this->file, this->buffer, this->cur, &pos);
+    kernel_write(this->file, this->buffer, this->cur, &addr);
     root_pointer = &(this->ctx[this->height - 1].pointers[0]);
-    return bit_file_create(this->file, this->begin + this->cur - BIT_INNER_NODE_SIZE, this->id, this->level, this->version, this->first_key, this->last_key,
-        root_pointer->key, root_pointer->iv);
+    root = this->begin + this->cur - BIT_INNER_NODE_SIZE;
+    filter_begin = addr = root + BIT_INNER_NODE_SIZE;
+    kernel_write(this->file, this->filter->bits, this->filter->size, &addr);
+    return bit_file_create(this->file, root, this->id, this->level, this->version, this->first_key, this->last_key,
+        root_pointer->key, root_pointer->iv, filter_begin);
 }
 
 void bit_builder_destroy(struct lsm_file_builder* builder) {
@@ -286,8 +290,23 @@ void bit_builder_destroy(struct lsm_file_builder* builder) {
             kfree(this->ctx);
         if (!IS_ERR_OR_NULL(this->buffer))
             vfree(this->buffer);
+        if (!IS_ERR_OR_NULL(this->filter))
+            bloom_filter_destroy(this->filter);
         kfree(this);
     }
+}
+
+
+struct bloom_filter* bit_bloom_filter_create(void) {
+    struct bloom_filter* filter = 
+        bloom_filter_create(BIT_BLOOM_FILTER_SIZE);
+
+    if (!filter)
+        return NULL;
+    bloom_filter_add_hash(filter, djb2);
+    bloom_filter_add_hash(filter, jenkins);
+    bloom_filter_add_hash(filter, shash);
+    return filter;
 }
 
 int bit_builder_init(struct bit_builder* this, struct file* file, size_t begin, size_t id, size_t level, size_t version) {
@@ -301,6 +320,7 @@ int bit_builder_init(struct bit_builder* this, struct file* file, size_t begin, 
     this->version = version;
     this->has_first_key = false;
     this->height = __bit_height(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE);
+    this->filter = bit_bloom_filter_create();
 
     // generate random key and iv
     get_random_bytes(this->next_key, AES_GCM_KEY_SIZE);
@@ -328,6 +348,8 @@ bad:
         vfree(this->buffer);
     if (this->ctx)
         kfree(this->ctx);
+    if (this->filter)
+        bloom_filter_destroy(this->filter);
     return err;
 }
 
@@ -423,6 +445,9 @@ int bit_file_search(struct lsm_file* lsm_file, uint32_t key, void* val) {
     int err = 0;
     struct bit_leaf leaf;
     struct bit_file* this = container_of(lsm_file, struct bit_file, lsm_file);
+
+    if (!bloom_filter_contains(this->filter, &key, sizeof(uint32_t)))
+        return -ENODATA;
 
     read_lock(&this->lock);
     err = bit_leaf_search(&this->cached_leaf, key, val);
@@ -559,7 +584,8 @@ struct file_stat bit_file_get_stats(struct lsm_file* lsm_file) {
         .last_key = this->last_key,
         .id = this->lsm_file.id,
         .level = this->lsm_file.level,
-        .version = this->lsm_file.version
+        .version = this->lsm_file.version,
+        .filter_begin = this->filter_begin
     };
     
     memcpy(stats.root_key, this->root_key, AES_GCM_KEY_SIZE);
@@ -570,11 +596,14 @@ struct file_stat bit_file_get_stats(struct lsm_file* lsm_file) {
 void bit_file_destroy(struct lsm_file* lsm_file) {
     struct bit_file* this = container_of(lsm_file, struct bit_file, lsm_file);
 
-    if (!IS_ERR_OR_NULL(this))
+    if (!IS_ERR_OR_NULL(this)) {
+        if (!IS_ERR_OR_NULL(this->filter))
+            bloom_filter_destroy(this->filter);
         kfree(this);
+    }
 }
 
-int bit_file_init(struct bit_file* this, struct file* file, loff_t root, size_t id, size_t level, size_t version, uint32_t first_key, uint32_t last_key, char* root_key, char* root_iv) {
+int bit_file_init(struct bit_file* this, struct file* file, loff_t root, size_t id, size_t level, size_t version, uint32_t first_key, uint32_t last_key, char* root_key, char* root_iv, loff_t filter_begin) {
     int err = 0;
     
     this->file = file;
@@ -585,6 +614,9 @@ int bit_file_init(struct bit_file* this, struct file* file, loff_t root, size_t 
     memcpy(this->root_iv, root_iv, AES_GCM_IV_SIZE);
     rwlock_init(&this->lock);
     this->cached_leaf.nr_record = 0;
+    this->filter_begin = filter_begin;
+    this->filter = bit_bloom_filter_create();
+    bloom_filter_load(this->filter, file, filter_begin);
 
     this->lsm_file.id = id;
     this->lsm_file.level = level;
@@ -598,7 +630,7 @@ int bit_file_init(struct bit_file* this, struct file* file, loff_t root, size_t 
     return err;
 }
 
-struct lsm_file* bit_file_create(struct file* file, loff_t root, size_t id, size_t level, size_t version, uint32_t first_key, uint32_t last_key, char* root_key, char* root_iv) {
+struct lsm_file* bit_file_create(struct file* file, loff_t root, size_t id, size_t level, size_t version, uint32_t first_key, uint32_t last_key, char* root_key, char* root_iv, loff_t filter_begin) {
     int err = 0;
     struct bit_file* this = NULL;
 
@@ -608,7 +640,7 @@ struct lsm_file* bit_file_create(struct file* file, loff_t root, size_t id, size
         goto bad;
     }
 
-    err = bit_file_init(this, file, root, id, level, version, first_key, last_key, root_key, root_iv);
+    err = bit_file_init(this, file, root, id, level, version, first_key, last_key, root_key, root_iv, filter_begin);
     if (err) {
         err = -EAGAIN;
         goto bad;
@@ -1212,7 +1244,7 @@ int lsm_tree_init(struct lsm_tree* this, const char* filename, struct lsm_catalo
     list_for_each_entry(stat, &file_stats, node) {
         // DMINFO("load file, id: %ld, level: %ld, fist key: %u, last key: %u", stat->id, stat->level, stat->first_key, stat->last_key);
         lsm_file = bit_file_create(this->file, stat->root, stat->id, stat->level, stat->version, stat->first_key, stat->last_key,
-            stat->root_key, stat->root_iv);
+            stat->root_key, stat->root_iv, stat->filter_begin);
         this->levels[stat->level]->add_file(this->levels[stat->level], lsm_file);
         kfree(stat);
     }

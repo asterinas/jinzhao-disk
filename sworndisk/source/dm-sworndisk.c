@@ -24,8 +24,6 @@
 #include "../include/segment_buffer.h"
 #include "../include/cache.h"
 
-#include "../include/lsm_tree_test.h"
-
 size_t NR_SEGMENT;
 struct dm_sworndisk_target* sworndisk = NULL;
 
@@ -306,6 +304,7 @@ sector_t dm_devsize(struct dm_dev *dev) {
 	return i_size_read(dev->bdev->bd_inode) >> SECTOR_SHIFT;
 }
 
+#include "../include/bloom_filter.h"
 /*
  * This is constructor function of target gets called when we create some device of type 'dm_sworndisk_target'.
  * i.e on execution of command 'dmsetup create'. It gets called per device.

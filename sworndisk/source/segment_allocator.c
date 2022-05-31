@@ -18,6 +18,7 @@ int sa_get_next_free_segment(struct segment_allocator* al, size_t *seg) {
         return r;
 
     this->nr_valid_segment += 1;
+    // TODO: don't take all blocks in a segment together, or some blocks may never be GC
     r = sworndisk->meta->dst->take_segment(sworndisk->meta->dst, *seg);
     if (r)
         return r;
