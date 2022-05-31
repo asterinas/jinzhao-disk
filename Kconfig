@@ -643,6 +643,10 @@ config DM_ZONED
 
 	  If unsure, say N.
 
+config DM_SWORNDISK
+	tristate "SwornDisk"
+	depends on BLK_DEV_MD
+
 config DM_AUDIT
 	bool "DM audit events"
 	depends on AUDIT
@@ -651,5 +655,6 @@ config DM_AUDIT
 
 	  Enables audit logging of several security relevant events in the
 	  particular device-mapper targets, especially the integrity target.
+
 
 endif # MD

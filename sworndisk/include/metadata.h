@@ -129,7 +129,7 @@ void data_segment_table_destroy(struct data_segment_table* this);
 
 
 struct file_stat {
-	loff_t root;
+	loff_t root, filter_begin;
 	char root_key[AES_GCM_KEY_SIZE];
 	char root_iv[AES_GCM_IV_SIZE];
 	size_t id, level, version;
