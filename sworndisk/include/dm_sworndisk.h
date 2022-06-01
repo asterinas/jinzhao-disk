@@ -12,6 +12,8 @@ extern struct dm_sworndisk_target* sworndisk;
 extern struct bio_prefetcher prefetcher;
 int bio_prefetcher_get(struct bio_prefetcher* this, dm_block_t blkaddr, void* buffer, enum dm_io_mem_type mem_type);
 void sworndisk_read_blocks(dm_block_t blkaddr, size_t count, void* buffer, enum dm_io_mem_type mem_type);
+bool bio_prefetcher_incache(struct bio_prefetcher* this, dm_block_t blkaddr);
+void bio_prefetcher_clear(struct bio_prefetcher* this);
 
 /* For underlying device */
 struct dm_sworndisk_target {
