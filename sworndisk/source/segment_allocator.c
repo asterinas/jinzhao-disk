@@ -29,11 +29,15 @@ int sa_get_next_free_segment(struct segment_allocator* al, size_t *seg) {
     return 0;
 }
 
+bool offset_in_region(size_t offset, size_t region_begin, size_t region_end) {
+    return (offset >= region_begin && offset < region_end);
+}
+
 void sa_clean(struct segment_allocator* al) {
     int err;
     size_t clean = 0, target = LEAST_CLEAN_SEGMENT_ONCE * BLOCKS_PER_SEGMENT;
     struct victim victim, *p_victim = NULL;
-    void* buffer = kzalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
+    void* buffer = vmalloc(SEGMENT_BUFFER_SIZE);
     void* plaintext = kzalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
     struct default_segment_allocator* this = container_of(al, struct default_segment_allocator, segment_allocator); 
 
@@ -46,6 +50,7 @@ void sa_clean(struct segment_allocator* al) {
         // TODO: don't GC current segment buffer
         if (victim.nr_valid_block) {
             size_t offset;
+            unsigned int region_begin = 0, region_end = 0;
 
             offset = find_first_bit(victim.block_validity_table, BLOCKS_PER_SEGMENT);
             while(offset < BLOCKS_PER_SEGMENT) {
@@ -54,12 +59,18 @@ void sa_clean(struct segment_allocator* al) {
                 struct record record;
 
                 pba = victim.segment_id * BLOCKS_PER_SEGMENT + offset;
+                if (!offset_in_region(offset, region_begin, region_end)) {
+                    region_begin = offset;
+                    region_end = find_next_zero_bit(victim.block_validity_table, BLOCKS_PER_SEGMENT, region_begin);
+                    sworndisk_read_blocks(pba, region_end - region_begin, buffer + offset * DATA_BLOCK_SIZE, DM_IO_VMA);
+                }
+                
                 // addr = pba * DATA_BLOCK_SIZE;
                 // kernel_read(sworndisk->data_region, buffer, DATA_BLOCK_SIZE, &addr);
-                sworndisk_read_blocks(pba, 1, buffer, DM_IO_KMEM);
+                // sworndisk_read_blocks(pba, 1, buffer, DM_IO_KMEM);
                 sworndisk->meta->rit->get(sworndisk->meta->rit, pba, &lba);
                 sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &record);
-                err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, 
+                err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer + offset * DATA_BLOCK_SIZE, DATA_BLOCK_SIZE, 
                     record.key, record.iv, record.mac, record.pba, plaintext);
                 if (!err)
                     sworndisk->seg_buffer->push_block(sworndisk->seg_buffer, lba, plaintext);
@@ -80,7 +91,7 @@ void sa_clean(struct segment_allocator* al) {
 
 exit:
     if (buffer)
-        kfree(buffer);
+        vfree(buffer);
     if (plaintext)
         kfree(plaintext);
 

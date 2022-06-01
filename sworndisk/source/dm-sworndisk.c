@@ -111,8 +111,17 @@ bool bio_prefetcher_empty(struct bio_prefetcher* this) {
     return (this->begin >= this->end);
 }
 
-bool bio_prefetcher_incache(struct bio_prefetcher* this, dm_block_t blkaddr) {
+bool __bio_prefetcher_incache(struct bio_prefetcher* this, dm_block_t blkaddr) {
     return blkaddr >= this->begin && blkaddr < this->end;
+}
+
+bool bio_prefetcher_incache(struct bio_prefetcher* this, dm_block_t blkaddr) {
+    bool result;
+
+    mutex_lock(&this->lock);
+    result = __bio_prefetcher_incache(this, blkaddr);
+    mutex_unlock(&this->lock);
+    return result;
 }
 
 void bio_prefetcher_clear(struct bio_prefetcher* this) {
@@ -134,7 +143,7 @@ int bio_prefetcher_get(struct bio_prefetcher* this, dm_block_t blkaddr, void* bu
         goto cleanup;
     }
 
-    if (!bio_prefetcher_incache(this, blkaddr)) {
+    if (!__bio_prefetcher_incache(this, blkaddr)) {
         size_t remain_block = NR_SEGMENT * BLOCKS_PER_SEGMENT - blkaddr;
 
         sworndisk_read_blocks(blkaddr, min(this->nr_fetch, remain_block), this->_buffer, DM_IO_VMA);
