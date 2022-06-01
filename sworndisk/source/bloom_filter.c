@@ -56,7 +56,7 @@ void bloom_filter_destroy(struct bloom_filter* this) {
     if (!this)  return;
 
     if (this->bits)
-        kfree(this->bits);
+        vfree(this->bits);
     list_for_each_entry_safe(f, next, &this->hash_funcs, list) {
         bloom_hash_destroy(f);
     }
@@ -72,16 +72,17 @@ int bloom_filter_init(struct bloom_filter* this, size_t size) {
 
     INIT_LIST_HEAD(&this->hash_funcs);
     this->size = size;
-    this->bits = kzalloc(size, GFP_KERNEL);
+    this->bits = vmalloc(size);
     if (!this->bits) {
         err = -ENOMEM;
         goto bad;
     }
 
+    memset(this->bits, 0, this->size);
     return 0;
 bad:
     if (this->bits)
-        kfree(this->bits);
+        vfree(this->bits);
     return err;
 }
 
