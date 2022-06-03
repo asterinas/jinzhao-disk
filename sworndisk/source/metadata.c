@@ -354,23 +354,26 @@ int reverse_index_table_set(struct reverse_index_table* this, dm_block_t pba, dm
 	return 0;
 }
 
-struct reverse_index_entry* __reverse_index_table_get_entry(struct reverse_index_table* this, dm_block_t pba) {
-	return this->array->get(this->array, pba);
+int __reverse_index_table_get_entry(struct reverse_index_table* this, dm_block_t pba, void* entry) {
+	return this->array->get(this->array, pba, entry);
 }
 
 int reverse_index_table_get(struct reverse_index_table* this, dm_block_t pba, dm_block_t* lba) {
-	struct reverse_index_entry* entry;
+	int err = 0;
+	struct reverse_index_entry entry;
 
-	entry = __reverse_index_table_get_entry(this, pba);
-	*lba = entry->lba;
-	kfree(entry);
+	err = __reverse_index_table_get_entry(this, pba, &entry);
+	if (err)
+		return err;
+
+	*lba = entry.lba;
 	return 0;
 }
 
 int reverse_index_table_init(struct reverse_index_table* this, struct dm_block_manager* bm, dm_block_t start, size_t nr_block) {
 	this->nr_block = nr_block;
 	this->array = disk_array_create(bm, start, this->nr_block, sizeof(struct reverse_index_entry));
-	if (IS_ERR_OR_NULL(this->array))
+	if (!this->array)
 		return -ENOMEM;
 
 	this->format = reverse_index_table_format;
@@ -440,24 +443,23 @@ bool victim_less(struct rb_node* node1, const struct rb_node* node2) {
 } 
 
 int data_segment_table_load(struct data_segment_table* this) {
+	int err = 0;
 	size_t segment_id;
 	struct victim* victim;
-	struct data_segment_entry* segment;
+	struct data_segment_entry segment;
 	
 	for (segment_id = 0; segment_id < this->nr_segment; ++segment_id) {
-		segment = this->array->get(this->array, segment_id);
-		if (IS_ERR_OR_NULL(segment))
+		err = this->array->get(this->array, segment_id, &segment);
+		if (err)
 			return -ENODATA;
 		
-		if (segment->nr_valid_block < BLOCKS_PER_SEGMENT) {
-			victim = victim_create(segment_id, segment->nr_valid_block, segment->block_validity_table);
-			if (IS_ERR_OR_NULL(victim))
+		if (segment.nr_valid_block < BLOCKS_PER_SEGMENT) {
+			victim = victim_create(segment_id, segment.nr_valid_block, segment.block_validity_table);
+			if (!victim)
 				return -ENOMEM;
 			this->node_list[segment_id] = &victim->node;
 			rb_add(&victim->node, &this->victims, victim_less);
 		}
-
-		kfree(segment);
 	}
 
 	return 0;
@@ -474,74 +476,61 @@ inline size_t __block_offset_whthin_segment(dm_block_t block_id) {
 int data_segment_table_take_segment(struct data_segment_table* this, size_t segment_id) {
 	int err = 0;
 	struct victim* victim = NULL;
-	struct data_segment_entry* entry = NULL;
+	struct data_segment_entry entry;
 
-	entry = this->array->get(this->array, segment_id);
-	if (IS_ERR_OR_NULL(entry))
+	err = this->array->get(this->array, segment_id, &entry);
+	if (err)
+		return err;
+
+	if (entry.nr_valid_block) 
 		return -EINVAL;
-	
-	if (entry->nr_valid_block) {
-		err = -ENODATA;
-		goto exit;
-	}
 
-	entry->nr_valid_block = BLOCKS_PER_SEGMENT;
-	bitmap_fill(entry->block_validity_table, BLOCKS_PER_SEGMENT);
+	entry.nr_valid_block = BLOCKS_PER_SEGMENT;
+	bitmap_fill(entry.block_validity_table, BLOCKS_PER_SEGMENT);
 
-	err = this->array->set(this->array, segment_id, entry);
+	err = this->array->set(this->array, segment_id, &entry);
 	if (err) 
-		goto exit;
+		return err;
 
 
 	victim = this->remove_victim(this, segment_id);
 	victim_destroy(victim);
 
-exit:
-	if (!IS_ERR_OR_NULL(entry))
-		kfree(entry);
 	return err;
 }
 
 int data_segment_table_return_block(struct data_segment_table* this, dm_block_t block_id) {
 	int err = 0;
 	struct victim* victim = NULL;
-	struct data_segment_entry* entry = NULL;
+	struct data_segment_entry entry;
 	size_t segment_id, offset;
 
 	segment_id = __block_to_segment(block_id);
 	offset = __block_offset_whthin_segment(block_id);
 
-	entry = this->array->get(this->array, segment_id);
-	if (IS_ERR_OR_NULL(entry))
+	err = this->array->get(this->array, segment_id, &entry);
+	if (err)
+		return err;
+
+	if (!entry.nr_valid_block)
 		return -EINVAL;
 
-	if (!entry->nr_valid_block) {
-		err = -ENODATA;
-		goto exit;
-	}
+	entry.nr_valid_block -= 1;
+	bitmap_clear(entry.block_validity_table, offset, 1);
 
-	entry->nr_valid_block -= 1;
-	bitmap_clear(entry->block_validity_table, offset, 1);
-
-	err = this->array->set(this->array, segment_id, entry);
+	err = this->array->set(this->array, segment_id, &entry);
 	if (err) 
-		goto exit;
+		return err;
 
 	victim = this->remove_victim(this, segment_id);
 	victim_destroy(victim);
 
-	victim = victim_create(segment_id, entry->nr_valid_block, entry->block_validity_table);
-	if (IS_ERR_OR_NULL(victim)) {
-		err = -ENOMEM;
-		goto exit;
-	}
+	victim = victim_create(segment_id, entry.nr_valid_block, entry.block_validity_table);
+	if (!victim) 
+		return -ENOMEM;
 
 	rb_add(&victim->node, &this->victims, victim_less);
 	this->node_list[segment_id] = &victim->node;
-
-exit:
-	if (!IS_ERR_OR_NULL(entry))
-		kfree(entry);
 	return err;
 }
 
@@ -705,13 +694,13 @@ int bitc_set_file_stats(struct lsm_catalogue* lsm_catalogue, size_t fd, struct f
 }
 
 int bitc_get_file_stats(struct lsm_catalogue* lsm_catalogue, size_t fd, void* stats) {
-	struct file_stat* info;
+	int err = 0;
+	struct file_stat info;
 	struct bit_catalogue* this = container_of(lsm_catalogue, struct bit_catalogue, lsm_catalogue);
 
-	info = this->file_stats->get(this->file_stats, fd);
-	if (info) {
-		*(struct file_stat*)stats = *info;
-		kfree(info);
+	err = this->file_stats->get(this->file_stats, fd, &info);
+	if (!err) {
+		*(struct file_stat*)stats = info;
 		return 0;
 	}
 
@@ -731,8 +720,12 @@ int bitc_get_all_file_stats(struct lsm_catalogue* lsm_catalogue, struct list_hea
 		if (err)
 			return err;
 		if (valid) {
-			stat = this->file_stats->get(this->file_stats, i);
-			if (stat) {
+			stat = kzalloc(sizeof(struct file_stat), GFP_KERNEL);
+			if (!stat)
+				return -ENOMEM;
+
+			err = this->file_stats->get(this->file_stats, i, stat);
+			if (!err) {
 				list_add_tail(&stat->node, stats);
 			}
 		}

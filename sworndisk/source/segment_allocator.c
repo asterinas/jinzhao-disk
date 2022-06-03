@@ -81,7 +81,7 @@ void sa_clean(struct segment_allocator* al) {
         err = sworndisk->meta->seg_validator->test_and_return(sworndisk->meta->seg_validator, victim.segment_id, &valid);
         if (!err && valid) {
             clean += (BLOCKS_PER_SEGMENT - victim.nr_valid_block);
-            // DMINFO("clean: %ld, count: %ld", victim.segment_id, BLOCKS_PER_SEGMENT - victim.nr_valid_block);
+            DMINFO("clean: %ld, count: %ld", victim.segment_id, BLOCKS_PER_SEGMENT - victim.nr_valid_block);
             this->nr_valid_segment -= 1;
         }
 

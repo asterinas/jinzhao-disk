@@ -726,12 +726,6 @@ int bit_level_add_file(struct lsm_level* lsm_level, struct lsm_file* file) {
 
     // DMINFO("add file, level: %ld, id: %ld, first key: %u, last key: %u", 
     //   lsm_level->level, file->id, file->get_first_key(file), file->get_last_key(file));
-    if (lsm_level->level == 0) {
-        this->bit_files[this->size] = bit_file;
-        this->size += 1;
-        return 0;
-    }
-
     pos = bit_level_search_file(this, bit_file);
     if (pos + 1 < this->max_size)
         memmove(this->bit_files + pos + 1, this->bit_files + pos, (this->size - pos) * sizeof(struct bit_file*));
@@ -743,9 +737,9 @@ int bit_level_add_file(struct lsm_level* lsm_level, struct lsm_file* file) {
 int bit_level_linear_search(struct bit_level* this, uint32_t key, void* val) {
     int err = 0;
     bool found = false;
-    int i, cur_version = 0;
+    size_t i, cur_version = 0;
 
-    for (i = this->size - 1; i >= 0 ; --i) {
+    for (i = 0; i < this->size; ++i) {
         if (this->bit_files[i]->lsm_file.version < cur_version)
             continue;
         err = bit_file_search(&this->bit_files[i]->lsm_file, key, val);

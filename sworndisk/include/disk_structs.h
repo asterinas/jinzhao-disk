@@ -13,7 +13,7 @@ struct disk_array {
 
 	int (*format)(struct disk_array* this, bool value);
 	int (*set)(struct disk_array* this, size_t index, void* entry);
-	void* (*get)(struct disk_array* this, size_t index);
+	int (*get)(struct disk_array* this, size_t index, void* entry);
 };
 
 struct disk_array* disk_array_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_entry, size_t entry_size);
