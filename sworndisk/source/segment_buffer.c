@@ -51,16 +51,34 @@ fill_buffer:
     return PUSH_NEW_BLOCK;
 }
 
+dm_block_t next_block(struct default_segment_buffer* this, bool threaded_logging) {
+    struct victim victim;
+    size_t offset;
+    dm_block_t blkaddr;
+
+    if (!threaded_logging)
+        return (this->cur_segment * SECTOES_PER_SEGMENT + this->cur_sector) / SECTORS_PER_BLOCK;
+    
+    victim = *sworndisk->meta->dst->peek_victim(sworndisk->meta->dst);
+    offset = find_first_zero_bit(victim.block_validity_table, BLOCKS_PER_SEGMENT);
+    blkaddr = victim.segno * BLOCKS_PER_SEGMENT + offset;
+    sworndisk->meta->dst->take_block(sworndisk->meta->dst, blkaddr);
+    return blkaddr;
+} 
+
 void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer) {
+    int err = 0;
     dm_block_t pba;
     void *pipe = NULL, *block = NULL;
-    bool exists = false;
     struct record *record, pre;
     struct default_segment_buffer* this = container_of(buf, struct default_segment_buffer, segment_buffer);
+    bool threaded_logging = sworndisk_should_threaded_logging();
 
-    exists = !(sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &pre));
+    err = sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &pre);
+    if (!err)
+        sworndisk->meta->dst->return_block(sworndisk->meta->dst, pre.pba);
 
-    pba = (this->cur_segment * SECTOES_PER_SEGMENT + this->cur_sector) / SECTORS_PER_BLOCK;
+    pba = next_block(this, threaded_logging);
     record = record_create(pba, NULL, NULL, NULL);
     block = this->buffer + this->cur_sector * SECTOR_SIZE;
     memmove(block, buffer, DATA_BLOCK_SIZE);
@@ -70,14 +88,17 @@ void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer)
 
     sworndisk->lsm_tree->put(sworndisk->lsm_tree, lba, record);
     sworndisk->meta->rit->set(sworndisk->meta->rit, pba, lba);
-    if (exists)
-        sworndisk->meta->dst->return_block(sworndisk->meta->dst, pre.pba);
+
+    if (threaded_logging) {
+        sworndisk_write_blocks(pba, 1, pipe, DM_IO_VMA);
+        return;
+    }
 
     this->cur_sector += SECTORS_PER_BLOCK;
     if (this->cur_sector >= SECTOES_PER_SEGMENT) {
         buf->flush_bios(buf);
         this->cur_sector = 0;
-        sworndisk->seg_allocator->get_next_free_segment(sworndisk->seg_allocator, &this->cur_segment);
+        sworndisk->seg_allocator->alloc(sworndisk->seg_allocator, &this->cur_segment);
     }
 }
 
@@ -96,27 +117,8 @@ void segbuf_flush_bios(struct segment_buffer* buf) {
     // vfs_fsync_range(sworndisk->data_region, sync_begin, sync_end, 0);
 
     struct default_segment_buffer* this = container_of(buf, struct default_segment_buffer, segment_buffer);
-    unsigned long sync_error_bits;
-    struct dm_io_client* io_client = dm_io_client_create();
-    struct dm_io_request req = {
-        .bi_op = req.bi_op_flags = REQ_OP_WRITE,
-        .mem.type = DM_IO_VMA,
-        .mem.offset = 0,
-        .mem.ptr.addr = this->pipe,
-        .notify.fn = NULL,
-        .client = io_client
-    };
-    struct dm_io_region region = {
-        .bdev = sworndisk->data_dev->bdev,
-        .sector = this->cur_segment * SECTOES_PER_SEGMENT,
-        .count = SECTOES_PER_SEGMENT
-    };
-
-    dm_io(&req, 1, &region, &sync_error_bits);
-    if (sync_error_bits) 
-        DMERR("segment buffer flush error\n");
-
-    dm_io_client_destroy(io_client);
+    dm_block_t blkaddr = this->cur_segment * BLOCKS_PER_SEGMENT;
+    sworndisk_write_blocks(blkaddr, BLOCKS_PER_SEGMENT, this->pipe, DM_IO_VMA);
 }
 
 int segbuf_query_bio(struct segment_buffer* buf, struct bio* bio) {
@@ -172,7 +174,7 @@ void segbuf_destroy(struct segment_buffer* buf) {
 int segbuf_init(struct default_segment_buffer *buf) {
     int err;
 
-    err = sworndisk->seg_allocator->get_next_free_segment(sworndisk->seg_allocator, &buf->cur_segment);
+    err = sworndisk->seg_allocator->alloc(sworndisk->seg_allocator, &buf->cur_segment);
     if (err)
         return err;
 

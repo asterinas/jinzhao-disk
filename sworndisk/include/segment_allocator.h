@@ -8,7 +8,7 @@ extern size_t NR_SEGMENT;
 
 #define DATA_BLOCK_SIZE (SECTORS_PER_BLOCK * SECTOR_SIZE)
 
-#define TRIGGER_SEGMENT_CLEANING_THREADHOLD (NR_SEGMENT - 16)
+#define GC_THREADHOLD (NR_SEGMENT - 16) 
 #define LEAST_CLEAN_SEGMENT_ONCE 1
 
 enum segment_allocator_status {
@@ -17,8 +17,9 @@ enum segment_allocator_status {
 };
 
 struct segment_allocator {
-    int (*get_next_free_segment)(struct segment_allocator* al, size_t *seg);
-    void (*clean)(struct segment_allocator* al);
+    int (*alloc)(struct segment_allocator* al, size_t *seg);
+    void (*foreground_gc)(struct segment_allocator* al);
+    bool (*will_trigger_gc)(struct segment_allocator* al);
     void (*destroy)(struct segment_allocator* al);
 };
 

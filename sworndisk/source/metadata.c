@@ -156,7 +156,7 @@ size_t __seg_validity_table_blocks(size_t nr_segment) {
 }
 
 size_t __data_seg_table_blocks(size_t nr_segment) {
-	return __disk_array_blocks(nr_segment, sizeof(struct data_segment_entry), SWORNDISK_METADATA_BLOCK_SIZE);
+	return __disk_array_blocks(nr_segment, sizeof(struct dst_entry), SWORNDISK_METADATA_BLOCK_SIZE);
 }
 
 size_t __reverse_index_table_blocks(size_t nr_segment, size_t blocks_per_seg) {
@@ -288,11 +288,11 @@ int seg_validator_format(struct seg_validator* this) {
 int seg_validator_valid_segment_count(struct seg_validator* this, size_t* count) {
 	int r;
 	bool valid;
-	size_t segment_id;
+	size_t segno;
 
 	*count = 0;
-	for (segment_id = 0; segment_id < this->nr_segment; ++segment_id) {
-		r = this->seg_validity_table->get(this->seg_validity_table, segment_id, &valid);
+	for (segno = 0; segno < this->nr_segment; ++segno) {
+		r = this->seg_validity_table->get(this->seg_validity_table, segno, &valid);
 		if (r)
 			return r;
 		*count += valid;
@@ -415,14 +415,14 @@ void seg_validator_destroy(struct seg_validator* this) {
 }
 
 // data segment table implementaion
-struct victim* victim_create(size_t segment_id, size_t nr_valid_block, unsigned long* block_validity_table) {
+struct victim* victim_create(size_t segno, size_t nr_valid_block, unsigned long* block_validity_table) {
 	struct victim* victim;
 
 	victim = kmalloc(sizeof(struct victim), GFP_KERNEL);
 	if (!victim)
 		return NULL;
 	
-	victim->segment_id = segment_id;
+	victim->segno = segno;
 	victim->nr_valid_block = nr_valid_block;
 	bitmap_copy(victim->block_validity_table, block_validity_table, BLOCKS_PER_SEGMENT);
 	return victim;
@@ -442,23 +442,32 @@ bool victim_less(struct rb_node* node1, const struct rb_node* node2) {
 	return victim1->nr_valid_block < victim2->nr_valid_block;
 } 
 
-int data_segment_table_load(struct data_segment_table* this) {
+void dst_destroy_victim(struct dst* this, size_t segno) {
+	victim_destroy(this->remove_victim(this, segno));
+}
+
+int dst_add_victim(struct dst* this, size_t segno, size_t nr_valid, unsigned long* block_validity_table) {
+	struct victim* victim = victim_create(segno, nr_valid, block_validity_table);
+
+	if (!victim) 	
+		return -ENOMEM;
+	rb_add(&victim->node, &this->victims, victim_less);
+	this->node_list[segno] = &victim->node;
+	return 0;
+}
+
+int dst_load(struct dst* this) {
 	int err = 0;
-	size_t segment_id;
-	struct victim* victim;
-	struct data_segment_entry segment;
+	size_t segno;
+	struct dst_entry entry;
 	
-	for (segment_id = 0; segment_id < this->nr_segment; ++segment_id) {
-		err = this->array->get(this->array, segment_id, &segment);
+	for (segno = 0; segno < this->nr_segment; ++segno) {
+		err = this->array->get(this->array, segno, &entry);
 		if (err)
 			return -ENODATA;
 		
-		if (segment.nr_valid_block < BLOCKS_PER_SEGMENT) {
-			victim = victim_create(segment_id, segment.nr_valid_block, segment.block_validity_table);
-			if (!victim)
-				return -ENOMEM;
-			this->node_list[segment_id] = &victim->node;
-			rb_add(&victim->node, &this->victims, victim_less);
+		if (entry.nr_valid_block < BLOCKS_PER_SEGMENT) {
+			dst_add_victim(this, segno, entry.nr_valid_block, entry.block_validity_table);
 		}
 	}
 
@@ -473,12 +482,18 @@ inline size_t __block_offset_whthin_segment(dm_block_t block_id) {
 	return block_id % BLOCKS_PER_SEGMENT;
 }
 
-int data_segment_table_take_segment(struct data_segment_table* this, size_t segment_id) {
-	int err = 0;
-	struct victim* victim = NULL;
-	struct data_segment_entry entry;
+int dst_update_victim(struct dst* this, size_t segno, size_t nr_valid, unsigned long* block_validity_table) {
+	dst_destroy_victim(this, segno);
+	if (nr_valid >= BLOCKS_PER_SEGMENT)
+		return 0;
+	return dst_add_victim(this, segno, nr_valid, block_validity_table);
+}
 
-	err = this->array->get(this->array, segment_id, &entry);
+int dst_take_segment(struct dst* this, size_t segno) {
+	int err = 0;
+	struct dst_entry entry;
+
+	err = this->array->get(this->array, segno, &entry);
 	if (err)
 		return err;
 
@@ -488,27 +503,52 @@ int data_segment_table_take_segment(struct data_segment_table* this, size_t segm
 	entry.nr_valid_block = BLOCKS_PER_SEGMENT;
 	bitmap_fill(entry.block_validity_table, BLOCKS_PER_SEGMENT);
 
-	err = this->array->set(this->array, segment_id, &entry);
+	err = this->array->set(this->array, segno, &entry);
 	if (err) 
 		return err;
 
+	dst_destroy_victim(this, segno);
+	return err;
+}
 
-	victim = this->remove_victim(this, segment_id);
-	victim_destroy(victim);
+int dst_take_block(struct dst* this, dm_block_t blkaddr) {
+	int err = 0;
+	struct dst_entry entry;
+	size_t segno, offset;
+
+	segno = __block_to_segment(blkaddr);
+	offset = __block_offset_whthin_segment(blkaddr);
+
+	err = this->array->get(this->array, segno, &entry);
+	if (err)
+		return err;
+
+	if (entry.nr_valid_block >= BLOCKS_PER_SEGMENT)
+		return -EINVAL;
+
+	entry.nr_valid_block += 1;
+	bitmap_set(entry.block_validity_table, offset, 1);
+
+	err = this->array->set(this->array, segno, &entry);
+	if (err) 
+		return err;
+
+	err = dst_update_victim(this, segno, entry.nr_valid_block, entry.block_validity_table);
+	if (err)
+		return err;
 
 	return err;
 }
 
-int data_segment_table_return_block(struct data_segment_table* this, dm_block_t block_id) {
+int dst_return_block(struct dst* this, dm_block_t blkaddr) {
 	int err = 0;
-	struct victim* victim = NULL;
-	struct data_segment_entry entry;
-	size_t segment_id, offset;
+	struct dst_entry entry;
+	size_t segno, offset;
 
-	segment_id = __block_to_segment(block_id);
-	offset = __block_offset_whthin_segment(block_id);
+	segno = __block_to_segment(blkaddr);
+	offset = __block_offset_whthin_segment(blkaddr);
 
-	err = this->array->get(this->array, segment_id, &entry);
+	err = this->array->get(this->array, segno, &entry);
 	if (err)
 		return err;
 
@@ -518,63 +558,69 @@ int data_segment_table_return_block(struct data_segment_table* this, dm_block_t 
 	entry.nr_valid_block -= 1;
 	bitmap_clear(entry.block_validity_table, offset, 1);
 
-	err = this->array->set(this->array, segment_id, &entry);
+	err = this->array->set(this->array, segno, &entry);
 	if (err) 
 		return err;
 
-	victim = this->remove_victim(this, segment_id);
-	victim_destroy(victim);
+	err = dst_update_victim(this, segno, entry.nr_valid_block, entry.block_validity_table);
+	if (err)
+		return err;
 
-	victim = victim_create(segment_id, entry.nr_valid_block, entry.block_validity_table);
-	if (!victim) 
-		return -ENOMEM;
-
-	rb_add(&victim->node, &this->victims, victim_less);
-	this->node_list[segment_id] = &victim->node;
 	return err;
 }
 
-bool data_segment_table_victim_empty(struct data_segment_table* this) {
+bool dst_victim_empty(struct dst* this) {
 	return RB_EMPTY_ROOT(&this->victims);
 }
 
-struct victim* data_segment_table_peek_victim(struct data_segment_table* this) {
+struct victim* dst_peek_victim(struct dst* this) {
 	struct rb_node* node;
 
 	node = rb_first(&this->victims);
-	if (IS_ERR_OR_NULL(node))
+	if (!node)
 		return NULL;
 	
 	return rb_entry(node, struct victim, node);
 }
 
-struct victim* data_segment_table_pop_victim(struct data_segment_table* this) {
-	struct victim* victim;
+struct victim* dst_remove_victim(struct dst* this, size_t segno) {
+	if (this->node_list[segno]) {
+		struct victim* victim = rb_entry(this->node_list[segno], struct victim, node);
 
-	victim = this->peek_victim(this);
-	if (IS_ERR_OR_NULL(victim))
-		return NULL;
-	
-	rb_erase(&victim->node, &this->victims);
-	this->node_list[victim->segment_id] = NULL;
-
-	return victim;
-}
-
-struct victim* data_segment_table_remove_victim(struct data_segment_table* this, size_t segment_id) {
-	struct victim* victim = NULL;
-
-	if (this->node_list[segment_id]) {
-		victim = rb_entry(this->node_list[segment_id], struct victim, node);
+		if (!victim)
+			return NULL;
 		rb_erase(&victim->node, &this->victims);
-		this->node_list[segment_id] = NULL;
+		this->node_list[segno] = NULL;
+		return victim;
 	}
 	
-	return victim;
+	return NULL;
 }
 
-int data_segment_table_init(struct data_segment_table* this, struct dm_block_manager* bm, dm_block_t start, size_t nr_segment);
-int data_segment_table_format(struct data_segment_table* this) {
+bool should_threaded_logging(struct dst* dst) {
+	struct victim* victim;
+
+	if (dst_victim_empty(dst))
+		return false;
+	
+	victim = rb_entry(rb_first(&dst->victims), struct victim, node);
+	if (victim->nr_valid_block > (BLOCKS_PER_SEGMENT >> 1))
+		return true;
+	
+	return false;
+}
+
+struct victim* dst_pop_victim(struct dst* this) {
+	struct victim* victim = this->peek_victim(this);
+
+	if (!victim)
+		return NULL;
+	return dst_remove_victim(this, victim->segno);
+}
+
+
+int dst_init(struct dst* this, struct dm_block_manager* bm, dm_block_t start, size_t nr_segment);
+int dst_format(struct dst* this) {
 	int r;
 
 	r = this->array->format(this->array, false);
@@ -586,31 +632,31 @@ int data_segment_table_format(struct data_segment_table* this) {
 	}
 
 	kfree(this->node_list);
-
-	r = data_segment_table_init(this, this->bm, this->start, this->nr_segment);
+	r = dst_init(this, this->bm, this->start, this->nr_segment);
 	if (r)
 		return r;
 	
 	return 0;
 }
 
-int data_segment_table_init(struct data_segment_table* this, struct dm_block_manager* bm, dm_block_t start, size_t nr_segment) {
+int dst_init(struct dst* this, struct dm_block_manager* bm, dm_block_t start, size_t nr_segment) {
 	int r;
 
-	this->load = data_segment_table_load;
-	this->take_segment = data_segment_table_take_segment;
-	this->return_block = data_segment_table_return_block;
-	this->victim_empty = data_segment_table_victim_empty;
-	this->peek_victim = data_segment_table_peek_victim;
-	this->pop_victim = data_segment_table_pop_victim;
-	this->remove_victim = data_segment_table_remove_victim;
-	this->format = data_segment_table_format;
+	this->load = dst_load;
+	this->take_segment = dst_take_segment;
+	this->take_block = dst_take_block;
+	this->return_block = dst_return_block;
+	this->victim_empty = dst_victim_empty;
+	this->peek_victim = dst_peek_victim;
+	this->pop_victim = dst_pop_victim;
+	this->remove_victim = dst_remove_victim;
+	this->format = dst_format;
 
 	this->bm = bm;
 	this->start = start;
 	this->nr_segment = nr_segment;
-	this->array = disk_array_create(this->bm, this->start, this->nr_segment, sizeof(struct data_segment_entry));
-	if (IS_ERR_OR_NULL(this->array))
+	this->array = disk_array_create(this->bm, this->start, this->nr_segment, sizeof(struct dst_entry));
+	if (!this->array)
 		return -ENOMEM;
 
 	this->node_list = kzalloc(this->nr_segment * sizeof(struct rb_node*), GFP_KERNEL);
@@ -625,29 +671,25 @@ int data_segment_table_init(struct data_segment_table* this, struct dm_block_man
 	return 0;
 }
 
-struct data_segment_table* data_segment_table_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_segment) {
+struct dst* dst_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_segment) {
 	int r;
-	struct data_segment_table* this;
+	struct dst* this;
 
-	this = kmalloc(sizeof(struct data_segment_table), GFP_KERNEL);
+	this = kmalloc(sizeof(struct dst), GFP_KERNEL);
 	if (!this)	
 		return NULL;
 	
-	r = data_segment_table_init(this, bm, start, nr_segment);
+	r = dst_init(this, bm, start, nr_segment);
 	if (r)
 		return NULL;
 
 	return this;
 }
 
-void data_segment_table_destroy(struct data_segment_table* this) {	
+void dst_destroy(struct dst* this) {	
 	if (!IS_ERR_OR_NULL(this)) {
-		while(!RB_EMPTY_ROOT(&this->victims)) {
-			struct victim* victim = this->pop_victim(this);
-			// if (victim)
-				// DMINFO("victim: %ld, nr_valid: %ld", victim->segment_id, victim->nr_valid_block);
-			victim_destroy(victim);
-		}
+		while(!RB_EMPTY_ROOT(&this->victims)) 
+			victim_destroy(this->pop_victim(this));
 		if (!IS_ERR_OR_NULL(this->node_list)) 
 			kfree(this->node_list);
 		kfree(this);
@@ -887,7 +929,7 @@ int metadata_init(struct metadata* this, struct block_device* bdev) {
 	if (IS_ERR_OR_NULL(this->rit))
 		goto bad;
 
-	this->dst = data_segment_table_create(this->bm, this->superblock->data_seg_table_start, this->superblock->nr_segment);
+	this->dst = dst_create(this->bm, this->superblock->data_seg_table_start, this->superblock->nr_segment);
 	if (IS_ERR_OR_NULL(this->dst))
 		goto bad;
 
@@ -909,7 +951,7 @@ bad:
 	superblock_destroy(this->superblock);
 	seg_validator_destroy(this->seg_validator);
 	reverse_index_table_destroy(this->rit);
-	data_segment_table_destroy(this->dst);
+	dst_destroy(this->dst);
 	bit_catalogue_destroy(this->bit_catalogue);
 	return -EAGAIN;
 }
@@ -938,7 +980,7 @@ void metadata_destroy(struct metadata* this) {
 		superblock_destroy(this->superblock);
 		seg_validator_destroy(this->seg_validator);
 		reverse_index_table_destroy(this->rit);
-		data_segment_table_destroy(this->dst);
+		dst_destroy(this->dst);
 		bit_catalogue_destroy(this->bit_catalogue);
 		kfree(this);
 	}

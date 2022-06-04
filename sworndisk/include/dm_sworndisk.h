@@ -8,15 +8,17 @@
 
 #define DM_MSG_PREFIX "sworndisk"
 
-extern struct dm_sworndisk_target* sworndisk;
+extern struct dm_sworndisk* sworndisk;
 extern struct bio_prefetcher prefetcher;
 int bio_prefetcher_get(struct bio_prefetcher* this, dm_block_t blkaddr, void* buffer, enum dm_io_mem_type mem_type);
 void sworndisk_read_blocks(dm_block_t blkaddr, size_t count, void* buffer, enum dm_io_mem_type mem_type);
 bool bio_prefetcher_incache(struct bio_prefetcher* this, dm_block_t blkaddr);
 void bio_prefetcher_clear(struct bio_prefetcher* this);
+void sworndisk_write_blocks(dm_block_t blkaddr, size_t count, void* buffer, enum dm_io_mem_type mem_type);
+bool sworndisk_should_threaded_logging(void);
 
 /* For underlying device */
-struct dm_sworndisk_target {
+struct dm_sworndisk {
     sector_t start;
     spinlock_t lock;
     struct dm_dev* data_dev;
