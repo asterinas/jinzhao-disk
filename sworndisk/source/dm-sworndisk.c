@@ -153,25 +153,26 @@ int bio_prefetcher_get(struct bio_prefetcher* this, dm_block_t blkaddr, void* bu
     int err = 0;
 
     mutex_lock(&this->lock);
-    if (!bio_prefetcher_empty(this) && this->last_blkaddr + 1 != blkaddr) {
-        err = -EAGAIN;
-        goto cleanup;
-    }
+    // if (!bio_prefetcher_empty(this) && this->last_blkaddr + 1 != blkaddr) {
+    //     err = -EAGAIN;
+    //     goto cleanup;
+    // }
 
     if (!__bio_prefetcher_incache(this, blkaddr)) {
         size_t remain_block = NR_SEGMENT * BLOCKS_PER_SEGMENT - blkaddr;
 
         sworndisk_read_blocks(blkaddr, min(this->nr_fetch, remain_block), this->_buffer, DM_IO_VMA);
-        this->begin = blkaddr;
         this->end = blkaddr + this->nr_fetch;
-
-        this->nr_fetch = max(this->nr_fetch >> 1, MIN_NR_FETCH + 1);
+        if (this->last_blkaddr - this->begin < (this->nr_fetch / 4 * 3))
+            this->nr_fetch = max(this->nr_fetch >> 1, MIN_NR_FETCH + 1);
+        this->begin = blkaddr;
     } else {
-        this->nr_fetch = min(this->nr_fetch << 1, MAX_NR_FETCH);
+        if ((blkaddr - this->begin) >= (this->nr_fetch >> 1))
+            this->nr_fetch = min(this->nr_fetch << 1, MAX_NR_FETCH);
     }
     
     memcpy(buffer, this->_buffer + (blkaddr - this->begin) * DATA_BLOCK_SIZE, DATA_BLOCK_SIZE);
-cleanup:
+// cleanup:
     this->last_blkaddr = blkaddr;
     mutex_unlock(&this->lock);
     return err;
@@ -255,7 +256,7 @@ void bio_reader_destroy(struct bio_reader* reader) {
     kfree(reader);
 }
 
-#define MAX_READER_COUNT (BLOCKS_PER_SEGMENT << 6)
+#define MAX_READER_COUNT 4
 static struct semaphore max_reader = __SEMAPHORE_INITIALIZER(max_reader, MAX_READER_COUNT);
 void bio_reader_fn(struct work_struct* ws) {
     struct bio_reader* reader = container_of(ws, struct bio_reader, worker);
@@ -287,8 +288,8 @@ void process_deferred_bios(struct work_struct *ws) {
 
 	while ((bio = bio_list_pop(&bios))) {
         if (bio_op(bio) == REQ_OP_READ) {
-            schedule_read_bio(sworndisk, bio);
-            // bio_reader_schedule(bio);
+            // schedule_read_bio(sworndisk, bio);
+            bio_reader_schedule(bio);
         }
 
         if (bio_op(bio) == REQ_OP_WRITE) {
