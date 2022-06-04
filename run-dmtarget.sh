@@ -21,17 +21,10 @@ while getopts ':swrhmf' option;
 do
 	case "$option" in
 	s)
-		# touch disk0
-		# touch disk1
-		# dd if=/dev/zero of=/dev/sdb6 bs=1M count=10240 # 10GB file
-		dd if=/dev/zero of=/dev/sdb5 bs=1M count=4 # 5GB file
-		# losetup /dev/loop0 disk0
-		# losetup /dev/loop1 disk1 
+		dd if=/dev/zero of=/dev/sdc bs=1M count=4 # Erase superblock 
 		;;
 	w)
-		# dd if=/dev/urandom of=/dev/mapper/sworndisk  bs=512 count=100
 		dd if=/home/lnhoo/dream.txt of=/dev/mapper/sworndisk bs=8624271 count=1
-		# dd if=/dev/urandom of=/dev/mapper/sworndisk  bs=64K count=1280
 		;;
 	r)
 		dd if=/dev/mapper/sworndisk of=out bs=8624271 count=1
@@ -52,7 +45,7 @@ do
 		modprobe sworndisk
 		# insmod persistent-data/dm-persistent-data.ko
 		# insmod mappery.ko
-		echo 0 27262976 sworndisk /dev/sdb6 /dev/sdb5 0 | dmsetup create sworndisk
+		echo 0 146800640 sworndisk /dev/sdb /dev/sdc 0 | dmsetup create sworndisk
 		;;
 		
 	h)

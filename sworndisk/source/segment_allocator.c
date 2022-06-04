@@ -5,7 +5,7 @@
 #include "../include/segment_buffer.h"
 #include "../include/segment_allocator.h"
 
-int sa_get_next_free_segment(struct segment_allocator* al, size_t *seg) {
+int sa_alloc(struct segment_allocator* al, size_t *seg) {
     int r;
     struct default_segment_allocator* this = container_of(al, struct default_segment_allocator, segment_allocator); 
 
@@ -23,8 +23,8 @@ int sa_get_next_free_segment(struct segment_allocator* al, size_t *seg) {
     if (r)
         return r;
 
-    if (this->nr_valid_segment > TRIGGER_SEGMENT_CLEANING_THREADHOLD && this->status != SEGMENT_CLEANING) 
-        al->clean(al);
+    if (al->will_trigger_gc(al) && this->status != SEGMENT_CLEANING) 
+        al->foreground_gc(al);
 
     return 0;
 }
@@ -33,7 +33,7 @@ bool offset_in_region(size_t offset, size_t region_begin, size_t region_end) {
     return (offset >= region_begin && offset < region_end);
 }
 
-void sa_clean(struct segment_allocator* al) {
+void sa_foreground_gc(struct segment_allocator* al) {
     int err;
     size_t clean = 0, target = LEAST_CLEAN_SEGMENT_ONCE * BLOCKS_PER_SEGMENT;
     struct victim victim, *p_victim = NULL;
@@ -55,19 +55,15 @@ void sa_clean(struct segment_allocator* al) {
             offset = find_first_bit(victim.block_validity_table, BLOCKS_PER_SEGMENT);
             while(offset < BLOCKS_PER_SEGMENT) {
                 dm_block_t lba, pba;
-                // loff_t addr;
                 struct record record;
 
-                pba = victim.segment_id * BLOCKS_PER_SEGMENT + offset;
+                pba = victim.segno * BLOCKS_PER_SEGMENT + offset;
                 if (!offset_in_region(offset, region_begin, region_end)) {
                     region_begin = offset;
                     region_end = find_next_zero_bit(victim.block_validity_table, BLOCKS_PER_SEGMENT, region_begin);
                     sworndisk_read_blocks(pba, region_end - region_begin, buffer + offset * DATA_BLOCK_SIZE, DM_IO_VMA);
                 }
                 
-                // addr = pba * DATA_BLOCK_SIZE;
-                // kernel_read(sworndisk->data_region, buffer, DATA_BLOCK_SIZE, &addr);
-                // sworndisk_read_blocks(pba, 1, buffer, DM_IO_KMEM);
                 sworndisk->meta->rit->get(sworndisk->meta->rit, pba, &lba);
                 sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &record);
                 err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer + offset * DATA_BLOCK_SIZE, DATA_BLOCK_SIZE, 
@@ -78,14 +74,14 @@ void sa_clean(struct segment_allocator* al) {
             }
         }
 
-        err = sworndisk->meta->seg_validator->test_and_return(sworndisk->meta->seg_validator, victim.segment_id, &valid);
+        err = sworndisk->meta->seg_validator->test_and_return(sworndisk->meta->seg_validator, victim.segno, &valid);
         if (!err && valid) {
             clean += (BLOCKS_PER_SEGMENT - victim.nr_valid_block);
-            // DMINFO("clean: %ld, count: %ld", victim.segment_id, BLOCKS_PER_SEGMENT - victim.nr_valid_block);
+            // DMINFO("clean: %ld, count: %ld", victim.segno, BLOCKS_PER_SEGMENT - victim.nr_valid_block);
             this->nr_valid_segment -= 1;
         }
 
-        p_victim = sworndisk->meta->dst->remove_victim(sworndisk->meta->dst, victim.segment_id);
+        p_victim = sworndisk->meta->dst->remove_victim(sworndisk->meta->dst, victim.segno);
         victim_destroy(p_victim);
     }
 
@@ -106,12 +102,20 @@ void sa_destroy(struct segment_allocator* al) {
     }
 }
 
+bool sa_will_trigger_gc(struct segment_allocator* al) {
+    struct default_segment_allocator* this = 
+        container_of(al, struct default_segment_allocator, segment_allocator); 
+
+    return this->nr_valid_segment > GC_THREADHOLD;
+}
+
 int sa_init(struct default_segment_allocator* this) {
     int err = 0;
 
     this->status = SEGMENT_ALLOCATING;
-    this->segment_allocator.get_next_free_segment = sa_get_next_free_segment;
-    this->segment_allocator.clean = sa_clean;
+    this->segment_allocator.alloc = sa_alloc;
+    this->segment_allocator.foreground_gc = sa_foreground_gc;
+    this->segment_allocator.will_trigger_gc = sa_will_trigger_gc;
     this->segment_allocator.destroy = sa_destroy;
 
     err = sworndisk->meta->seg_validator->valid_segment_count(sworndisk->meta->seg_validator, &this->nr_valid_segment);

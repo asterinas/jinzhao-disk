@@ -90,22 +90,22 @@ struct reverse_index_table {
 
 // data segment table definition
 struct victim {
-	size_t segment_id;
+	size_t segno;
 	size_t nr_valid_block;
 	DECLARE_BITMAP(block_validity_table, BLOCKS_PER_SEGMENT);
 	struct rb_node node;
 } __packed;
 
-struct victim* victim_create(size_t segment_id, size_t nr_valid_block, unsigned long* block_validity_table);
+struct victim* victim_create(size_t segno, size_t nr_valid_block, unsigned long* block_validity_table);
 void victim_destroy(struct victim* victim);
 
 
-struct data_segment_entry {
+struct dst_entry {
 	size_t nr_valid_block;
 	DECLARE_BITMAP(block_validity_table, BLOCKS_PER_SEGMENT);
 } __packed;
 
-struct data_segment_table {
+struct dst {
 	dm_block_t start;
 	size_t nr_segment;
 	struct disk_array* array;
@@ -113,19 +113,21 @@ struct data_segment_table {
 	struct rb_root victims;
 	struct dm_block_manager* bm;
 
-	int (*format)(struct data_segment_table* this);
-	int (*load)(struct data_segment_table* this);
-	int (*take_segment)(struct data_segment_table* this, size_t segment_id);
-	int (*return_block)(struct data_segment_table* this, dm_block_t block_id);
-	bool (*victim_empty)(struct data_segment_table* this);
-	struct victim* (*peek_victim)(struct data_segment_table* this);
-	struct victim* (*pop_victim)(struct data_segment_table* this);
-	struct victim* (*remove_victim)(struct data_segment_table* this, size_t segment_id);
-	struct data_segment_entry* (*get)(struct data_segment_table* this, size_t segment_id);
+	int (*format)(struct dst* this);
+	int (*load)(struct dst* this);
+	int (*take_segment)(struct dst* this, size_t segno);
+	int (*take_block)(struct dst* this, dm_block_t blkaddr);
+	int (*return_block)(struct dst* this, dm_block_t block_id);
+	bool (*victim_empty)(struct dst* this);
+	struct victim* (*peek_victim)(struct dst* this);
+	struct victim* (*pop_victim)(struct dst* this);
+	struct victim* (*remove_victim)(struct dst* this, size_t segno);
+	struct dst_entry* (*get)(struct dst* this, size_t segno);
 };
 
-struct data_segment_table* data_segment_table_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_segment);
-void data_segment_table_destroy(struct data_segment_table* this);
+bool should_threaded_logging(struct dst* dst);
+struct dst* dst_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_segment);
+void dst_destroy(struct dst* this);
 
 
 struct file_stat {
@@ -161,7 +163,7 @@ struct metadata {
 	// checkpoint region
 	struct seg_validator* seg_validator;
 	struct reverse_index_table* rit;
-	struct data_segment_table* dst;
+	struct dst* dst;
 	struct bit_catalogue* bit_catalogue;
 
 	int (*format)(struct metadata* this);

@@ -25,9 +25,9 @@
 #include "../include/cache.h"
 
 size_t NR_SEGMENT;
-struct dm_sworndisk_target* sworndisk = NULL;
+struct dm_sworndisk* sworndisk = NULL;
 
-void bio_list_add_safe(struct dm_sworndisk_target* sworndisk, struct bio_list* list, struct bio* bio) {
+void bio_list_add_safe(struct dm_sworndisk* sworndisk, struct bio_list* list, struct bio* bio) {
     unsigned long flags;
 
     spin_lock_irqsave(&sworndisk->lock, flags);
@@ -35,7 +35,7 @@ void bio_list_add_safe(struct dm_sworndisk_target* sworndisk, struct bio_list* l
     spin_unlock_irqrestore(&sworndisk->lock, flags);
 }
 
-void bio_list_take_safe(struct dm_sworndisk_target* sworndisk, struct bio_list* dst, struct bio_list* src) {
+void bio_list_take_safe(struct dm_sworndisk* sworndisk, struct bio_list* dst, struct bio_list* src) {
     unsigned long flags;
 
     bio_list_init(dst);
@@ -45,27 +45,27 @@ void bio_list_take_safe(struct dm_sworndisk_target* sworndisk, struct bio_list* 
 	spin_unlock_irqrestore(&sworndisk->lock, flags);
 }
 
-void defer_bio(struct dm_sworndisk_target* sworndisk, struct bio* bio) {
+void defer_bio(struct dm_sworndisk* sworndisk, struct bio* bio) {
     bio_list_add_safe(sworndisk, &sworndisk->deferred_bios, bio);
     queue_work(sworndisk->wq, &sworndisk->deferred_bio_worker);
 }
 
-void schedule_read_bio(struct dm_sworndisk_target* sworndisk, struct bio* bio) {
+void schedule_read_bio(struct dm_sworndisk* sworndisk, struct bio* bio) {
     bio_list_add_safe(sworndisk, &sworndisk->read_bios, bio);
     queue_work(sworndisk->wq, &sworndisk->read_bio_worker);
 }
 
-void schedule_write_bio(struct dm_sworndisk_target* sworndisk, struct bio* bio) {
+void schedule_write_bio(struct dm_sworndisk* sworndisk, struct bio* bio) {
     bio_list_add_safe(sworndisk, &sworndisk->write_bios, bio);
     queue_work(sworndisk->wq, &sworndisk->write_bio_worker);
 }
 
 
-void sworndisk_read_blocks(dm_block_t blkaddr, size_t count, void* buffer, enum dm_io_mem_type mem_type) {
+void sworndisk_block_io(dm_block_t blkaddr, size_t count, void* buffer, enum dm_io_mem_type mem_type, int bi_op) {
     unsigned long sync_error_bits;
     struct dm_io_client* io_client = dm_io_client_create();
     struct dm_io_request req = {
-        .bi_op = req.bi_op_flags = REQ_OP_READ,
+        .bi_op = req.bi_op_flags = bi_op,
         .mem.type = mem_type,
         .mem.offset = 0,
         .mem.ptr.addr = buffer,
@@ -80,12 +80,27 @@ void sworndisk_read_blocks(dm_block_t blkaddr, size_t count, void* buffer, enum 
 
     dm_io(&req, 1, &region, &sync_error_bits);
     if (sync_error_bits) 
-        DMERR("segment buffer read error\n");
+        DMERR("segment buffer io error\n");
 
     dm_io_client_destroy(io_client);
+}
 
+
+void sworndisk_read_blocks(dm_block_t blkaddr, size_t count, void* buffer, enum dm_io_mem_type mem_type) {
+    sworndisk_block_io(blkaddr, count, buffer, mem_type, REQ_OP_READ);
     // read data block from segment buffer
     segbuf_query_encrypted_blocks(sworndisk->seg_buffer, blkaddr, count, buffer);
+}
+
+void sworndisk_write_blocks(dm_block_t blkaddr, size_t count, void* buffer, enum dm_io_mem_type mem_type) {
+    sworndisk_block_io(blkaddr, count, buffer, mem_type, REQ_OP_WRITE);
+}
+
+bool sworndisk_should_threaded_logging(void) {
+    if (!sworndisk->seg_allocator->will_trigger_gc(sworndisk->seg_allocator))
+        return false;
+
+    return should_threaded_logging(sworndisk->meta->dst);
 }
 
 struct bio_prefetcher {
@@ -138,25 +153,26 @@ int bio_prefetcher_get(struct bio_prefetcher* this, dm_block_t blkaddr, void* bu
     int err = 0;
 
     mutex_lock(&this->lock);
-    if (!bio_prefetcher_empty(this) && this->last_blkaddr + 1 != blkaddr) {
-        err = -EAGAIN;
-        goto cleanup;
-    }
+    // if (!bio_prefetcher_empty(this) && this->last_blkaddr + 1 != blkaddr) {
+    //     err = -EAGAIN;
+    //     goto cleanup;
+    // }
 
     if (!__bio_prefetcher_incache(this, blkaddr)) {
         size_t remain_block = NR_SEGMENT * BLOCKS_PER_SEGMENT - blkaddr;
 
         sworndisk_read_blocks(blkaddr, min(this->nr_fetch, remain_block), this->_buffer, DM_IO_VMA);
-        this->begin = blkaddr;
         this->end = blkaddr + this->nr_fetch;
-
-        this->nr_fetch = max(this->nr_fetch >> 1, MIN_NR_FETCH + 1);
+        if (this->last_blkaddr - this->begin < (this->nr_fetch / 4 * 3))
+            this->nr_fetch = max(this->nr_fetch >> 1, MIN_NR_FETCH + 1);
+        this->begin = blkaddr;
     } else {
-        this->nr_fetch = min(this->nr_fetch << 1, MAX_NR_FETCH);
+        if ((blkaddr - this->begin) >= (this->nr_fetch >> 1))
+            this->nr_fetch = min(this->nr_fetch << 1, MAX_NR_FETCH);
     }
     
     memcpy(buffer, this->_buffer + (blkaddr - this->begin) * DATA_BLOCK_SIZE, DATA_BLOCK_SIZE);
-cleanup:
+// cleanup:
     this->last_blkaddr = blkaddr;
     mutex_unlock(&this->lock);
     return err;
@@ -240,7 +256,7 @@ void bio_reader_destroy(struct bio_reader* reader) {
     kfree(reader);
 }
 
-#define MAX_READER_COUNT (BLOCKS_PER_SEGMENT << 6)
+#define MAX_READER_COUNT 4
 static struct semaphore max_reader = __SEMAPHORE_INITIALIZER(max_reader, MAX_READER_COUNT);
 void bio_reader_fn(struct work_struct* ws) {
     struct bio_reader* reader = container_of(ws, struct bio_reader, worker);
@@ -272,6 +288,7 @@ void process_deferred_bios(struct work_struct *ws) {
 
 	while ((bio = bio_list_pop(&bios))) {
         if (bio_op(bio) == REQ_OP_READ) {
+            // schedule_read_bio(sworndisk, bio);
             bio_reader_schedule(bio);
         }
 
@@ -285,7 +302,7 @@ void process_deferred_bios(struct work_struct *ws) {
 static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
 {
     sector_t block_aligned;
-    struct dm_sworndisk_target* sworndisk;
+    struct dm_sworndisk* sworndisk;
 
     sworndisk = target->private;    
     bio_set_dev(bio, sworndisk->data_dev->bdev);
@@ -315,7 +332,7 @@ sector_t dm_devsize(struct dm_dev *dev) {
 
 #include "../include/bloom_filter.h"
 /*
- * This is constructor function of target gets called when we create some device of type 'dm_sworndisk_target'.
+ * This is constructor function of target gets called when we create some device of type 'dm_sworndisk'.
  * i.e on execution of command 'dmsetup create'. It gets called per device.
  */
 static int dm_sworndisk_target_ctr(struct dm_target *target,
@@ -333,7 +350,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
     }
 
     bio_prefetcher_init(&prefetcher);
-    sworndisk = kzalloc(sizeof(struct dm_sworndisk_target), GFP_KERNEL);
+    sworndisk = kzalloc(sizeof(struct dm_sworndisk), GFP_KERNEL);
     if (!sworndisk) {
         DMERR("Error in kmalloc");
         target->error = "Cannot allocate linear context";
@@ -449,7 +466,7 @@ bad:
  */
 static void dm_sworndisk_target_dtr(struct dm_target *ti)
 {
-    struct dm_sworndisk_target *sworndisk = (struct dm_sworndisk_target *) ti->private;
+    struct dm_sworndisk *sworndisk = (struct dm_sworndisk *) ti->private;
     __bio_prefetcher_destroy(&prefetcher);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
@@ -472,7 +489,7 @@ static void dm_sworndisk_target_dtr(struct dm_target *ti)
         kfree(sworndisk);
 }
 /*  This structure is fops for dm_sworndisk target */
-static struct target_type dm_sworndisk_target = {
+static struct target_type dm_sworndisk = {
 
     .name = "sworndisk",
     .version = {1,0,0},
@@ -487,7 +504,7 @@ static struct target_type dm_sworndisk_target = {
 static int init_dm_sworndisk_target(void)
 {
     int result;
-    result = dm_register_target(&dm_sworndisk_target);
+    result = dm_register_target(&dm_sworndisk);
     if (result < 0) {
         DMERR("Error in registering target");
     } else {
@@ -499,7 +516,7 @@ static int init_dm_sworndisk_target(void)
 
 static void cleanup_dm_sworndisk_target(void)
 {
-    dm_unregister_target(&dm_sworndisk_target);
+    dm_unregister_target(&dm_sworndisk);
 }
 
 module_init(init_dm_sworndisk_target);
