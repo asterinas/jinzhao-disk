@@ -35,7 +35,7 @@ do
 		rm -rf -r sworndisk/source/*.o
 		rm -rf -r sworndisk.o sworndisk.mod.o sworndisk.ko
 		cd ../../
-		make CONFIG_DM_CACHE=m M=drivers/md
+		# make CONFIG_DM_CACHE=m M=drivers/md
 		make CONFIG_DM_SWORNDISK=m CONFIG_DM_PERSISTENT_DATA=m M=drivers/md
 		make modules_install M=drivers/md
 		cd drivers/md

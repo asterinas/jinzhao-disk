@@ -96,10 +96,13 @@ void sworndisk_write_blocks(dm_block_t blkaddr, size_t count, void* buffer, enum
     sworndisk_block_io(blkaddr, count, buffer, mem_type, REQ_OP_WRITE);
 }
 
+#define THREAD_LOGGING_AHEAD 1
 bool sworndisk_should_threaded_logging(void) {
-    if (!sworndisk->seg_allocator->will_trigger_gc(sworndisk->seg_allocator))
-        return false;
+    struct default_segment_allocator* allocator = 
+        container_of(sworndisk->seg_allocator, struct default_segment_allocator, segment_allocator);
 
+    if (allocator->nr_valid_segment < GC_THREADHOLD - THREAD_LOGGING_AHEAD)
+        return false;
     return should_threaded_logging(sworndisk->meta->dst);
 }
 
