@@ -950,6 +950,30 @@ void kway_merge_node_swap(void *lhs, void *rhs) {
     *node2 = temp;
 }
 
+bool interval_overlapping(int64_t begin1, int64_t end1, int64_t begin2, int64_t end2) {
+    return !(end1 < begin2 || begin1 > end2);
+}
+
+bool lsm_file_overlapping(struct list_head* files) {
+    struct lsm_file *f1, *f2;
+
+    list_for_each_entry(f1, files, node) {
+        list_for_each_entry(f2, files, node) {
+            int64_t begin1 = f1->get_first_key(f1);
+            int64_t end1 = f1->get_last_key(f1);
+            int64_t begin2 = f2->get_first_key(f2);
+            int64_t end2 = f2->get_last_key(f2);
+
+            if (f1->id == f2->id)
+                continue;
+            if (interval_overlapping(begin1, end1, begin2, end2))
+                return true;
+        }
+    }
+
+    return false;
+}
+
 int compaction_job_run(struct compaction_job* this) {
     int err = 0;
     size_t fd;
@@ -972,6 +996,17 @@ int compaction_job_run(struct compaction_job* this) {
 
     this->level1->pick_demoted_files(this->level1, &demoted_files);
     this->level2->find_relative_files(this->level2, &demoted_files, &relative_files);
+
+    if (list_empty(&relative_files) && !lsm_file_overlapping(&demoted_files)) {
+        list_for_each_entry(file, &demoted_files, node) {
+            file->version = this->catalogue->get_next_version(this->catalogue);
+            file->level = this->level2->level;
+            this->catalogue->set_file_stats(this->catalogue, file->id, file->get_stats(file));
+            this->level2->add_file(this->level2, file);
+            this->level1->remove_file(this->level1, file->id);
+        }
+        return 0;
+    }
 
     INIT_LIST_HEAD(&iters);
     list_for_each_entry(file, &demoted_files, node) {
