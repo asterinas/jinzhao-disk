@@ -23,6 +23,7 @@
 #include "../include/bio_operate.h"
 #include "../include/segment_buffer.h"
 #include "../include/cache.h"
+#include "../include/segment_allocator.h"
 
 size_t NR_SEGMENT;
 struct dm_sworndisk* sworndisk = NULL;
@@ -205,9 +206,10 @@ void sworndisk_do_read(struct bio* bio) {
 
     // addr = record.pba * DATA_BLOCK_SIZE;
     // kernel_read(sworndisk->data_region, buffer, DATA_BLOCK_SIZE, &addr);
-    err = bio_prefetcher_get(&prefetcher, record.pba, buffer, DM_IO_KMEM);
-    if (err == -EAGAIN) 
+    if (!bio->bi_next && !bio_prefetcher_incache(&prefetcher, record.pba))
         sworndisk_read_blocks(record.pba, 1, buffer, DM_IO_KMEM);
+    else  
+        bio_prefetcher_get(&prefetcher, record.pba, buffer, DM_IO_KMEM);
     err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, record.key, record.iv, record.mac, record.pba, buffer);
     if (!err)
         bio_set_data(bio, buffer + bio_block_sector_offset(bio) * SECTOR_SIZE, bio_get_data_len(bio));
