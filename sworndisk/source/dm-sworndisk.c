@@ -94,15 +94,7 @@ bool sworndisk_should_threaded_logging(void) {
     return should_threaded_logging(sworndisk->meta->dst);
 }
 
-struct bio_prefetcher {
-    void* _buffer;
-    dm_block_t begin, end, last_blkaddr;
-    struct mutex lock;
-    size_t nr_fetch;
-} prefetcher;
 
-#define MAX_NR_FETCH (size_t)64
-#define MIN_NR_FETCH (size_t)1
 void bio_prefetcher_init(struct bio_prefetcher* this) {
     this->_buffer = vmalloc(MAX_NR_FETCH * DATA_BLOCK_SIZE);
     this->begin = 0;
@@ -185,7 +177,7 @@ void sworndisk_do_read(struct bio* bio) {
         goto exit;
     }
 
-    bio_prefetcher_get(&prefetcher, record.pba, buffer, DM_IO_KMEM);
+    bio_prefetcher_get(&sworndisk->prefetcher, record.pba, buffer, DM_IO_KMEM);
     err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, record.key, record.iv, record.mac, record.pba, buffer);
     if (!err)
         bio_set_data(bio, buffer + bio_block_sector_offset(bio) * SECTOR_SIZE, bio_get_data_len(bio));
@@ -206,7 +198,7 @@ void sworndisk_do_write(struct bio* bio) {
     down_write(&sworndisk->rw_lock);
     sworndisk->seg_buffer->push_bio(sworndisk->seg_buffer, bio);
     bio_endio(bio);
-    bio_prefetcher_clear(&prefetcher);
+    bio_prefetcher_clear(&sworndisk->prefetcher);
     up_write(&sworndisk->rw_lock);
 }
 
@@ -278,7 +270,6 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
         goto bad;
     }
 
-    bio_prefetcher_init(&prefetcher);
     sworndisk = kzalloc(sizeof(struct dm_sworndisk), GFP_KERNEL);
     if (!sworndisk) {
         DMERR("Error in kmalloc");
@@ -304,6 +295,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
             goto bad;
     }
 
+    bio_prefetcher_init(&sworndisk->prefetcher);
     sema_init(&sworndisk->max_reader, MAX_READER);
     sworndisk->io_client = dm_io_client_create();
     if (!sworndisk->io_client) {
@@ -363,7 +355,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
     return 0;
 
 bad:
-    __bio_prefetcher_destroy(&prefetcher);
+    __bio_prefetcher_destroy(&sworndisk->prefetcher);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
     if (sworndisk->wq) 
@@ -394,7 +386,7 @@ bad:
 static void dm_sworndisk_target_dtr(struct dm_target *ti)
 {
     struct dm_sworndisk *sworndisk = (struct dm_sworndisk *) ti->private;
-    __bio_prefetcher_destroy(&prefetcher);
+    __bio_prefetcher_destroy(&sworndisk->prefetcher);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
     if (sworndisk->wq) 
