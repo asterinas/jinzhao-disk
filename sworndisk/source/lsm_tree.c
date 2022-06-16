@@ -449,9 +449,9 @@ int bit_file_search(struct lsm_file* lsm_file, uint32_t key, void* val) {
     if (!bloom_filter_contains(this->filter, &key, sizeof(uint32_t)))
         return -ENODATA;
 
-    read_lock(&this->lock);
+    down_read(&this->lock);
     err = bit_leaf_search(&this->cached_leaf, key, val);
-    read_unlock(&this->lock);
+    up_read(&this->lock);
     if (!err) 
         return 0;
 
@@ -459,9 +459,9 @@ int bit_file_search(struct lsm_file* lsm_file, uint32_t key, void* val) {
     if (err)
         return err;
 
-    write_lock(&this->lock);
+    down_write(&this->lock);
     this->cached_leaf = leaf;
-    write_unlock(&this->lock);
+    up_write(&this->lock);
     return bit_leaf_search(&leaf, key, val);
 }
 
@@ -612,7 +612,7 @@ int bit_file_init(struct bit_file* this, struct file* file, loff_t root, size_t 
     this->last_key = last_key;
     memcpy(this->root_key, root_key, AES_GCM_KEY_SIZE);
     memcpy(this->root_iv, root_iv, AES_GCM_IV_SIZE);
-    rwlock_init(&this->lock);
+    init_rwsem(&this->lock);
     this->cached_leaf.nr_record = 0;
     this->filter_begin = filter_begin;
     this->filter = bit_bloom_filter_create();

@@ -604,7 +604,7 @@ bool should_threaded_logging(struct dst* dst) {
 		return false;
 	
 	victim = rb_entry(rb_first(&dst->victims), struct victim, node);
-	if (victim->nr_valid_block > (BLOCKS_PER_SEGMENT >> 1))
+	if (victim->nr_valid_block > (BLOCKS_PER_SEGMENT / 4 * 3))
 		return true;
 	
 	return false;
