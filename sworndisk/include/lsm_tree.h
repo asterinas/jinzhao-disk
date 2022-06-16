@@ -112,7 +112,7 @@ struct bit_file {
     char root_key[AES_GCM_KEY_SIZE];
     char root_iv[AES_GCM_IV_SIZE];
     uint32_t first_key, last_key;
-    rwlock_t lock;
+    struct rw_semaphore lock;
     struct bit_leaf cached_leaf;
     loff_t filter_begin;
     struct bloom_filter* filter;

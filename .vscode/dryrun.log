@@ -1,0 +1,6 @@
+make --dry-run --always-make --keep-going --print-directory
+make: Entering directory '/home/lnhoo/workspace/c/src/linux-5.17.1/drivers/md'
+make: Leaving directory '/home/lnhoo/workspace/c/src/linux-5.17.1/drivers/md'
+ 
+make: *** No targets.  Stop.
+

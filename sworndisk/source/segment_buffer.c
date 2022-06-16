@@ -103,21 +103,9 @@ void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer)
 }
 
 void segbuf_flush_bios(struct segment_buffer* buf) {
-    // int size = 0;
-    // loff_t addr, sync_begin, sync_end;
-    // struct default_segment_buffer* this = container_of(buf, struct default_segment_buffer, segment_buffer);
-
-    // addr = this->cur_segment * BLOCKS_PER_SEGMENT * DATA_BLOCK_SIZE;
-    // size = kernel_write(sworndisk->data_region, this->pipe, SEGMENT_BUFFER_SIZE, &addr);
-    // if (size != SEGMENT_BUFFER_SIZE)
-    //     DMERR("segbuf flush bio error, transferred: %d", size);
-    
-    // sync_begin = this->cur_segment * SEGMENT_BUFFER_SIZE;
-    // sync_end = sync_begin + SEGMENT_BUFFER_SIZE;
-    // vfs_fsync_range(sworndisk->data_region, sync_begin, sync_end, 0);
-
     struct default_segment_buffer* this = container_of(buf, struct default_segment_buffer, segment_buffer);
     dm_block_t blkaddr = this->cur_segment * BLOCKS_PER_SEGMENT;
+
     sworndisk_write_blocks(blkaddr, BLOCKS_PER_SEGMENT, this->pipe, DM_IO_VMA);
 }
 

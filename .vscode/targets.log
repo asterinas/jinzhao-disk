@@ -1,0 +1,262 @@
+make all --print-data-base --no-builtin-variables --no-builtin-rules --question
+make: *** No rule to make target 'all'.  Stop.
+
+# GNU Make 4.2.1
+# Built for x86_64-pc-linux-gnu
+# Copyright (C) 1988-2016 Free Software Foundation, Inc.
+# License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
+# This is free software: you are free to change and redistribute it.
+# There is NO WARRANTY, to the extent permitted by law.
+
+# Make data base, printed on Thu Jun 16 14:43:19 2022
+
+# Variables
+
+# automatic
+<D = $(patsubst %/,%,$(dir $<))
+# automatic
+?F = $(notdir $?)
+# default
+.SHELLFLAGS := -c
+# environment
+XDG_SESSION_CLASS = user
+# environment
+VSCODE_AGENT_FOLDER = /home/lnhoo/.vscode-server
+# environment
+XDG_SESSION_TYPE = tty
+# environment
+VSCODE_LOG_NATIVE = false
+# automatic
+?D = $(patsubst %/,%,$(dir $?))
+# makefile (from 'Makefile', line 30)
+md-mod-y = md.o md-bitmap.o
+# automatic
+@D = $(patsubst %/,%,$(dir $@))
+# automatic
+@F = $(notdir $@)
+# default
+MAKE_VERSION := 4.2.1
+# makefile
+CURDIR := /home/lnhoo/workspace/c/src/linux-5.17.1/drivers/md
+# makefile
+SHELL = /bin/sh
+# environment
+VSCODE_NLS_CONFIG = {"locale":"zh-cn","availableLanguages":{"*":"zh-cn"},"_languagePackId":"bbca1a7059cee8a1b93da8947fee1c4f.zh-cn","_translationsConfigFile":"/home/lnhoo/.vscode-server/data/clp/bbca1a7059cee8a1b93da8947fee1c4f.zh-cn/tcf.json","_cacheRoot":"/home/lnhoo/.vscode-server/data/clp/bbca1a7059cee8a1b93da8947fee1c4f.zh-cn","_resolvedLanguagePackCoreLocation":"/home/lnhoo/.vscode-server/data/clp/bbca1a7059cee8a1b93da8947fee1c4f.zh-cn/30d9c6cd9483b2cc586687151bcbcd635f373630","_corruptedFile":"/home/lnhoo/.vscode-server/data/clp/bbca1a7059cee8a1b93da8947fee1c4f.zh-cn/corrupted.info","_languagePackSupport":true}
+# environment
+_ = /home/lnhoo/.vscode-server/bin/30d9c6cd9483b2cc586687151bcbcd635f373630/node
+# makefile (from 'Makefile', line 19)
+dm-bio-prison-y = dm-bio-prison-v1.o dm-bio-prison-v2.o
+# makefile (from 'Makefile', line 33)
+multipath-y = md-multipath.o
+# makefile (from 'Makefile', line 14)
+dm-service-time-y = dm-ps-service-time.o
+# makefile (from 'Makefile', line 1)
+MAKEFILE_LIST :=  Makefile
+# 'override' directive
+GNUMAKEFLAGS := 
+# environment
+DBUS_SESSION_BUS_ADDRESS = unix:path=/run/user/1000/bus
+# environment
+VSCODE_VERBOSE_LOGGING = true
+# makefile (from 'Makefile', line 24)
+dm-ebs-y = dm-ebs-target.o
+# environment
+LESSOPEN = | /usr/bin/lesspipe %s
+# environment
+VSCODE_CWD = /home/lnhoo
+# environment
+SSH_CONNECTION = 192.168.18.1 65515 192.168.18.136 22
+# environment
+PATH = /home/lnhoo/.vscode-server/bin/30d9c6cd9483b2cc586687151bcbcd635f373630/bin/remote-cli:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+# environment
+XDG_RUNTIME_DIR = /run/user/1000
+# makefile (from 'Makefile', line 11)
+dm-io-affinity-y = dm-ps-io-affinity.o
+# environment
+VSCODE_LOG_STACK = false
+# environment
+VSCODE_IPC_HOOK_CLI = /run/user/1000/vscode-ipc-3432ef00-8f4f-4985-b75b-4897090f8cf2.sock
+# default
+.FEATURES := target-specific order-only second-expansion else-if shortest-stem undefine oneshell archives jobserver output-sync check-symlink load
+# makefile (from 'Makefile', line 20)
+dm-thin-pool-y = dm-thin.o dm-thin-metadata.o
+# environment
+LS_COLORS = 
+# automatic
+%F = $(notdir $%)
+# makefile (from 'Makefile', line 17)
+dm-mirror-y = dm-raid1.o
+# environment
+VSCODE_PIPE_LOGGING = true
+# makefile (from 'Makefile', line 10)
+dm-historical-service-time-y = dm-ps-historical-service-time.o
+# environment
+PWD = /home/lnhoo/workspace/c/src/linux-5.17.1/drivers/md
+# default
+.LOADED := 
+# makefile (from 'Makefile', line 12)
+dm-queue-length-y = dm-ps-queue-length.o
+# automatic
+*D = $(patsubst %/,%,$(dir $*))
+# environment
+VSCODE_AMD_ENTRYPOINT = vs/workbench/api/node/extensionHostProcess
+# environment
+HOME = /home/lnhoo
+# makefile (from 'Makefile', line 87)
+obj- = linear.o raid0.o raid1.o raid10.o raid456.o multipath.o faulty.o md-cluster.o bcache/ md-mod.o dm-mod.o dm-builtin.o dm-unstripe.o dm-bufio.o dm-bio-prison.o dm-crypt.o dm-delay.o dm-dust.o dm-flakey.o dm-multipath.o dm-round-robin.o dm-queue-length.o dm-service-time.o dm-historical-service-time.o dm-io-affinity.o dm-switch.o dm-snapshot.o persistent-data/ dm-mirror.o dm-log.o dm-region-hash.o dm-log-userspace.o dm-zero.o dm-raid.o dm-thin-pool.o dm-verity.o dm-cache.o dm-cache-smq.o dm-ebs.o dm-era.o dm-clone.o dm-log-writes.o dm-integrity.o dm-zoned.o dm-writecache.o sworndisk.o
+# makefile (from 'Makefile', line 31)
+raid456-y = raid5.o raid5-cache.o raid5-ppl.o
+# makefile (from 'Makefile', line 23)
+dm-cache-smq-y = dm-cache-policy-smq.o
+# environment
+LESSCLOSE = /usr/bin/lesspipe %s %s
+# environment
+LOGNAME = lnhoo
+# environment
+APPLICATION_INSIGHTS_NO_DIAGNOSTIC_CHANNEL = true
+# automatic
++F = $(notdir $+)
+# environment
+VSCODE_HANDLES_UNCAUGHT_ERRORS = true
+# automatic
+^D = $(patsubst %/,%,$(dir $^))
+# makefile (from 'Makefile', line 34)
+faulty-y = md-faulty.o
+# makefile (from 'Makefile', line 9)
+dm-multipath-y = dm-path-selector.o dm-mpath.o
+# environment
+MAKELEVEL := 0
+# default
+MAKE = $(MAKE_COMMAND)
+# default
+MAKECMDGOALS := all
+# environment
+SHLVL = 0
+# makefile (from 'Makefile', line 13)
+dm-round-robin-y = dm-ps-round-robin.o
+# environment
+XDG_SESSION_ID = 1
+# environment
+USER = lnhoo
+# makefile (from 'Makefile', line 6)
+dm-mod-y = dm.o dm-table.o dm-target.o dm-linear.o dm-stripe.o dm-ioctl.o dm-io.o dm-kcopyd.o dm-sysfs.o dm-stats.o dm-rq.o
+# makefile
+.DEFAULT_GOAL := 
+# makefile (from 'Makefile', line 32)
+linear-y = md-linear.o
+# makefile (from 'Makefile', line 28)
+dm-zoned-y = dm-zoned-target.o dm-zoned-metadata.o dm-zoned-reclaim.o
+# makefile (from 'Makefile', line 15)
+dm-snapshot-y = dm-snap.o dm-exception-store.o dm-snap-transient.o dm-snap-persistent.o
+# makefile (from 'Makefile', line 25)
+dm-era-y = dm-era-target.o
+# automatic
+%D = $(patsubst %/,%,$(dir $%))
+# makefile (from 'Makefile', line 27)
+dm-verity-y = dm-verity-target.o
+# default
+MAKE_COMMAND := make
+# default
+.VARIABLES := 
+# automatic
+*F = $(notdir $*)
+# makefile
+MAKEFLAGS = pqrR
+# environment
+MFLAGS = -pqrR
+# environment
+SSH_CLIENT = 192.168.18.1 65515 22
+# automatic
++D = $(patsubst %/,%,$(dir $+))
+# makefile (from 'Makefile', line 26)
+dm-clone-y = dm-clone-target.o dm-clone-metadata.o
+# environment
+BROWSER = /home/lnhoo/.vscode-server/bin/30d9c6cd9483b2cc586687151bcbcd635f373630/bin/helpers/browser.sh
+# environment
+VSCODE_HANDLES_SIGPIPE = true
+# default
+MAKEFILES := 
+# automatic
+<F = $(notdir $<)
+# environment
+LC_ALL = C
+# makefile (from 'Makefile', line 18)
+dm-log-userspace-y = dm-log-userspace-base.o dm-log-userspace-transfer.o
+# automatic
+^F = $(notdir $^)
+# default
+SUFFIXES := 
+# makefile (from 'Makefile', line 21)
+dm-cache-y = dm-cache-target.o dm-cache-metadata.o dm-cache-policy.o dm-cache-background-tracker.o
+# default
+.INCLUDE_DIRS = /usr/include /usr/local/include /usr/include
+# default
+.RECIPEPREFIX := 
+# default
+MAKE_HOST := x86_64-pc-linux-gnu
+# makefile (from 'Makefile', line 35)
+sworndisk-y = sworndisk/source/dm-sworndisk.o sworndisk/source/metadata.o sworndisk/source/hashmap.o sworndisk/source/memtable.o sworndisk/source/bio_operate.o sworndisk/source/crypto.o sworndisk/source/segment_allocator.o sworndisk/source/segment_buffer.o sworndisk/source/cache.o sworndisk/source/disk_structs.o sworndisk/source/lsm_tree.o sworndisk/source/bloom_filter.o sworndisk/source/async.o
+# environment
+LANG = C
+# environment
+VSCODE_EXTHOST_WILL_SEND_SOCKET = true
+# environment
+MOTD_SHOWN = pam
+# variable set hash-table stats:
+# Load=95/1024=9%, Rehash=0, Collisions=25/281=9%
+
+# Pattern-specific Variable Values
+
+# No pattern-specific variable values.
+
+# Directories
+
+# . (device 64769, inode 1198872): 639 files, no impossibilities.
+
+# 639 files, no impossibilities in 1 directories.
+
+# Implicit Rules
+
+# No implicit rules.
+
+# Files
+
+# Not a target:
+all:
+#  Command line target.
+#  Implicit rule search has been done.
+#  File does not exist.
+#  File has not been updated.
+
+# Not a target:
+Makefile:
+#  Implicit rule search has been done.
+#  Last modified 2022-06-16 08:43:43.525070888
+#  File has been updated.
+#  Successfully updated.
+
+# Not a target:
+.DEFAULT:
+#  Implicit rule search has not been done.
+#  Modification time never checked.
+#  File has not been updated.
+
+# files hash-table stats:
+# Load=4/1024=0%, Rehash=0, Collisions=0/14=0%
+# VPATH Search Paths
+
+# No 'vpath' search paths.
+
+# No general ('VPATH' variable) search path.
+
+# strcache buffers: 2 (1) / strings = 644 / storage = 10614 B / avg = 16 B
+# current buf: size = 8162 B / used = 2464 B / count = 154 / avg = 16 B
+# other used: total = 8150 B / count = 490 / avg = 16 B
+# other free: total = 12 B / max = 12 B / min = 12 B / avg = 12 B
+
+# strcache performance: lookups = 648 / hit rate = 0%
+# hash-table stats:
+# Load=644/8192=8%, Rehash=0, Collisions=83/648=13%
+# Finished Make data base on Thu Jun 16 14:43:19 2022
+
+ 
