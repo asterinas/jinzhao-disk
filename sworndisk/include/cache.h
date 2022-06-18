@@ -10,7 +10,4 @@ struct cache {
 
 struct cache* lru_cache_create(size_t capacity);
 
-// uint tests
-void lru_cache_test(void);
-
 #endif

@@ -14,7 +14,6 @@
 #include <linux/bitmap.h>
 #include <linux/spinlock.h>
 #include <linux/workqueue.h>
-#include <linux/hashtable.h>
 #include <linux/scatterlist.h> 
 #include <linux/fs.h>
 
@@ -202,15 +201,20 @@ void sworndisk_do_write(struct bio* bio) {
     up_write(&sworndisk->rw_lock);
 }
 
+void async_write(void* context) {
+    sworndisk_do_write(context);
+}
+
 void process_deferred_bios(struct work_struct *ws) {
     struct bio* bio;
 	struct bio_list bios;
 
     bio_list_take_safe(sworndisk, &bios, &sworndisk->deferred_bios);
 	while ((bio = bio_list_pop(&bios))) {
+        bool timeout = false;
         switch (bio_op(bio)) {
             case REQ_OP_READ:
-                down(&sworndisk->max_reader);
+                timeout = down_timeout(&sworndisk->max_reader, msecs_to_jiffies(300));
                 go(async_read, bio);
                 break;
             case REQ_OP_WRITE:
