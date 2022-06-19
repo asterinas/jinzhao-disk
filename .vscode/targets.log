@@ -8,7 +8,7 @@ make: *** No rule to make target 'all'.  Stop.
 # This is free software: you are free to change and redistribute it.
 # There is NO WARRANTY, to the extent permitted by law.
 
-# Make data base, printed on Thu Jun 16 14:43:19 2022
+# Make data base, printed on Sat Jun 18 07:30:34 2022
 
 # Variables
 
@@ -65,7 +65,7 @@ LESSOPEN = | /usr/bin/lesspipe %s
 # environment
 VSCODE_CWD = /home/lnhoo
 # environment
-SSH_CONNECTION = 192.168.18.1 65515 192.168.18.136 22
+SSH_CONNECTION = 192.168.18.1 51443 192.168.18.136 22
 # environment
 PATH = /home/lnhoo/.vscode-server/bin/30d9c6cd9483b2cc586687151bcbcd635f373630/bin/remote-cli:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
 # environment
@@ -75,7 +75,7 @@ dm-io-affinity-y = dm-ps-io-affinity.o
 # environment
 VSCODE_LOG_STACK = false
 # environment
-VSCODE_IPC_HOOK_CLI = /run/user/1000/vscode-ipc-3432ef00-8f4f-4985-b75b-4897090f8cf2.sock
+VSCODE_IPC_HOOK_CLI = /run/user/1000/vscode-ipc-2d7c0957-67e2-4bb0-a08c-8800a0148440.sock
 # default
 .FEATURES := target-specific order-only second-expansion else-if shortest-stem undefine oneshell archives jobserver output-sync check-symlink load
 # makefile (from 'Makefile', line 20)
@@ -135,7 +135,7 @@ SHLVL = 0
 # makefile (from 'Makefile', line 13)
 dm-round-robin-y = dm-ps-round-robin.o
 # environment
-XDG_SESSION_ID = 1
+XDG_SESSION_ID = 7
 # environment
 USER = lnhoo
 # makefile (from 'Makefile', line 6)
@@ -165,7 +165,7 @@ MAKEFLAGS = pqrR
 # environment
 MFLAGS = -pqrR
 # environment
-SSH_CLIENT = 192.168.18.1 65515 22
+SSH_CLIENT = 192.168.18.1 51443 22
 # automatic
 +D = $(patsubst %/,%,$(dir $+))
 # makefile (from 'Makefile', line 26)
@@ -195,7 +195,7 @@ dm-cache-y = dm-cache-target.o dm-cache-metadata.o dm-cache-policy.o dm-cache-ba
 # default
 MAKE_HOST := x86_64-pc-linux-gnu
 # makefile (from 'Makefile', line 35)
-sworndisk-y = sworndisk/source/dm-sworndisk.o sworndisk/source/metadata.o sworndisk/source/hashmap.o sworndisk/source/memtable.o sworndisk/source/bio_operate.o sworndisk/source/crypto.o sworndisk/source/segment_allocator.o sworndisk/source/segment_buffer.o sworndisk/source/cache.o sworndisk/source/disk_structs.o sworndisk/source/lsm_tree.o sworndisk/source/bloom_filter.o sworndisk/source/async.o
+sworndisk-y = sworndisk/source/dm-sworndisk.o sworndisk/source/metadata.o sworndisk/source/memtable.o sworndisk/source/bio_operate.o sworndisk/source/crypto.o sworndisk/source/segment_allocator.o sworndisk/source/segment_buffer.o sworndisk/source/cache.o sworndisk/source/disk_structs.o sworndisk/source/lsm_tree.o sworndisk/source/bloom_filter.o sworndisk/source/async.o sworndisk/source/hashtable.o
 # environment
 LANG = C
 # environment
@@ -211,9 +211,9 @@ MOTD_SHOWN = pam
 
 # Directories
 
-# . (device 64769, inode 1198872): 639 files, no impossibilities.
+# . (device 64769, inode 1198872): 628 files, no impossibilities.
 
-# 639 files, no impossibilities in 1 directories.
+# 628 files, no impossibilities in 1 directories.
 
 # Implicit Rules
 
@@ -231,7 +231,7 @@ all:
 # Not a target:
 Makefile:
 #  Implicit rule search has been done.
-#  Last modified 2022-06-16 08:43:43.525070888
+#  Last modified 2022-06-18 03:27:18.579941926
 #  File has been updated.
 #  Successfully updated.
 
@@ -249,14 +249,14 @@ Makefile:
 
 # No general ('VPATH' variable) search path.
 
-# strcache buffers: 2 (1) / strings = 644 / storage = 10614 B / avg = 16 B
-# current buf: size = 8162 B / used = 2464 B / count = 154 / avg = 16 B
-# other used: total = 8150 B / count = 490 / avg = 16 B
-# other free: total = 12 B / max = 12 B / min = 12 B / avg = 12 B
+# strcache buffers: 2 (1) / strings = 633 / storage = 10433 B / avg = 16 B
+# current buf: size = 8162 B / used = 2281 B / count = 141 / avg = 16 B
+# other used: total = 8152 B / count = 492 / avg = 16 B
+# other free: total = 10 B / max = 10 B / min = 10 B / avg = 10 B
 
-# strcache performance: lookups = 648 / hit rate = 0%
+# strcache performance: lookups = 637 / hit rate = 0%
 # hash-table stats:
-# Load=644/8192=8%, Rehash=0, Collisions=83/648=13%
-# Finished Make data base on Thu Jun 16 14:43:19 2022
+# Load=633/8192=8%, Rehash=0, Collisions=81/637=13%
+# Finished Make data base on Sat Jun 18 07:30:34 2022
 
  

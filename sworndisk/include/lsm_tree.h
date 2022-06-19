@@ -6,9 +6,9 @@
 
 #include "crypto.h"
 #include "disk_structs.h"
-#include "hashmap.h"
 #include "cache.h"
 #include "bloom_filter.h"
+#include "iterator.h"
 
 #define DEFAULT_LSM_TREE_NR_DISK_LEVEL 2
 #define DEFAULT_LSM_LEVEL0_NR_FILE 4
@@ -25,25 +25,6 @@ struct record {
 struct record* record_create(dm_block_t pba, char* key, char* iv, char* mac);
 struct record* record_copy(struct record* old);
 void record_destroy(void* record);
-
-struct entry {
-    uint32_t key;
-    void* val;
-
-    struct list_head node;
-};  
-
-struct entry __entry(uint32_t key, void* val);
-
-struct iterator {
-    struct list_head node;
-    void* private;
-
-    bool (*has_next)(struct iterator* iterator);
-    int (*next)(struct iterator* iterator, void* data);
-    void (*destroy)(struct iterator* iterator);
-};
-
 
 #define DEFAULT_BIT_DEGREE 4
 struct bit_pointer {

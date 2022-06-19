@@ -4,7 +4,6 @@
 
 #include "../include/cache.h"
 #include "../include/memtable.h"
-#include "../include/dm_sworndisk.h"
 
 struct lru_cache_node {
     uint64_t key;
@@ -140,26 +139,4 @@ struct cache* lru_cache_create(size_t capacity) {
     return &this->cache;
 bad:
     return NULL;
-}
-
-#include "../include/lsm_tree.h"
-void lru_cache_test() {
-    size_t i;
-    struct cache* cache = lru_cache_create(4);
-
-    for (i = 0; i < 8; ++i) {
-        struct record* record;
-
-        record = record_create(i, NULL, NULL, NULL);
-        cache->put(cache, i, record, record_destroy);
-    }
-
-    for (i = 0; i < 8; ++i) {
-        struct record* record = cache->get(cache, i);
-
-        if (record)
-            DMINFO("cache hit: %ld", i);
-    }
-
-    cache->destroy(cache);
 }
