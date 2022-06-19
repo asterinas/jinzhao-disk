@@ -21,7 +21,7 @@ while getopts ':swrhmf' option;
 do
 	case "$option" in
 	s)
-		dd if=/dev/zero of=/dev/sdc bs=1M count=4 # Erase superblock 
+		dd if=/dev/zero of=/dev/sdd bs=1M count=4 # Erase superblock 
 		;;
 	w)
 		dd if=/home/lnhoo/dream.txt of=/dev/mapper/sworndisk bs=8624271 count=1
@@ -45,7 +45,7 @@ do
 		modprobe sworndisk
 		# insmod persistent-data/dm-persistent-data.ko
 		# insmod mappery.ko
-		echo 0 146800640 sworndisk /dev/sdb /dev/sdc 0 | dmsetup create sworndisk
+		echo 0 146800640 sworndisk /dev/sdc /dev/sdd 0 | dmsetup create sworndisk
 		;;
 		
 	h)

@@ -28,7 +28,6 @@ struct dm_sworndisk {
     spinlock_t req_lock;
     struct dm_dev* data_dev;
     struct dm_dev* metadata_dev;
-    struct workqueue_struct* wq;
     // workers
     struct work_struct deferred_bio_worker;
     // bio lists

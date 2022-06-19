@@ -48,7 +48,7 @@ void bio_list_take_safe(struct dm_sworndisk* sworndisk, struct bio_list* dst, st
 
 void defer_bio(struct dm_sworndisk* sworndisk, struct bio* bio) {
     bio_list_add_safe(sworndisk, &sworndisk->deferred_bios, bio);
-    queue_work(sworndisk->wq, &sworndisk->deferred_bio_worker);
+    schedule_work(&sworndisk->deferred_bio_worker);
 }
 
 void sworndisk_block_io(dm_block_t blkaddr, size_t count, void* buffer, enum dm_io_mem_type mem_type, int bi_op) {
@@ -316,13 +316,6 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 		goto bad;
     }
 
-    sworndisk->wq = alloc_workqueue("dm-" DM_MSG_PREFIX, WQ_MEM_RECLAIM, 0);
-	if (!sworndisk->wq) {
-		target->error = "could not create workqueue for sworndisk";
-        ret = -EAGAIN;
-		goto bad;
-	}
-
     sworndisk->cipher = aes_gcm_cipher_create();
     if (!sworndisk->cipher) {
         target->error = "could not create sworndisk cipher";
@@ -362,8 +355,6 @@ bad:
     __bio_prefetcher_destroy(&sworndisk->prefetcher);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
-    if (sworndisk->wq) 
-        destroy_workqueue(sworndisk->wq);
     if (sworndisk->seg_allocator)
         sworndisk->seg_allocator->destroy(sworndisk->seg_allocator);
     if (sworndisk->lsm_tree) 
@@ -393,8 +384,6 @@ static void dm_sworndisk_target_dtr(struct dm_target *ti)
     __bio_prefetcher_destroy(&sworndisk->prefetcher);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
-    if (sworndisk->wq) 
-        destroy_workqueue(sworndisk->wq);
     if (sworndisk->seg_allocator)
         sworndisk->seg_allocator->destroy(sworndisk->seg_allocator);
     if (sworndisk->lsm_tree) 
