@@ -45,7 +45,7 @@ do
 		modprobe sworndisk
 		# insmod persistent-data/dm-persistent-data.ko
 		# insmod mappery.ko
-		echo 0 146800640 sworndisk /dev/sdc /dev/sdd 0 | dmsetup create sworndisk
+		echo 0 94371840 sworndisk /dev/sdc /dev/sdd 0 | dmsetup create sworndisk
 		;;
 		
 	h)
