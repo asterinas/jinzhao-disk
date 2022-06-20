@@ -138,26 +138,3 @@ uint64_t shash(const void *_word, size_t len) {
     }
     return hash;
 }
-
-void bloom_filter_test() {
-    size_t i;
-    struct bloom_filter* filter = bloom_filter_create(32);
-
-    bloom_filter_add_hash(filter, djb2);
-    bloom_filter_add_hash(filter, jenkins);
-
-    for (i = 0; i < 128; i += 2)
-        bloom_filter_add(filter, &i, sizeof(size_t));
-    
-    for (i = 1; i < 128; i += 2) {
-        if (bloom_filter_contains(filter, &i, sizeof(size_t)))
-            DMINFO("should not contain this: %ld", i);
-    }
-
-    for (i = 0; i < 128; i += 2) {
-        if (!bloom_filter_contains(filter, &i, sizeof(size_t)))
-            DMINFO("it should be contained, but not!");
-    }
-
-    bloom_filter_destroy(filter);
-}

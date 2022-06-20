@@ -290,38 +290,3 @@ bad:
         kfree(this);
     return NULL;
 }
-
-void linked_hashtable_test(void) {
-    size_t i, err;
-    int *nums, *num;
-    struct hashtable* hashtable = linked_hashtable_create();
-    struct iterator* iter;
-
-    nums = kmalloc(sizeof(int) * 100, GFP_KERNEL);
-    for (i = 0; i < 100; ++i) {
-        nums[i] = 100 - i;
-        hashtable->put(hashtable, i, &nums[i]);
-    }
-        
-    
-    for (i = 0; i < 100; ++i) {
-        err = hashtable->get(hashtable, i, (void**)&num);
-        if (err || nums[i] != *num) {
-            DMINFO("%d != %d", nums[i], *num);
-        } else {
-            DMINFO("%d == %d", nums[i], *num);
-        }
-    }
-
-    i = 0;
-    iter = hashtable->iterator(hashtable);
-    while(iter->has_next(iter)) {
-        struct entry entry;
-        iter->next(iter, &entry);
-        DMINFO("count: %ld, key: %d, value: %d, sum: %d", ++i, entry.key, *(int*)entry.val, entry.key + *(int*)entry.val);
-    }
-    iter->destroy(iter);
-
-    hashtable->destroy(hashtable);
-    kfree(nums);
-}

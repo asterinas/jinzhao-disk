@@ -645,7 +645,17 @@ config DM_ZONED
 
 config DM_SWORNDISK
 	tristate "SwornDisk"
-	depends on BLK_DEV_MD
+	depends on BLK_DEV_DM
+	select CRC32
+	select CRYPTO
+	select CRYPTO_CBC
+	select DM_BUFIO
+	select DM_PERSISTENT_DATA
+
+config DM_SWORNDISK_TEST
+        tristate "Test for SwornDisk" if !KUNIT_ALL_TESTS
+        depends on DM_SWORNDISK && KUNIT=y
+        default KUNIT_ALL_TESTS
 
 config DM_AUDIT
 	bool "DM audit events"

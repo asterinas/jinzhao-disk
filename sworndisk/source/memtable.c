@@ -230,26 +230,6 @@ bad:
     return NULL;
 }
 
-void hash_memtable_test(void) {
-    int i;
-    struct memtable_entry* entry;
-    struct list_head entries;
-    struct memtable* memtable = hash_memtable_create();
-
-    for (i = 100; i >= 0; --i) {
-        memtable->put(memtable, i, record_create(i, NULL, NULL, NULL), record_destroy);
-    }
-
-    for (i = 100; i >= 0; --i) {
-        memtable->put(memtable, i, record_create(100 - i, NULL, NULL, NULL), record_destroy);
-    }
-
-    memtable->get_all_entry(memtable, &entries);
-    list_for_each_entry(entry, &entries, list) {
-        DMINFO("key: %d, value: %lld", entry->key, ((struct record*)(entry->val))->pba);
-    }
-}
-
 // rbtree memtable implementation
 void* __rbtree_memtable_search(struct rb_root* root, memtable_key_t key) {
     struct memtable_entry* cur;

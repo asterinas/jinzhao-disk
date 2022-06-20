@@ -24,5 +24,4 @@ void bloom_filter_add(struct bloom_filter* this, void* ptr, size_t len);
 int bloom_filter_add_hash(struct bloom_filter* this, hash_func_t func);
 bool bloom_filter_contains(struct bloom_filter* this, void* ptr, size_t len);
 void bloom_filter_destroy(struct bloom_filter* this);
-void bloom_filter_test(void);
 #endif
