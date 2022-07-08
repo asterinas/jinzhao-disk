@@ -4,7 +4,8 @@ sworndisk-y	+= source/dm-sworndisk.o source/metadata.o source/memtable.o \
 		   source/bio_operate.o source/crypto.o \
 		   source/segment_allocator.o source/segment_buffer.o \
 		   source/cache.o source/disk_structs.o source/lsm_tree.o \
-		   source/bloom_filter.o source/async.o source/hashtable.o
+		   source/bloom_filter.o source/async.o source/hashtable.o \
+		   source/journal.o
 
 obj-m		+= sworndisk.o
 

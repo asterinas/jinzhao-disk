@@ -7,6 +7,7 @@
 #include "disk_structs.h"
 #include "segment_allocator.h"
 #include "lsm_tree.h"
+#include "journal.h"
 #include "persistent-data/dm-block-manager.h"
 
 #define SWORNDISK_MAX_CONCURRENT_LOCKS 6
@@ -38,6 +39,8 @@ struct superblock {
 	// journal region
 	uint32_t journal_size; // sector aligned
 	uint64_t nr_journal;
+	uint64_t record_start;
+	uint64_t record_end;
 	uint64_t journal_region_start;
 
 	// checkpoint region
@@ -160,6 +163,8 @@ struct metadata {
 	struct dm_block_manager* bm;
 	// superblock
 	struct superblock* superblock;
+	// journal region
+	struct journal_region* journal;
 	// checkpoint region
 	struct seg_validator* seg_validator;
 	struct reverse_index_table* rit;
@@ -171,5 +176,8 @@ struct metadata {
 
 struct metadata* metadata_create(struct block_device* bdev);
 void metadata_destroy(struct metadata* this);
+
+struct journal_region *journal_region_create(struct superblock *superblock);
+void journal_region_destroy(struct journal_region* this);
 
 #endif

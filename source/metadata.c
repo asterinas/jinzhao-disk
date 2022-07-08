@@ -27,6 +27,8 @@ int superblock_read(struct superblock* this) {
 	this->index_region_start = le64_to_cpu(disk_super->index_region_start);
 	this->journal_size = le32_to_cpu(disk_super->journal_size);
 	this->nr_journal = le64_to_cpu(disk_super->nr_journal);
+	this->record_start = le64_to_cpu(disk_super->record_start);
+	this->record_end = le64_to_cpu(disk_super->record_end);
 	this->journal_region_start = le64_to_cpu(disk_super->journal_region_start);
 	this->seg_validity_table_start = le64_to_cpu(disk_super->seg_validity_table_start);
 	this->data_seg_table_start = le64_to_cpu(disk_super->data_seg_table_start);
@@ -61,6 +63,8 @@ int superblock_write(struct superblock* this) {
 	disk_super->index_region_start = cpu_to_le64(this->index_region_start);
 	disk_super->journal_size = cpu_to_le32(this->journal_size);
 	disk_super->nr_journal = cpu_to_le64(this->nr_journal);
+	disk_super->record_start = cpu_to_le64(this->record_start);
+	disk_super->record_end = cpu_to_le64(this->record_end);
 	disk_super->journal_region_start = cpu_to_le64(this->journal_region_start);
 	disk_super->seg_validity_table_start = cpu_to_le64(this->seg_validity_table_start);
 	disk_super->data_seg_table_start = cpu_to_le64(this->data_seg_table_start);
@@ -95,6 +99,8 @@ void superblock_print(struct superblock* this) {
 	DMINFO("\tindex_region_start: %lld", this->index_region_start);
 	DMINFO("\tjournal_size: %d", this->journal_size);
 	DMINFO("\tnr_journal: %lld", this->nr_journal);
+	DMINFO("\trecord_start: %lld", this->record_start);
+	DMINFO("\trecord_end: %lld", this->record_end);
 	DMINFO("\tjournal_region_start: %lld", this->journal_region_start);
 	DMINFO("\tseg_validity_table_start: %lld", this->seg_validity_table_start);
 	DMINFO("\tdata_seg_table_start: %lld", this->data_seg_table_start);
@@ -189,11 +195,13 @@ int superblock_init(struct superblock* this, struct dm_block_manager* bm, bool* 
 	this->nr_disk_level = DEFAULT_LSM_TREE_NR_DISK_LEVEL;
 	this->max_disk_level_capacity = NR_SEGMENT * BLOCKS_PER_SEGMENT;
 	this->index_region_start = SUPERBLOCK_LOCATION +  STRUCTURE_BLOCKS(struct superblock);
-	this->journal_size = 0;
-	this->nr_journal = 0;
+	this->journal_size = sizeof(struct journal_record);
+	this->nr_journal = JOURNAL_PER_SEGMENT * NR_JOURNAL_SEGMENT;
+	this->record_start = 0;
+	this->record_end = 0;
 	this->journal_region_start = this->index_region_start + __index_region_blocks(
 	  this->nr_disk_level, this->common_ratio, this->max_disk_level_capacity);
-	this->seg_validity_table_start = this->journal_region_start + __journal_region_blocks(this->nr_journal, this->journal_size);
+	this->seg_validity_table_start = this->journal_region_start + NR_JOURNAL_SEGMENT * BLOCKS_PER_SEGMENT;
 	this->data_seg_table_start = this->seg_validity_table_start + __seg_validity_table_blocks(this->nr_segment);
 	this->reverse_index_table_start = this->data_seg_table_start + __data_seg_table_blocks(this->nr_segment);
 	this->block_index_table_catalogue_start = this->reverse_index_table_start + __reverse_index_table_blocks(this->nr_segment, this->blocks_per_seg);
@@ -919,7 +927,11 @@ int metadata_init(struct metadata* this, struct block_device* bdev) {
 	this->superblock = superblock_create(this->bm, &should_format);
 	if (IS_ERR_OR_NULL(this->superblock))
 		goto bad;
-	
+
+	this->journal = journal_region_create(this->superblock);
+	if (IS_ERR_OR_NULL(this->journal))
+		goto bad;
+
 	this->seg_validator = seg_validator_create(this->bm, this->superblock->seg_validity_table_start, this->superblock->nr_segment);
 	if (IS_ERR_OR_NULL(this->seg_validator))
 		goto bad;
@@ -949,6 +961,7 @@ bad:
 	if (!IS_ERR_OR_NULL(this->bm))
 		dm_block_manager_destroy(this->bm);
 	superblock_destroy(this->superblock);
+	journal_region_destroy(this->journal);
 	seg_validator_destroy(this->seg_validator);
 	reverse_index_table_destroy(this->rit);
 	dst_destroy(this->dst);
