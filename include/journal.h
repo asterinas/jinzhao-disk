@@ -1,11 +1,21 @@
 #ifndef DM_SWORNDISK_JOURNAL_H
 #define DM_SWORNDISK_JOURNAL_H
 
+#include <crypto/skcipher.h>
+#include <linux/crc32.h>
 #include "segment_buffer.h"
 #include "metadata.h"
 
-#define JOURNAL_PER_SEGMENT (SEGMENT_BUFFER_SIZE / sizeof(struct journal_record))
+#define JOURNAL_BLOCK_SIZE 4096
+#define RECORDS_PER_BLOCK ((JOURNAL_BLOCK_SIZE - 2 * sizeof(struct crypto_info)) \
+				/ sizeof(struct journal_record))
+#define RECORDS_PER_SEGMENT (RECORDS_PER_BLOCK * BLOCKS_PER_SEGMENT)
 #define NR_JOURNAL_SEGMENT 16
+#define MAX_BLOCKS (BLOCKS_PER_SEGMENT * NR_JOURNAL_SEGMENT)
+#define MAX_RECORDS (MAX_BLOCKS * RECORDS_PER_BLOCK)
+#define BLOCK_CRYPT_LEN (sizeof(struct crypto_info) + RECORDS_PER_BLOCK \
+			 * sizeof(struct journal_record))
+#define SYNC_BLKNUM_THRESHOLD BLOCKS_PER_SEGMENT
 
 enum record_type {
 	DATA_LOG,
@@ -49,19 +59,31 @@ struct journal_record {
 		struct bit_node_record		bit_node;
 		struct checkpoint_pack_record	checkpoint_pack;
 	};
-	uint64_t		hmac;
 }__attribute__((aligned(64)));
+
+struct crypto_info {
+	char mac[AES_GCM_AUTH_SIZE];
+	char iv[AES_GCM_IV_SIZE];
+}__attribute__((aligned(32)));
+
+struct journal_block {
+	struct crypto_info previous_blk;
+	struct journal_record records[RECORDS_PER_BLOCK];
+	struct crypto_info current_blk;
+}__attribute__((aligned(JOURNAL_BLOCK_SIZE)));
 
 struct journal_operations;
 
 struct journal_region {
-	struct journal_record **records;
+	struct journal_block **blocks;
 	struct superblock *superblock;
 	struct journal_operations *jops;
+	struct aead_cipher *cipher;
 	uint64_t record_start;
 	uint64_t record_end;
-	uint64_t record_max;
-	int last_sync_segnum;
+	// sync_lock protects last_sync_blk
+	struct mutex sync_lock;
+	uint64_t last_sync_blk;
 	enum journal_status status;
 };
 
@@ -69,8 +91,15 @@ struct journal_operations {
 	void (*load)(struct journal_region *this);
 	bool (*should_recover)(struct journal_region *this);
 	void (*recover)(struct journal_region *this);
-	void (*synchronize)(struct journal_region *this, int segnum);
+	bool (*should_sync)(struct journal_region *this);
+	void (*synchronize)(struct journal_region *this);
 	void (*add_record)(struct journal_region *this, struct journal_record *record);
+	struct journal_block *(*get_block)(struct journal_region *this,
+					   uint64_t blk_num);
+	void (*encrypt_block)(struct journal_region *this, uint64_t blk_num,
+			      struct journal_block *buffer);
+	void (*decrypt_block)(struct journal_region *this, uint64_t blk_num,
+			      struct journal_block *buffer);
 };
 
 #endif

@@ -196,7 +196,7 @@ int superblock_init(struct superblock* this, struct dm_block_manager* bm, bool* 
 	this->max_disk_level_capacity = NR_SEGMENT * BLOCKS_PER_SEGMENT;
 	this->index_region_start = SUPERBLOCK_LOCATION +  STRUCTURE_BLOCKS(struct superblock);
 	this->journal_size = sizeof(struct journal_record);
-	this->nr_journal = JOURNAL_PER_SEGMENT * NR_JOURNAL_SEGMENT;
+	this->nr_journal = MAX_RECORDS;
 	this->record_start = 0;
 	this->record_end = 0;
 	this->journal_region_start = this->index_region_start + __index_region_blocks(

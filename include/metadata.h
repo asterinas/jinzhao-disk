@@ -25,7 +25,12 @@ struct superblock {
 	// validation 
 	uint32_t csum;
 	uint64_t magic;
-	
+
+	// root_key info
+	char root_key[AES_GCM_KEY_SIZE];
+	char root_mac[AES_GCM_AUTH_SIZE];
+	char root_iv[AES_GCM_IV_SIZE];
+
 	// data region
 	uint32_t blocks_per_seg; // sector count within a segment
 	uint64_t nr_segment; // segment count
