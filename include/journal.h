@@ -34,7 +34,6 @@ enum journal_status {
 };
 
 struct data_log_record {
-	uint64_t data_seg_id;
 	uint64_t timestamp;
 	uint64_t lba,hba;
 	char key[AES_GCM_KEY_SIZE];
@@ -42,7 +41,9 @@ struct data_log_record {
 	char iv[AES_GCM_IV_SIZE];
 };
 
-struct data_commit_record {};
+struct data_commit_record {
+	uint64_t timestamp;
+};
 
 struct bit_compaction_record {};
 

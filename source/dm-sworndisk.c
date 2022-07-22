@@ -80,7 +80,32 @@ void sworndisk_read_blocks(dm_block_t blkaddr, size_t count, void* buffer, enum 
 }
 
 void sworndisk_write_blocks(dm_block_t blkaddr, size_t count, void* buffer, enum dm_io_mem_type mem_type) {
-    sworndisk_block_io(blkaddr, count, buffer, mem_type, REQ_OP_WRITE);
+	uint64_t i, ts;
+	dm_block_t lba, hba;
+	struct record d_record;
+	struct journal_region *journal;
+	struct journal_record j_record;
+
+	sworndisk_block_io(blkaddr, count, buffer, mem_type, REQ_OP_WRITE);
+
+	hba = blkaddr;
+	journal = sworndisk->meta->journal;
+	ts = ktime_get_real_ns();
+	for (i = 0;i < count; i++) {
+		hba += i;
+		sworndisk->meta->rit->get(sworndisk->meta->rit, hba, &lba);
+		sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &d_record);
+
+		j_record.type = DATA_LOG;
+		j_record.data_log.timestamp = ts;
+		j_record.data_log.lba = lba;
+		j_record.data_log.hba = hba;
+		memcpy(j_record.data_log.key, d_record.key, AES_GCM_KEY_SIZE);
+		memcpy(j_record.data_log.mac, d_record.mac, AES_GCM_AUTH_SIZE);
+		memcpy(j_record.data_log.iv, d_record.iv, AES_GCM_IV_SIZE);
+
+		journal->jops->add_record(journal, &j_record);
+	}
 }
 
 #define THREAD_LOGGING_AHEAD 1
@@ -224,6 +249,35 @@ void process_deferred_bios(struct work_struct *ws) {
 	}
 }
 
+void flush_and_commit(struct dm_sworndisk *sworndisk, struct bio *bio)
+{
+	loff_t start, end;
+	uint64_t ts;
+	struct file *fp;
+	struct journal_region *journal;
+	struct journal_record j_record;
+
+	// flush data segment_buffer
+	sworndisk->seg_buffer->flush_bios(sworndisk->seg_buffer);
+	// flush index region
+	fp = sworndisk->lsm_tree->file;
+	start = sworndisk->meta->superblock->index_region_start *
+		SWORNDISK_METADATA_BLOCK_SIZE;
+	end = sworndisk->meta->superblock->journal_region_start *
+		SWORNDISK_METADATA_BLOCK_SIZE;
+	vfs_fsync_range(fp, start, end, 0);
+	// flush checkpoint region
+	dm_bm_flush(sworndisk->meta->bm);
+
+	// add data_commit record
+	journal = sworndisk->meta->journal;
+	ts = ktime_get_real_ns();
+	j_record.type = DATA_COMMIT;
+	j_record.data_commit.timestamp = ts;
+	journal->jops->add_record(journal, &j_record);
+	// flush journal_region
+	journal->jops->synchronize(journal);
+}
 
 static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
 {
@@ -242,6 +296,8 @@ static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
         case REQ_OP_WRITE:
             defer_bio(sworndisk, bio);
             break;
+	case REQ_OP_FLUSH:
+	    flush_and_commit(sworndisk, bio);
         default:
             goto remapped;
     }
