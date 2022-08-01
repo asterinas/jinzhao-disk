@@ -16,6 +16,7 @@
 #define BLOCK_CRYPT_LEN (sizeof(struct crypto_info) + RECORDS_PER_BLOCK \
 			 * sizeof(struct journal_record))
 #define SYNC_BLKNUM_THRESHOLD BLOCKS_PER_SEGMENT
+#define MAX_BITS 64
 
 enum record_type {
 	DATA_LOG,
@@ -45,9 +46,25 @@ struct data_commit_record {
 	uint64_t timestamp;
 };
 
-struct bit_compaction_record {};
+struct bit_compaction_record {
+	uint64_t timestamp;
+	DECLARE_BITMAP(upper_bits, MAX_BITS);
+	DECLARE_BITMAP(lower_bits, MAX_BITS);
+	size_t bit_id;
+	size_t level;
+	size_t version;
+};
 
-struct bit_node_record {};
+struct bit_node_record {
+	uint64_t timestamp;
+	size_t bit_id;
+	bool is_leaf;
+	bool is_done;
+	loff_t pos;
+	char key[AES_GCM_KEY_SIZE];
+	char mac[AES_GCM_AUTH_SIZE];
+	char iv[AES_GCM_IV_SIZE];
+};
 
 struct checkpoint_pack_record {};
 

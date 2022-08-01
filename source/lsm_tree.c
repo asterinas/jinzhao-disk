@@ -142,6 +142,8 @@ int bit_builder_add_entry(struct lsm_file_builder* builder, struct entry* entry)
     struct bit_builder* this = container_of(builder, struct bit_builder, lsm_file_builder);
     struct bit_node *inner_node = NULL, *leaf_node = NULL;
     size_t h = 0, cur, nr_record = this->cur_leaf.nr_record;
+    struct journal_region *journal = sworndisk->meta->journal;
+    struct journal_record j_record;
     struct bit_pointer pointer = {
         .pos = this->begin + this->cur,
     };
@@ -174,6 +176,8 @@ int bit_builder_add_entry(struct lsm_file_builder* builder, struct entry* entry)
     cur = this->cur;
     this->cur += BIT_LEAF_NODE_SIZE;
 
+    j_record.type = BIT_NODE;
+    j_record.bit_node.bit_id = this->id;
 
     this->ctx[h].nr += 1;
     while (this->ctx[h].nr == DEFAULT_BIT_DEGREE) {
@@ -192,6 +196,15 @@ int bit_builder_add_entry(struct lsm_file_builder* builder, struct entry* entry)
         this->ctx[h+1].nr += 1;
         this->ctx[h].nr = 0;
         h += 1;
+
+	j_record.bit_node.is_leaf = false;
+	j_record.bit_node.is_done = false;
+	j_record.bit_node.pos = ptr->pos;
+	memcpy(j_record.bit_node.key, ptr->key, AES_GCM_KEY_SIZE);
+	memcpy(j_record.bit_node.mac, inner_node->mac, AES_GCM_AUTH_SIZE);
+	memcpy(j_record.bit_node.iv, ptr->iv, AES_GCM_IV_SIZE);
+	j_record.bit_node.timestamp = ktime_get_real_ns();
+	journal->jops->add_record(journal, &j_record);
     }
 
     leaf_node->leaf.next.pos = this->begin + this->cur;
@@ -204,6 +217,15 @@ int bit_builder_add_entry(struct lsm_file_builder* builder, struct entry* entry)
     memcpy(this->buffer + cur, leaf_node, BIT_LEAF_NODE_SIZE);
     this->cur_leaf.nr_record = 0;
 
+    j_record.bit_node.is_leaf = true;
+    j_record.bit_node.is_done = false;
+    j_record.bit_node.pos = pointer.pos;
+    memcpy(j_record.bit_node.key, pointer.key, AES_GCM_KEY_SIZE);
+    memcpy(j_record.bit_node.mac, leaf_node->mac, AES_GCM_AUTH_SIZE);
+    memcpy(j_record.bit_node.iv, pointer.iv, AES_GCM_IV_SIZE);
+    j_record.bit_node.timestamp = ktime_get_real_ns();
+    journal->jops->add_record(journal, &j_record);
+
 exit:
     if (leaf_node)
         kfree(leaf_node);
@@ -214,9 +236,12 @@ exit:
 
 struct lsm_file* bit_builder_complete(struct lsm_file_builder* builder) {
     struct bit_builder* this = container_of(builder, struct bit_builder, lsm_file_builder);
-    size_t h = 0, cur;
+    size_t h = 0, cur, start, end;
     loff_t addr = this->begin, root, filter_begin;
     struct bit_node *inner_node = NULL, *leaf_node = NULL;
+    struct lsm_catalogue *catalogue = sworndisk->lsm_tree->catalogue;
+    struct journal_region *journal = sworndisk->meta->journal;
+    struct journal_record j_record;
     struct bit_pointer *root_pointer, pointer = {
         .pos = this->begin + this->cur,
     };
@@ -240,6 +265,9 @@ struct lsm_file* bit_builder_complete(struct lsm_file_builder* builder) {
         this->cur += BIT_LEAF_NODE_SIZE;
     }
 
+    j_record.type = BIT_NODE;
+    j_record.bit_node.bit_id = this->id;
+
     while (h < this->height - 1) {
         struct bit_pointer* ptr = &(this->ctx[h+1].pointers[this->ctx[h+1].nr]);
 
@@ -260,11 +288,29 @@ struct lsm_file* bit_builder_complete(struct lsm_file_builder* builder) {
         this->ctx[h+1].nr += 1;
         this->ctx[h].nr = 0;
         h += 1;
+
+	j_record.bit_node.is_leaf = false;
+	j_record.bit_node.is_done = false;
+	j_record.bit_node.pos = ptr->pos;
+	memcpy(j_record.bit_node.key, ptr->key, AES_GCM_KEY_SIZE);
+	memcpy(j_record.bit_node.mac, inner_node->mac, AES_GCM_AUTH_SIZE);
+	memcpy(j_record.bit_node.iv, ptr->iv, AES_GCM_IV_SIZE);
+	j_record.bit_node.timestamp = ktime_get_real_ns();
+	journal->jops->add_record(journal, &j_record);
     }
 
     if (this->cur_leaf.nr_record > 0) {
         bit_node_encode(leaf_node, pointer.key, pointer.iv);
         memcpy(this->buffer + cur, leaf_node, BIT_LEAF_NODE_SIZE);
+
+	j_record.bit_node.is_leaf = true;
+	j_record.bit_node.is_done = false;
+	j_record.bit_node.pos = pointer.pos;
+	memcpy(j_record.bit_node.key, pointer.key, AES_GCM_KEY_SIZE);
+	memcpy(j_record.bit_node.mac, leaf_node->mac, AES_GCM_AUTH_SIZE);
+	memcpy(j_record.bit_node.iv, pointer.iv, AES_GCM_IV_SIZE);
+	j_record.bit_node.timestamp = ktime_get_real_ns();
+	journal->jops->add_record(journal, &j_record);
     }
 
 exit:
@@ -278,6 +324,14 @@ exit:
     root = this->begin + this->cur - BIT_INNER_NODE_SIZE;
     filter_begin = addr = root + BIT_INNER_NODE_SIZE;
     kernel_write(this->file, this->filter->bits, this->filter->size, &addr);
+
+    start = catalogue->start + this->id * catalogue->file_size;
+    end = start + catalogue->file_size;
+    vfs_fsync_range(this->file, start, end, 0);
+    j_record.bit_node.is_done = true;
+    j_record.bit_node.timestamp = ktime_get_real_ns();
+    journal->jops->add_record(journal, &j_record);
+
     return bit_file_create(this->file, root, this->id, this->level, this->version, this->first_key, this->last_key,
         root_pointer->key, root_pointer->iv, filter_begin);
 }
@@ -976,7 +1030,7 @@ bool lsm_file_overlapping(struct list_head* files) {
 
 int compaction_job_run(struct compaction_job* this) {
     int err = 0;
-    size_t fd;
+    size_t fd, version;
     struct min_heap heap = {
         .data = NULL,
         .nr = 0,
@@ -993,6 +1047,8 @@ int compaction_job_run(struct compaction_job* this) {
     struct iterator *iter;
     struct list_head demoted_files, relative_files, iters;
     struct lsm_file_builder* builder = NULL;
+    struct journal_region *journal = sworndisk->meta->journal;
+    struct journal_record j_record;
 
     this->level1->pick_demoted_files(this->level1, &demoted_files);
     this->level2->find_relative_files(this->level2, &demoted_files, &relative_files);
@@ -1011,11 +1067,13 @@ int compaction_job_run(struct compaction_job* this) {
     INIT_LIST_HEAD(&iters);
     list_for_each_entry(file, &demoted_files, node) {
         list_add(&file->iterator(file)->node, &iters);
+	bitmap_set(j_record.bit_compaction.upper_bits, file->id, 1);
         heap.size += 1;
     }
 
     list_for_each_entry(file, &relative_files, node) {
         list_add(&file->iterator(file)->node, &iters);
+	bitmap_set(j_record.bit_compaction.lower_bits, file->id, 1);
         heap.size += 1;
     }
 
@@ -1035,7 +1093,16 @@ int compaction_job_run(struct compaction_job* this) {
 
     distinct = *(struct kway_merge_node*)heap.data;
     this->catalogue->alloc_file(this->catalogue, &fd);
-    builder = this->level2->get_builder(this->level2, this->file, this->catalogue->start + fd * this->catalogue->file_size, fd, this->level2->level, this->catalogue->get_next_version(this->catalogue));
+    version = this->catalogue->get_next_version(this->catalogue);
+    builder = this->level2->get_builder(this->level2, this->file, this->catalogue->start + fd * this->catalogue->file_size, fd, this->level2->level, version);
+
+    j_record.type = BIT_COMPACTION;
+    j_record.bit_compaction.bit_id = fd;
+    j_record.bit_compaction.level = this->level2->level;
+    j_record.bit_compaction.version = version;
+    j_record.bit_compaction.timestamp = ktime_get_real_ns();
+    journal->jops->add_record(journal, &j_record);
+
     while (heap.nr > 0) {
         iter = ((struct kway_merge_node*)heap.data)->iter;
         first = *(struct kway_merge_node*)heap.data;
@@ -1067,8 +1134,16 @@ int compaction_job_run(struct compaction_job* this) {
             this->level2->add_file(this->level2, file);
 
             this->catalogue->alloc_file(this->catalogue, &fd);
+
             builder->destroy(builder);
-            builder = this->level2->get_builder(this->level2, this->file, this->catalogue->start + fd * this->catalogue->file_size, fd, this->level2->level, this->catalogue->get_next_version(this->catalogue));
+	    version = this->catalogue->get_next_version(this->catalogue);
+	    builder = this->level2->get_builder(this->level2, this->file, this->catalogue->start + fd * this->catalogue->file_size, fd, this->level2->level, version);
+
+	    j_record.bit_compaction.bit_id = fd;
+	    j_record.bit_compaction.level = this->level2->level;
+	    j_record.bit_compaction.version = version;
+	    j_record.bit_compaction.timestamp = ktime_get_real_ns();
+	    journal->jops->add_record(journal, &j_record);
         }
     }
 
@@ -1153,18 +1228,29 @@ exit:
 
 int lsm_tree_minor_compaction(struct lsm_tree* this) {
     int err = 0;
-    size_t fd;
+    size_t fd, version;
     struct lsm_file* file;
     struct lsm_file_builder* builder;
     struct memtable_entry* entry;
     struct list_head entries;
+    struct journal_region *journal = sworndisk->meta->journal;
+    struct journal_record j_record;
 
     if (this->levels[0]->is_full(this->levels[0]))
         lsm_tree_major_compaction(this, 0);
 
     this->memtable->get_all_entry(this->memtable, &entries);
     this->catalogue->alloc_file(this->catalogue, &fd);
-    builder = this->levels[0]->get_builder(this->levels[0], this->file, this->catalogue->start + fd * this->catalogue->file_size, fd, 0, this->catalogue->get_next_version(this->catalogue));
+
+    version = this->catalogue->get_next_version(this->catalogue);
+    builder = this->levels[0]->get_builder(this->levels[0], this->file, this->catalogue->start + fd * this->catalogue->file_size, fd, 0, version);
+
+    j_record.type = BIT_COMPACTION;
+    j_record.bit_compaction.bit_id = fd;
+    j_record.bit_compaction.level = 0;
+    j_record.bit_compaction.version = version;
+    j_record.bit_compaction.timestamp = ktime_get_real_ns();
+    journal->jops->add_record(journal, &j_record);
 
     list_for_each_entry(entry, &entries, list) {
         builder->add_entry(builder, (struct entry*)entry);
