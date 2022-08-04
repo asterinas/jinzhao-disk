@@ -218,12 +218,15 @@ void async_read(void* context) {
     up(&sworndisk->max_reader);
 }
 
-void sworndisk_do_write(struct bio* bio) {
-    down_write(&sworndisk->rw_lock);
-    sworndisk->seg_buffer->push_bio(sworndisk->seg_buffer, bio);
-    bio_endio(bio);
-    bio_prefetcher_clear(&sworndisk->prefetcher);
-    up_write(&sworndisk->rw_lock);
+void sworndisk_do_write(struct bio* bio)
+{
+	down_read(&sworndisk->meta->journal->valid_fields_lock);
+	down_write(&sworndisk->rw_lock);
+	sworndisk->seg_buffer->push_bio(sworndisk->seg_buffer, bio);
+	bio_endio(bio);
+	bio_prefetcher_clear(&sworndisk->prefetcher);
+	up_write(&sworndisk->rw_lock);
+	up_read(&sworndisk->meta->journal->valid_fields_lock);
 }
 
 void async_write(void* context) {
@@ -249,10 +252,121 @@ void process_deferred_bios(struct work_struct *ws) {
 	}
 }
 
+void backup_metadata(struct block_device* bdev, dm_block_t dst, dm_block_t src,
+		     int blk_count, void *buffer, struct dm_io_client *client)
+{
+	int i;
+	unsigned long sync_error_bits;
+	struct dm_io_request req = {
+		.mem.type = DM_IO_KMEM,
+		.mem.offset = 0,
+		.mem.ptr.addr = buffer,
+		.notify.fn = NULL,
+		.client = client,
+	};
+	struct dm_io_region region = {
+		.bdev = bdev,
+		.count = SECTORS_PER_BLOCK,
+	};
+
+	for (i = 0; i < blk_count; i++) {
+		// read from src
+		req.bi_op = REQ_OP_READ;
+		region.sector = (src + i) * SECTORS_PER_BLOCK;
+		dm_io(&req, 1, &region, &sync_error_bits);
+		if (sync_error_bits)
+			DMERR("backup_metadata: dm_io read error\n");
+		// write to dst
+		sync_error_bits = 0;
+		req.bi_op = REQ_OP_WRITE;
+		region.sector = (dst + i) * SECTORS_PER_BLOCK;
+		dm_io(&req, 1, &region, &sync_error_bits);
+		if (sync_error_bits)
+			DMERR("backup_metadata: dm_io write error\n");
+	}
+}
+
+void add_checkpoint_pack_record(struct metadata *meta)
+{
+	int blk_count, i;
+	uint64_t record_index;
+	void *buffer = NULL;
+	dm_block_t base, src, dst;
+	struct dm_io_client *client = NULL;
+	struct journal_region *journal = meta->journal;
+	struct journal_record j_record;
+
+	buffer = kmalloc(SWORNDISK_METADATA_BLOCK_SIZE, GFP_KERNEL);
+	if (!buffer) {
+		DMERR("add_checkpoint_pack_record: kmalloc failed\n");
+		return;
+	}
+	client = dm_io_client_create();
+	if (!client) {
+		DMERR("add_checkpoint_pack_record: dm_io_client_create failed\n");
+		kfree(buffer);
+		return;
+	}
+
+	down_write(&journal->valid_fields_lock);
+	// backup metadata: SVT/DST/RIT/BITC
+	for (i = 0; i < NR_CHECKPOINT_FIELDS; i++) {
+		switch (i) {
+		case DATA_SVT:
+			base = meta->superblock->seg_validity_table_start;
+			blk_count = meta->seg_validator->blk_count;
+			break;
+		case DATA_DST:
+			base = meta->superblock->data_seg_table_start;
+			blk_count = meta->dst->blk_count;
+			break;
+		case DATA_RIT:
+			base = meta->superblock->reverse_index_table_start;
+			blk_count = meta->rit->blk_count;
+			break;
+		case INDEX_SVT:
+			base = meta->superblock->block_index_table_catalogue_start;
+			blk_count = meta->bit_catalogue->bit_validity_table->blk_count;
+			break;
+		case INDEX_BITC:
+			base = meta->superblock->block_index_table_catalogue_start +
+				meta->bit_catalogue->bit_validity_table->blk_count *
+				NR_CHECKPOINT_PACKS;
+			blk_count = meta->bit_catalogue->blk_count;
+			break;
+		default:
+			break;
+		}
+		if (test_bit(i, journal->valid_fields)) {
+			dst = base;
+			src = dst + blk_count;
+		} else {
+			src = base;
+			dst = src + blk_count;
+		}
+		backup_metadata(sworndisk->metadata_dev->bdev, dst, src,
+				blk_count, buffer, client);
+	}
+	up_write(&journal->valid_fields_lock);
+	// add journal_record
+	j_record.type = CHECKPOINT_PACK;
+	j_record.checkpoint_pack.record_start = journal->record_start;
+	j_record.checkpoint_pack.record_end = journal->record_end;
+	bitmap_complement(j_record.checkpoint_pack.valid_fields,
+			  journal->valid_fields, NR_CHECKPOINT_FIELDS);
+	j_record.checkpoint_pack.timestamp = ktime_get_real_ns();
+	record_index = journal->jops->add_record(journal, &j_record);
+
+	meta->superblock->last_checkpoint_pack = record_index;
+	journal->record_start = record_index;
+
+	dm_io_client_destroy(client);
+	kfree(buffer);
+}
+
 void flush_and_commit(struct dm_sworndisk *sworndisk, struct bio *bio)
 {
 	loff_t start, end;
-	uint64_t ts;
 	struct file *fp;
 	struct journal_region *journal;
 	struct journal_record j_record;
@@ -271,10 +385,11 @@ void flush_and_commit(struct dm_sworndisk *sworndisk, struct bio *bio)
 
 	// add data_commit record
 	journal = sworndisk->meta->journal;
-	ts = ktime_get_real_ns();
 	j_record.type = DATA_COMMIT;
-	j_record.data_commit.timestamp = ts;
+	j_record.data_commit.timestamp = ktime_get_real_ns();
 	journal->jops->add_record(journal, &j_record);
+	//add checkpoint_pack record
+	add_checkpoint_pack_record(sworndisk->meta);
 	// flush journal_region
 	journal->jops->synchronize(journal);
 }

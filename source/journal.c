@@ -116,7 +116,7 @@ void journal_encrypt_block(struct journal_region *this, uint64_t blk_num,
 	memcpy(&cur_blk->previous_blk, &pre_blk->current_blk,
 	       sizeof(struct crypto_info));
 
-	rc = journal_derive_key(this->superblock->root_key, blk_num,
+	rc = journal_derive_key(sworndisk->meta->root_key, blk_num,
 				blk_key, AES_GCM_KEY_SIZE);
 	if (rc) {
 		DMERR("journal derive encrypt_key failed\n");
@@ -139,7 +139,7 @@ void journal_decrypt_block(struct journal_region *this, uint64_t blk_num,
 	char *blk_mac, *blk_iv;
 	int rc;
 
-	rc = journal_derive_key(this->superblock->root_key, blk_num,
+	rc = journal_derive_key(sworndisk->meta->root_key, blk_num,
 				blk_key, AES_GCM_KEY_SIZE);
 	if (rc) {
 		DMERR("journal derive decrypt_key failed\n");
@@ -314,8 +314,9 @@ void journal_synchronize(struct journal_region *this)
 	this->status = JOURNAL_READY;
 }
 
-void journal_add_record(struct journal_region *this, struct journal_record *record)
+uint64_t journal_add_record(struct journal_region *this, struct journal_record *record)
 {
+	uint64_t ret;
 	uint64_t blk_num = this->record_end / RECORDS_PER_BLOCK;
 	int index = this->record_end % RECORDS_PER_BLOCK;
 	struct journal_block *blk = this->jops->get_block(this, blk_num);
@@ -343,6 +344,7 @@ void journal_add_record(struct journal_region *this, struct journal_record *reco
 		break;
 	}
 
+	ret = this->record_end;
 	this->record_end = (this->record_end + 1) % MAX_RECORDS;
 	if (this->record_end == this->record_start)
 		this->record_start = (this->record_start + 1) % MAX_RECORDS;
@@ -351,6 +353,7 @@ void journal_add_record(struct journal_region *this, struct journal_record *reco
 		this->status = JOURNAL_SYNCHRONIZING;
 		this->jops->synchronize(this);
 	}
+	return ret;
 }
 
 struct journal_operations default_jops = {
@@ -375,6 +378,7 @@ int journal_region_init(struct journal_region *this, struct superblock *superblo
 	this->record_start = superblock->record_start;
 	this->record_end = superblock->record_end;
 	mutex_init(&this->sync_lock);
+	init_rwsem(&this->valid_fields_lock);
 	this->cipher = aes_gcm_cipher_create();
 	if (!this->cipher) {
 		DMERR("journal_region could not create cipher\n");

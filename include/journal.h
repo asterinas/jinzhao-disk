@@ -17,6 +17,7 @@
 			 * sizeof(struct journal_record))
 #define SYNC_BLKNUM_THRESHOLD BLOCKS_PER_SEGMENT
 #define MAX_BITS 64
+#define NR_CHECKPOINT_PACKS 2
 
 enum record_type {
 	DATA_LOG,
@@ -32,6 +33,15 @@ enum journal_status {
 	JOURNAL_RECOVERING,
 	JOURNAL_READY,
 	JOURNAL_SYNCHRONIZING,
+};
+
+enum checkpoint_pack_field {
+	DATA_SVT = 0,
+	DATA_DST,
+	DATA_RIT,
+	INDEX_SVT,
+	INDEX_BITC,
+	NR_CHECKPOINT_FIELDS,
 };
 
 struct data_log_record {
@@ -66,7 +76,16 @@ struct bit_node_record {
 	char iv[AES_GCM_IV_SIZE];
 };
 
-struct checkpoint_pack_record {};
+struct checkpoint_pack_record {
+	uint64_t timestamp;
+	uint64_t record_start;
+	uint64_t record_end;
+	DECLARE_BITMAP(valid_fields, NR_CHECKPOINT_FIELDS);
+	// reserved for RIT/BITC crypto info
+	char key[AES_GCM_KEY_SIZE];
+	char mac[AES_GCM_AUTH_SIZE];
+	char iv[AES_GCM_IV_SIZE];
+};
 
 struct journal_record {
 	enum record_type	type;
@@ -103,6 +122,8 @@ struct journal_region {
 	struct mutex sync_lock;
 	uint64_t last_sync_blk;
 	enum journal_status status;
+	struct rw_semaphore valid_fields_lock;
+	DECLARE_BITMAP(valid_fields, NR_CHECKPOINT_FIELDS);
 };
 
 struct journal_operations {
@@ -111,7 +132,7 @@ struct journal_operations {
 	void (*recover)(struct journal_region *this);
 	bool (*should_sync)(struct journal_region *this);
 	void (*synchronize)(struct journal_region *this);
-	void (*add_record)(struct journal_region *this, struct journal_record *record);
+	uint64_t (*add_record)(struct journal_region *this, struct journal_record *record);
 	struct journal_block *(*get_block)(struct journal_region *this,
 					   uint64_t blk_num);
 	void (*encrypt_block)(struct journal_region *this, uint64_t blk_num,

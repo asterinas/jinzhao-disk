@@ -26,11 +26,6 @@ struct superblock {
 	uint32_t csum;
 	uint64_t magic;
 
-	// root_key info
-	char root_key[AES_GCM_KEY_SIZE];
-	char root_mac[AES_GCM_AUTH_SIZE];
-	char root_iv[AES_GCM_IV_SIZE];
-
 	// data region
 	uint32_t blocks_per_seg; // sector count within a segment
 	uint64_t nr_segment; // segment count
@@ -46,6 +41,7 @@ struct superblock {
 	uint64_t nr_journal;
 	uint64_t record_start;
 	uint64_t record_end;
+	uint64_t last_checkpoint_pack;
 	uint64_t journal_region_start;
 
 	// checkpoint region
@@ -69,6 +65,7 @@ void superblock_destroy(struct superblock* this);
 // segment validator definition
 struct seg_validator {
 	size_t nr_segment;
+	size_t blk_count;
 	size_t cur_segment;
 	struct disk_bitset* seg_validity_table;
 
@@ -79,7 +76,8 @@ struct seg_validator {
 	int (*valid_segment_count)(struct seg_validator* this, size_t* count);
 };
 
-struct seg_validator* seg_validator_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_segment);
+struct seg_validator* seg_validator_create(struct dm_block_manager* bm,
+		dm_block_t start, size_t nr_segment, int valid_field);
 void seg_validator_destroy(struct seg_validator* this);
 
 // reverse index table definition
@@ -89,6 +87,7 @@ struct reverse_index_entry {
 
 struct reverse_index_table {
 	size_t nr_block;
+	size_t blk_count;
 	struct disk_array* array;
 
 	int (*format)(struct reverse_index_table* this);
@@ -116,6 +115,8 @@ struct dst_entry {
 struct dst {
 	dm_block_t start;
 	size_t nr_segment;
+	size_t blk_count;
+	int valid_field;
 	struct disk_array* array;
 	struct rb_node** node_list;
 	struct rb_root victims;
@@ -134,7 +135,8 @@ struct dst {
 };
 
 bool should_threaded_logging(struct dst* dst);
-struct dst* dst_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_segment);
+struct dst* dst_create(struct dm_block_manager* bm, dm_block_t start,
+		       size_t nr_segment, int valid_field);
 void dst_destroy(struct dst* this);
 
 
@@ -153,6 +155,7 @@ struct bit_catalogue {
 	struct lsm_catalogue lsm_catalogue;
 
 	size_t nr_bit, max_version;
+	size_t blk_count;
 	struct seg_validator* bit_validity_table;
 	struct disk_array* file_stats;
 	dm_block_t start, index_region_start;
@@ -166,6 +169,10 @@ struct metadata {
 	// persistent client
 	struct block_device* bdev;
 	struct dm_block_manager* bm;
+	// root_key info
+	char root_key[AES_GCM_KEY_SIZE];
+	char root_mac[AES_GCM_AUTH_SIZE];
+	char root_iv[AES_GCM_IV_SIZE];
 	// superblock
 	struct superblock* superblock;
 	// journal region

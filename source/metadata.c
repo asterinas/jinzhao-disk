@@ -165,8 +165,12 @@ size_t __data_seg_table_blocks(size_t nr_segment) {
 	return __disk_array_blocks(nr_segment, sizeof(struct dst_entry), SWORNDISK_METADATA_BLOCK_SIZE);
 }
 
-size_t __reverse_index_table_blocks(size_t nr_segment, size_t blocks_per_seg) {
-	return __disk_array_blocks(nr_segment * blocks_per_seg, sizeof(struct reverse_index_entry), SWORNDISK_METADATA_BLOCK_SIZE);
+size_t __reverse_index_table_blocks(size_t nr_block) {
+	return __disk_array_blocks(nr_block, sizeof(struct reverse_index_entry), SWORNDISK_METADATA_BLOCK_SIZE);
+}
+
+size_t __bit_catalogue_blocks(size_t nr_fd) {
+	return __disk_array_blocks(nr_fd, sizeof(struct file_stat), SWORNDISK_METADATA_BLOCK_SIZE);
 }
 
 int superblock_init(struct superblock* this, struct dm_block_manager* bm, bool* should_format) {
@@ -202,9 +206,9 @@ int superblock_init(struct superblock* this, struct dm_block_manager* bm, bool* 
 	this->journal_region_start = this->index_region_start + __index_region_blocks(
 	  this->nr_disk_level, this->common_ratio, this->max_disk_level_capacity);
 	this->seg_validity_table_start = this->journal_region_start + NR_JOURNAL_SEGMENT * BLOCKS_PER_SEGMENT;
-	this->data_seg_table_start = this->seg_validity_table_start + __seg_validity_table_blocks(this->nr_segment);
-	this->reverse_index_table_start = this->data_seg_table_start + __data_seg_table_blocks(this->nr_segment);
-	this->block_index_table_catalogue_start = this->reverse_index_table_start + __reverse_index_table_blocks(this->nr_segment, this->blocks_per_seg);
+	this->data_seg_table_start = this->seg_validity_table_start + __seg_validity_table_blocks(this->nr_segment) * NR_CHECKPOINT_PACKS;
+	this->reverse_index_table_start = this->data_seg_table_start + __data_seg_table_blocks(this->nr_segment) * NR_CHECKPOINT_PACKS;
+	this->block_index_table_catalogue_start = this->reverse_index_table_start + __reverse_index_table_blocks(this->nr_segment * this->blocks_per_seg) * NR_CHECKPOINT_PACKS;
 
 	this->write(this);
 	return 0;
@@ -309,10 +313,13 @@ int seg_validator_valid_segment_count(struct seg_validator* this, size_t* count)
 	return 0;
 }
 
-int seg_validator_init(struct seg_validator* this, struct dm_block_manager* bm, dm_block_t start, size_t nr_segment) {
+int seg_validator_init(struct seg_validator* this, struct dm_block_manager* bm,
+		       dm_block_t start, size_t nr_segment, int valid_field)
+{
 	this->nr_segment = nr_segment;
+	this->blk_count = __seg_validity_table_blocks(nr_segment);
 	this->cur_segment = 0;
-	this->seg_validity_table = disk_bitset_create(bm, start, nr_segment);
+	this->seg_validity_table = disk_bitset_create(bm, start + valid_field * this->blk_count, nr_segment);
 	if (IS_ERR_OR_NULL(this->seg_validity_table))
 		return -ENOMEM;
 
@@ -325,7 +332,9 @@ int seg_validator_init(struct seg_validator* this, struct dm_block_manager* bm, 
 	return 0;
 } 
 
-struct seg_validator* seg_validator_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_segment) {
+struct seg_validator* seg_validator_create(struct dm_block_manager* bm, dm_block_t start,
+					   size_t nr_segment, int valid_field)
+{
 	int r;
 	struct seg_validator* this;
 
@@ -333,7 +342,7 @@ struct seg_validator* seg_validator_create(struct dm_block_manager* bm, dm_block
 	if (!this)
 		return NULL;
 	
-	r = seg_validator_init(this, bm, start, nr_segment);
+	r = seg_validator_init(this, bm, start, nr_segment, valid_field);
 	if (r)
 		return NULL;
 
@@ -378,9 +387,12 @@ int reverse_index_table_get(struct reverse_index_table* this, dm_block_t pba, dm
 	return 0;
 }
 
-int reverse_index_table_init(struct reverse_index_table* this, struct dm_block_manager* bm, dm_block_t start, size_t nr_block) {
+int reverse_index_table_init(struct reverse_index_table* this, struct dm_block_manager* bm,
+			     dm_block_t start, size_t nr_block, int valid_field)
+{
 	this->nr_block = nr_block;
-	this->array = disk_array_create(bm, start, this->nr_block, sizeof(struct reverse_index_entry));
+	this->blk_count = __reverse_index_table_blocks(nr_block);
+	this->array = disk_array_create(bm, start + valid_field * this->blk_count, nr_block, sizeof(struct reverse_index_entry));
 	if (!this->array)
 		return -ENOMEM;
 
@@ -391,7 +403,9 @@ int reverse_index_table_init(struct reverse_index_table* this, struct dm_block_m
 	return 0;
 }
 
-struct reverse_index_table* reverse_index_table_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_block) {
+struct reverse_index_table* reverse_index_table_create(struct dm_block_manager* bm,
+			dm_block_t start, size_t nr_block, int valid_field)
+{
 	int r;
 	struct reverse_index_table* this;
 
@@ -399,7 +413,7 @@ struct reverse_index_table* reverse_index_table_create(struct dm_block_manager* 
 	if (!this)
 		return NULL;
 	
-	r = reverse_index_table_init(this, bm, start, nr_block);
+	r = reverse_index_table_init(this, bm, start, nr_block, valid_field);
 	if (r)
 		return NULL;
 	
@@ -627,7 +641,8 @@ struct victim* dst_pop_victim(struct dst* this) {
 }
 
 
-int dst_init(struct dst* this, struct dm_block_manager* bm, dm_block_t start, size_t nr_segment);
+int dst_init(struct dst* this, struct dm_block_manager* bm, dm_block_t start,
+	     size_t nr_segment, int valid_field);
 int dst_format(struct dst* this) {
 	int r;
 
@@ -640,14 +655,17 @@ int dst_format(struct dst* this) {
 	}
 
 	kfree(this->node_list);
-	r = dst_init(this, this->bm, this->start, this->nr_segment);
+
+	r = dst_init(this, this->bm, this->start, this->nr_segment, this->valid_field);
 	if (r)
 		return r;
 	
 	return 0;
 }
 
-int dst_init(struct dst* this, struct dm_block_manager* bm, dm_block_t start, size_t nr_segment) {
+int dst_init(struct dst* this, struct dm_block_manager* bm, dm_block_t start,
+	     size_t nr_segment, int valid_field)
+{
 	int r;
 
 	this->load = dst_load;
@@ -663,7 +681,9 @@ int dst_init(struct dst* this, struct dm_block_manager* bm, dm_block_t start, si
 	this->bm = bm;
 	this->start = start;
 	this->nr_segment = nr_segment;
-	this->array = disk_array_create(this->bm, this->start, this->nr_segment, sizeof(struct dst_entry));
+	this->blk_count = __data_seg_table_blocks(nr_segment);
+	this->valid_field = valid_field;
+	this->array = disk_array_create(bm, start + valid_field * this->blk_count, nr_segment, sizeof(struct dst_entry));
 	if (!this->array)
 		return -ENOMEM;
 
@@ -679,7 +699,9 @@ int dst_init(struct dst* this, struct dm_block_manager* bm, dm_block_t start, si
 	return 0;
 }
 
-struct dst* dst_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_segment) {
+struct dst* dst_create(struct dm_block_manager* bm, dm_block_t start,
+		       size_t nr_segment, int valid_field)
+{
 	int r;
 	struct dst* this;
 
@@ -687,7 +709,7 @@ struct dst* dst_create(struct dm_block_manager* bm, dm_block_t start, size_t nr_
 	if (!this)	
 		return NULL;
 	
-	r = dst_init(this, bm, start, nr_segment);
+	r = dst_init(this, bm, start, nr_segment, valid_field);
 	if (r)
 		return NULL;
 
@@ -817,23 +839,28 @@ size_t bitc_get_current_version(struct bit_catalogue* this) {
 	return max_version;
 }
 
-int bit_catalogue_init(struct bit_catalogue* this, struct dm_block_manager* bm, struct superblock* superblock) {
+int bit_catalogue_init(struct bit_catalogue* this, struct dm_block_manager* bm,
+		       struct superblock* superblock, int valid_svt, int valid_bitc)
+{
 	int err = 0;
 	size_t max_fd;
-	
+	dm_block_t file_stats_start;
+
 	this->bm = bm;
 	this->start = superblock->block_index_table_catalogue_start;
 	this->index_region_start = superblock->index_region_start;
 	this->nr_bit = __total_bit(superblock->nr_disk_level, superblock->common_ratio, superblock->max_disk_level_capacity);
 
 	max_fd = this->nr_bit + __extra_bit(superblock->max_disk_level_capacity);
-	this->bit_validity_table = seg_validator_create(bm, this->start, max_fd);
+	this->bit_validity_table = seg_validator_create(bm, this->start, max_fd, valid_svt);
 	if (!this->bit_validity_table) {
 		err = -ENOMEM;
 		goto bad;
 	}
 
-	this->file_stats = disk_array_create(bm, this->start + __seg_validity_table_blocks(max_fd), max_fd, sizeof(struct file_stat));
+	file_stats_start = this->start + this->bit_validity_table->blk_count * NR_CHECKPOINT_PACKS;
+	this->blk_count = __bit_catalogue_blocks(max_fd);
+	this->file_stats = disk_array_create(bm, file_stats_start + valid_bitc * this->blk_count, max_fd, sizeof(struct file_stat));
 	if (!this->file_stats) {
 		err = -ENOMEM;
 		goto bad;
@@ -863,7 +890,9 @@ bad:
 	return err;
 }
 
-struct bit_catalogue* bit_catalogue_create(struct dm_block_manager* bm, struct superblock* superblock) {
+struct bit_catalogue* bit_catalogue_create(struct dm_block_manager* bm,
+			struct superblock* superblock, int valid_svt, int valid_bitc)
+{
 	int err = 0;
 	struct bit_catalogue* this;
 
@@ -871,7 +900,7 @@ struct bit_catalogue* bit_catalogue_create(struct dm_block_manager* bm, struct s
 	if (!this)
 		goto bad;
 
-	err = bit_catalogue_init(this, bm, superblock);
+	err = bit_catalogue_init(this, bm, superblock, valid_svt, valid_bitc);
 	if (err)
 		goto bad;
 	
@@ -916,7 +945,7 @@ int metadata_format(struct metadata* this) {
 }
 
 int metadata_init(struct metadata* this, struct block_device* bdev) {
-	int r;
+	int r, valid_field0, valid_field1;
 	bool should_format;
 
 	this->bdev = bdev;
@@ -932,20 +961,25 @@ int metadata_init(struct metadata* this, struct block_device* bdev) {
 	if (IS_ERR_OR_NULL(this->journal))
 		goto bad;
 
-	this->seg_validator = seg_validator_create(this->bm, this->superblock->seg_validity_table_start, this->superblock->nr_segment);
+	valid_field0 = test_bit(DATA_SVT, this->journal->valid_fields) ? 1 : 0;
+	this->seg_validator = seg_validator_create(this->bm, this->superblock->seg_validity_table_start, this->superblock->nr_segment, valid_field0);
 	if (IS_ERR_OR_NULL(this->seg_validator))
 		goto bad;
 
-	this->rit = reverse_index_table_create(this->bm, 
-	  this->superblock->reverse_index_table_start, this->superblock->nr_segment * this->superblock->blocks_per_seg);
+	valid_field0 = test_bit(DATA_RIT, this->journal->valid_fields) ? 1 : 0;
+	this->rit = reverse_index_table_create(this->bm, this->superblock->reverse_index_table_start, this->superblock->nr_segment * this->superblock->blocks_per_seg, valid_field0);
 	if (IS_ERR_OR_NULL(this->rit))
 		goto bad;
 
-	this->dst = dst_create(this->bm, this->superblock->data_seg_table_start, this->superblock->nr_segment);
+	valid_field0 = test_bit(DATA_DST, this->journal->valid_fields) ? 1 : 0;
+	this->dst = dst_create(this->bm, this->superblock->data_seg_table_start, this->superblock->nr_segment, valid_field0);
 	if (IS_ERR_OR_NULL(this->dst))
 		goto bad;
 
-	this->bit_catalogue = bit_catalogue_create(this->bm, this->superblock);
+	valid_field0 = test_bit(INDEX_SVT, this->journal->valid_fields) ? 1 : 0;
+	valid_field1 = test_bit(INDEX_BITC, this->journal->valid_fields) ? 1 : 0;
+	this->bit_catalogue = bit_catalogue_create(this->bm, this->superblock,
+						   valid_field0, valid_field1);
 	if (IS_ERR_OR_NULL(this->bit_catalogue))
 		goto bad;
 
