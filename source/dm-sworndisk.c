@@ -434,11 +434,16 @@ sector_t dm_devsize(struct dm_dev *dev) {
 static int dm_sworndisk_target_ctr(struct dm_target *target,
 			    unsigned int argc, char **argv)
 {
-    unsigned long long start;
-    char dummy;
+    // unsigned long long start;
+    // char dummy;
+
+    char root_key[AES_GCM_KEY_SIZE];
+    char root_mac[AES_GCM_AUTH_SIZE];
+    char root_iv[AES_GCM_IV_SIZE];
+
     int ret;
 
-    if (argc != 3) {
+    if (argc != 5) {
         DMERR("Invalid no. of arguments.");
         target->error = "Invalid argument count";
         ret =  -EINVAL;
@@ -453,19 +458,30 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
         goto bad;
     }
 
-    if (sscanf(argv[2], "%llu%c", &start, &dummy)!=1) {
-        target->error = "Invalid device sector";
+    if (hex2bin((u8 *)root_key, argv[0], AES_GCM_KEY_SIZE) != 0) {
+        target->error = "Invalid key";
         ret = -EINVAL;
         goto bad;
     }
 
-    sworndisk->start=(sector_t)start;
+    if (hex2bin((u8 *)root_mac, argv[1], AES_GCM_AUTH_SIZE) != 0) {
+        target->error = "Invalid mac";
+        ret = -EINVAL;
+        goto bad;
+    }
 
-    if (dm_get_device(target, argv[0], dm_table_get_mode(target->table), &sworndisk->data_dev)) {
+    if (hex2bin((u8 *)root_iv, argv[2], AES_GCM_IV_SIZE) != 0) {
+        target->error = "Invalid iv";
+        ret = -EINVAL;
+        goto bad;
+    }
+
+
+    if (dm_get_device(target, argv[3], dm_table_get_mode(target->table), &sworndisk->data_dev)) {
             target->error = "dm-basic_target: Device lookup failed";
             goto bad;
     }
-    if (dm_get_device(target, argv[1], dm_table_get_mode(target->table), &sworndisk->metadata_dev)) {
+    if (dm_get_device(target, argv[4], dm_table_get_mode(target->table), &sworndisk->metadata_dev)) {
             target->error = "dm-basic_target: Device lookup failed";
             goto bad;
     }
@@ -480,7 +496,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
     }
 
     NR_SEGMENT = div_u64(dm_devsize(sworndisk->data_dev), SECTOES_PER_SEGMENT);
-    sworndisk->meta = metadata_create(sworndisk->metadata_dev->bdev);
+    sworndisk->meta = metadata_create(root_key, root_mac, root_iv, sworndisk->metadata_dev->bdev);
     if (!sworndisk->meta) {
         target->error = "could not create sworndisk metadata";
         ret = -EAGAIN;
@@ -494,7 +510,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 		goto bad;
     }
 
-    sworndisk->lsm_tree = lsm_tree_create(argv[1], &sworndisk->meta->bit_catalogue->lsm_catalogue, sworndisk->cipher);
+    sworndisk->lsm_tree = lsm_tree_create(argv[4], &sworndisk->meta->bit_catalogue->lsm_catalogue, sworndisk->cipher);
     if (!sworndisk->lsm_tree) {
         target->error = "could not create sworndisk lsm tree";
         ret = -EAGAIN;

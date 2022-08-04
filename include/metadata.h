@@ -186,7 +186,7 @@ struct metadata {
 	int (*format)(struct metadata* this);
 };
 
-struct metadata* metadata_create(struct block_device* bdev);
+struct metadata* metadata_create(char* key, char* mac, char* iv, struct block_device* bdev);
 void metadata_destroy(struct metadata* this);
 
 struct journal_region *journal_region_create(struct superblock *superblock);

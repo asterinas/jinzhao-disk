@@ -944,7 +944,7 @@ int metadata_format(struct metadata* this) {
 	return 0;
 }
 
-int metadata_init(struct metadata* this, struct block_device* bdev) {
+int metadata_init(struct metadata* this, char* key, char* mac, char* iv, struct block_device* bdev) {
 	int r, valid_field0, valid_field1;
 	bool should_format;
 
@@ -952,6 +952,11 @@ int metadata_init(struct metadata* this, struct block_device* bdev) {
 	this->bm = dm_block_manager_create(this->bdev, SWORNDISK_METADATA_BLOCK_SIZE, SWORNDISK_MAX_CONCURRENT_LOCKS);
 	if (IS_ERR_OR_NULL(this->bm))
 		goto bad;
+
+	// init key, mac, iv
+	memcpy(this->root_key, key, AES_GCM_KEY_SIZE);
+	memcpy(this->root_mac, mac, AES_GCM_AUTH_SIZE);
+	memcpy(this->root_iv, iv, AES_GCM_IV_SIZE);
 
 	this->superblock = superblock_create(this->bm, &should_format);
 	if (IS_ERR_OR_NULL(this->superblock))
@@ -1003,7 +1008,7 @@ bad:
 	return -EAGAIN;
 }
 
-struct metadata* metadata_create(struct block_device* bdev) {
+struct metadata* metadata_create(char* key, char* mac, char* iv, struct block_device* bdev) {
 	int r;
 	struct metadata* this;
 
@@ -1011,7 +1016,7 @@ struct metadata* metadata_create(struct block_device* bdev) {
 	if (!this)
 		return NULL;
 	
-	r = metadata_init(this, bdev);
+	r = metadata_init(this, key, mac, iv, bdev);
 	if (r)
 		return NULL;
 	
