@@ -944,7 +944,7 @@ int metadata_format(struct metadata* this) {
 	return 0;
 }
 
-int metadata_init(struct metadata* this, char* key, char* mac, char* iv, struct block_device* bdev) {
+int metadata_init(struct metadata* this, char* key, char* iv, struct block_device* bdev) {
 	int r, valid_field0, valid_field1;
 	bool should_format;
 
@@ -953,9 +953,8 @@ int metadata_init(struct metadata* this, char* key, char* mac, char* iv, struct 
 	if (IS_ERR_OR_NULL(this->bm))
 		goto bad;
 
-	// init key, mac, iv
+	// init key, iv
 	memcpy(this->root_key, key, AES_GCM_KEY_SIZE);
-	memcpy(this->root_mac, mac, AES_GCM_AUTH_SIZE);
 	memcpy(this->root_iv, iv, AES_GCM_IV_SIZE);
 
 	this->superblock = superblock_create(this->bm, &should_format);
@@ -1008,7 +1007,7 @@ bad:
 	return -EAGAIN;
 }
 
-struct metadata* metadata_create(char* key, char* mac, char* iv, struct block_device* bdev) {
+struct metadata* metadata_create(char* key, char* iv, struct block_device* bdev) {
 	int r;
 	struct metadata* this;
 
@@ -1016,7 +1015,7 @@ struct metadata* metadata_create(char* key, char* mac, char* iv, struct block_de
 	if (!this)
 		return NULL;
 	
-	r = metadata_init(this, key, mac, iv, bdev);
+	r = metadata_init(this, key, iv, bdev);
 	if (r)
 		return NULL;
 	
