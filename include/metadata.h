@@ -20,8 +20,12 @@ size_t __disk_array_blocks(size_t nr_elem, size_t elem_size, size_t block_size);
 
 // superblock definition
 #define NR_SUPERBLOCK_METHOD 5
-#define SUPERBLOCK_ON_DISK_SIZE (sizeof(struct superblock) - NR_SUPERBLOCK_METHOD * sizeof(void*) - sizeof(uint32_t))
+#define SUPERBLOCK_ON_DISK_SIZE (sizeof(struct superblock) - NR_SUPERBLOCK_METHOD * sizeof(void*) - sizeof(uint32_t) - AES_GCM_AUTH_SIZE - AES_GCM_KEY_SIZE - AES_GCM_IV_SIZE)
 struct superblock {
+	// root_mac must be the first element(plaintext), to decrypt superblock
+	char root_mac[AES_GCM_AUTH_SIZE];
+	char root_key[AES_GCM_KEY_SIZE];
+	char root_iv[AES_GCM_IV_SIZE];
 	// validation 
 	uint32_t csum;
 	uint64_t magic;
@@ -29,6 +33,7 @@ struct superblock {
 	// data region
 	uint32_t blocks_per_seg; // sector count within a segment
 	uint64_t nr_segment; // segment count
+	uint64_t data_start;
 
 	// index region
 	uint32_t common_ratio; // common ratio of adjacent disk levels
@@ -59,7 +64,8 @@ struct superblock {
 	bool (*validate)(struct superblock* this);
 } __packed;
 
-struct superblock* superblock_create(struct dm_block_manager* bm, bool* should_format);
+struct superblock *superblock_create(struct dm_block_manager *bm, char *key,
+				     char *iv, bool *should_format);
 void superblock_destroy(struct superblock* this);
 
 // segment validator definition
@@ -169,10 +175,6 @@ struct metadata {
 	// persistent client
 	struct block_device* bdev;
 	struct dm_block_manager* bm;
-	// root_key info
-	char root_key[AES_GCM_KEY_SIZE];
-	char root_mac[AES_GCM_AUTH_SIZE];
-	char root_iv[AES_GCM_IV_SIZE];
 	// superblock
 	struct superblock* superblock;
 	// journal region
@@ -186,6 +188,7 @@ struct metadata {
 	int (*format)(struct metadata* this);
 };
 
+uint64_t calc_metadata_blocks(uint64_t nr_segment);
 struct metadata* metadata_create(char* key, char* iv, struct block_device* bdev);
 void metadata_destroy(struct metadata* this);
 

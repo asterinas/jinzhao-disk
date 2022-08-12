@@ -62,9 +62,9 @@ void sworndisk_block_io(dm_block_t blkaddr, size_t count, void* buffer, enum dm_
         .client = sworndisk->io_client
     };
     struct dm_io_region region = {
-        .bdev = sworndisk->data_dev->bdev,
-        .sector = blkaddr * SECTORS_PER_BLOCK,
-        .count = SECTORS_PER_BLOCK * count
+        .bdev = sworndisk->raw_dev->bdev,
+        .sector = (sworndisk->meta->superblock->data_start + blkaddr) * SECTORS_PER_BLOCK,
+        .count = count * SECTORS_PER_BLOCK
     };
 
     dm_io(&req, 1, &region, &sync_error_bits);
@@ -344,7 +344,7 @@ void add_checkpoint_pack_record(struct metadata *meta)
 			src = base;
 			dst = src + blk_count;
 		}
-		backup_metadata(sworndisk->metadata_dev->bdev, dst, src,
+		backup_metadata(sworndisk->raw_dev->bdev, dst, src,
 				blk_count, buffer, client);
 	}
 	up_write(&journal->valid_fields_lock);
@@ -400,7 +400,7 @@ static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
     struct dm_sworndisk* sworndisk;
 
     sworndisk = target->private;    
-    bio_set_dev(bio, sworndisk->data_dev->bdev);
+    bio_set_dev(bio, sworndisk->raw_dev->bdev);
 
     block_aligned = SECTORS_PER_BLOCK - bio_block_sector_offset(bio);
     if (bio_sectors(bio) > block_aligned)
@@ -434,15 +434,12 @@ sector_t dm_devsize(struct dm_dev *dev) {
 static int dm_sworndisk_target_ctr(struct dm_target *target,
 			    unsigned int argc, char **argv)
 {
-    // unsigned long long start;
-    // char dummy;
-
     char root_key[AES_GCM_KEY_SIZE];
     char root_iv[AES_GCM_IV_SIZE];
-
+    uint64_t total_sector;
     int ret;
 
-    if (argc != 4) {
+    if (argc != 3) {
         DMERR("Invalid no. of arguments.");
         target->error = "Invalid argument count";
         ret =  -EINVAL;
@@ -469,14 +466,17 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
         goto bad;
     }
 
-
-    if (dm_get_device(target, argv[2], dm_table_get_mode(target->table), &sworndisk->data_dev)) {
+    if (dm_get_device(target, argv[2], dm_table_get_mode(target->table), &sworndisk->raw_dev)) {
             target->error = "dm-basic_target: Device lookup failed";
             goto bad;
     }
-    if (dm_get_device(target, argv[3], dm_table_get_mode(target->table), &sworndisk->metadata_dev)) {
-            target->error = "dm-basic_target: Device lookup failed";
-            goto bad;
+
+    NR_SEGMENT = div_u64(target->len, SECTOES_PER_SEGMENT);
+    total_sector = calc_metadata_blocks(NR_SEGMENT) * SECTORS_PER_BLOCK + target->len;
+    if (total_sector > dm_devsize(sworndisk->raw_dev)) {
+	    target->error = "raw disk not big enough for target->len";
+	    ret = -EAGAIN;
+	    goto bad;
     }
 
     bio_prefetcher_init(&sworndisk->prefetcher);
@@ -488,14 +488,6 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 		goto bad;
     }
 
-    NR_SEGMENT = div_u64(dm_devsize(sworndisk->data_dev), SECTOES_PER_SEGMENT);
-    sworndisk->meta = metadata_create(root_key, root_iv, sworndisk->metadata_dev->bdev);
-    if (!sworndisk->meta) {
-        target->error = "could not create sworndisk metadata";
-        ret = -EAGAIN;
-		goto bad;
-    }
-
     sworndisk->cipher = aes_gcm_cipher_create();
     if (!sworndisk->cipher) {
         target->error = "could not create sworndisk cipher";
@@ -503,7 +495,14 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 		goto bad;
     }
 
-    sworndisk->lsm_tree = lsm_tree_create(argv[3], &sworndisk->meta->bit_catalogue->lsm_catalogue, sworndisk->cipher);
+    sworndisk->meta = metadata_create(root_key, root_iv, sworndisk->raw_dev->bdev);
+    if (!sworndisk->meta) {
+        target->error = "could not create sworndisk metadata";
+        ret = -EAGAIN;
+		goto bad;
+    }
+
+    sworndisk->lsm_tree = lsm_tree_create(argv[2], &sworndisk->meta->bit_catalogue->lsm_catalogue, sworndisk->cipher);
     if (!sworndisk->lsm_tree) {
         target->error = "could not create sworndisk lsm tree";
         ret = -EAGAIN;
@@ -546,8 +545,7 @@ bad:
     if (sworndisk->io_client)
         dm_io_client_destroy(sworndisk->io_client);
 
-    dm_put_device(target, sworndisk->data_dev);
-    dm_put_device(target, sworndisk->metadata_dev);
+    dm_put_device(target, sworndisk->raw_dev);
     if (sworndisk)
         kfree(sworndisk);
     DMERR("Exit : %s with ERROR", __func__);
@@ -575,8 +573,7 @@ static void dm_sworndisk_target_dtr(struct dm_target *ti)
     if (sworndisk->io_client)
         dm_io_client_destroy(sworndisk->io_client);
 
-    dm_put_device(ti, sworndisk->data_dev);
-    dm_put_device(ti, sworndisk->metadata_dev);
+    dm_put_device(ti, sworndisk->raw_dev);
     if (sworndisk)
         kfree(sworndisk);
 }

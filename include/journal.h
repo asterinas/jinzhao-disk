@@ -2,6 +2,7 @@
 #define DM_SWORNDISK_JOURNAL_H
 
 #include <crypto/skcipher.h>
+#include <linux/random.h>
 #include <linux/crc32.h>
 #include "segment_buffer.h"
 #include "metadata.h"
@@ -137,8 +138,7 @@ struct journal_operations {
 					   uint64_t blk_num);
 	void (*encrypt_block)(struct journal_region *this, uint64_t blk_num,
 			      struct journal_block *buffer);
-	void (*decrypt_block)(struct journal_region *this, uint64_t blk_num,
-			      struct journal_block *buffer);
+	void (*decrypt_block)(struct journal_region *this, uint64_t blk_num);
 };
 
 #endif

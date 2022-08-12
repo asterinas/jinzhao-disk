@@ -10,13 +10,23 @@ int superblock_read(struct superblock* this) {
 	int r;
 	struct superblock* disk_super;
 	struct dm_block* block;
+	struct aead_cipher *cipher = sworndisk->cipher;
+	void *data;
 
 	r = dm_bm_read_lock(this->bm, SUPERBLOCK_LOCATION, NULL, &block);
 	if (r) 
 		return -ENODATA;
-	
+
 	disk_super = dm_block_data(block);
-	
+
+	data = (void *)disk_super + AES_GCM_AUTH_SIZE;
+	r = cipher->decrypt(cipher, data, sizeof(struct superblock) - AES_GCM_AUTH_SIZE,
+			    this->root_key, this->root_iv, disk_super->root_mac, 0, data);
+	if (r) {
+		DMERR("decrypt superblock failed\n");
+		goto out;
+	}
+
 	this->csum = le32_to_cpu(disk_super->csum);
 	this->magic = le64_to_cpu(disk_super->magic);
 	this->blocks_per_seg = le32_to_cpu(disk_super->blocks_per_seg);
@@ -34,7 +44,8 @@ int superblock_read(struct superblock* this) {
 	this->data_seg_table_start = le64_to_cpu(disk_super->data_seg_table_start);
 	this->reverse_index_table_start = le64_to_cpu(disk_super->reverse_index_table_start);
 	this->block_index_table_catalogue_start = le64_to_cpu(disk_super->block_index_table_catalogue_start);
-
+	this->data_start = le64_to_cpu(disk_super->data_start);
+out:
 	dm_bm_unlock(block);
 	return 0;
 }
@@ -43,33 +54,23 @@ int superblock_write(struct superblock* this) {
 	int r;
 	struct superblock* disk_super;
 	struct dm_block* block;
+	struct aead_cipher *cipher = sworndisk->cipher;
+	void *src, *dst;
 
 	r = dm_bm_write_lock(this->bm, SUPERBLOCK_LOCATION, NULL, &block);
 	if (r) {
 		DMERR("dm bm write lock error\n");
 		return -EAGAIN;
 	}
-		
 
 	disk_super = dm_block_data(block);
-
-	disk_super->csum = cpu_to_le32(dm_bm_checksum(&this->magic, SUPERBLOCK_ON_DISK_SIZE, SUPERBLOCK_CSUM_XOR));
-	disk_super->magic = cpu_to_le64(this->magic);
-	disk_super->blocks_per_seg = cpu_to_le32(this->blocks_per_seg);
-	disk_super->nr_segment = cpu_to_le64(this->nr_segment);
-	disk_super->common_ratio = cpu_to_le32(this->common_ratio);
-	disk_super->nr_disk_level = cpu_to_le32(this->nr_disk_level);
-	disk_super->max_disk_level_capacity = cpu_to_le64(this->max_disk_level_capacity);
-	disk_super->index_region_start = cpu_to_le64(this->index_region_start);
-	disk_super->journal_size = cpu_to_le32(this->journal_size);
-	disk_super->nr_journal = cpu_to_le64(this->nr_journal);
-	disk_super->record_start = cpu_to_le64(this->record_start);
-	disk_super->record_end = cpu_to_le64(this->record_end);
-	disk_super->journal_region_start = cpu_to_le64(this->journal_region_start);
-	disk_super->seg_validity_table_start = cpu_to_le64(this->seg_validity_table_start);
-	disk_super->data_seg_table_start = cpu_to_le64(this->data_seg_table_start);
-	disk_super->reverse_index_table_start = cpu_to_le64(this->reverse_index_table_start);
-	disk_super->block_index_table_catalogue_start = cpu_to_le64(this->block_index_table_catalogue_start);	
+	this->csum = cpu_to_le32(dm_bm_checksum(&this->magic, SUPERBLOCK_ON_DISK_SIZE, SUPERBLOCK_CSUM_XOR));
+	src = (void *)this + AES_GCM_AUTH_SIZE;
+	dst = (void *)disk_super + AES_GCM_AUTH_SIZE;
+	r = cipher->encrypt(cipher, src, sizeof(struct superblock) - AES_GCM_AUTH_SIZE,
+			    this->root_key, this->root_iv, disk_super->root_mac, 0, dst);
+	if (r)
+		DMERR("encrypt superblock failed\n");
 
 	dm_bm_unlock(block);
 	return dm_bm_flush(this->bm);
@@ -106,6 +107,7 @@ void superblock_print(struct superblock* this) {
 	DMINFO("\tdata_seg_table_start: %lld", this->data_seg_table_start);
 	DMINFO("\treverse_index_table_start: %lld", this->reverse_index_table_start);
 	DMINFO("\tblock_index_table_catalogue_start: %lld", this->block_index_table_catalogue_start);
+	DMINFO("\tdata_start: %lld", this->data_start);
 }
 
 #include "../include/segment_allocator.h"
@@ -173,11 +175,18 @@ size_t __bit_catalogue_blocks(size_t nr_fd) {
 	return __disk_array_blocks(nr_fd, sizeof(struct file_stat), SWORNDISK_METADATA_BLOCK_SIZE);
 }
 
-int superblock_init(struct superblock* this, struct dm_block_manager* bm, bool* should_format) {
+int superblock_init(struct superblock *this, struct dm_block_manager *bm,
+		    char *key, char *iv, bool *should_format)
+{
 	int r;
+	size_t nr_bits;
 
 	*should_format = false;
 	this->bm = bm;
+
+	// init root key, iv
+	memcpy(this->root_key, key, AES_GCM_KEY_SIZE);
+	memcpy(this->root_iv, iv, AES_GCM_IV_SIZE);
 
 	this->read = superblock_read;
 	this->write = superblock_write;
@@ -210,11 +219,16 @@ int superblock_init(struct superblock* this, struct dm_block_manager* bm, bool* 
 	this->reverse_index_table_start = this->data_seg_table_start + __data_seg_table_blocks(this->nr_segment) * NR_CHECKPOINT_PACKS;
 	this->block_index_table_catalogue_start = this->reverse_index_table_start + __reverse_index_table_blocks(this->nr_segment * this->blocks_per_seg) * NR_CHECKPOINT_PACKS;
 
+	nr_bits = __total_bit(this->nr_disk_level, this->common_ratio, this->max_disk_level_capacity) + __extra_bit(this->max_disk_level_capacity);
+	this->data_start = this->block_index_table_catalogue_start + (__seg_validity_table_blocks(nr_bits) + __bit_catalogue_blocks(nr_bits)) * NR_CHECKPOINT_PACKS;
+
 	this->write(this);
 	return 0;
 }
 
-struct superblock* superblock_create(struct dm_block_manager* bm, bool* should_format) {
+struct superblock *superblock_create(struct dm_block_manager *bm, char *key,
+				     char *iv, bool *should_format)
+{
 	int r;
 	struct superblock* this;
 
@@ -222,10 +236,11 @@ struct superblock* superblock_create(struct dm_block_manager* bm, bool* should_f
 	if (!this)
 		return NULL;
 	
-	r = superblock_init(this, bm, should_format);
+	r = superblock_init(this, bm, key, iv, should_format);
 	if (r)
 		return NULL;
-	
+
+	this->print(this);
 	return this;
 }
 
@@ -944,6 +959,22 @@ int metadata_format(struct metadata* this) {
 	return 0;
 }
 
+uint64_t calc_metadata_blocks(uint64_t nr_segment)
+{
+	size_t nr_bits;
+
+	nr_bits = __total_bit(DEFAULT_LSM_TREE_NR_DISK_LEVEL, LSM_TREE_DISK_LEVEL_COMMON_RATIO, nr_segment * BLOCKS_PER_SEGMENT) + __extra_bit(nr_segment * BLOCKS_PER_SEGMENT);
+
+	return STRUCTURE_BLOCKS(struct superblock) +
+		__index_region_blocks(DEFAULT_LSM_TREE_NR_DISK_LEVEL, LSM_TREE_DISK_LEVEL_COMMON_RATIO, nr_segment * BLOCKS_PER_SEGMENT) +
+		NR_JOURNAL_SEGMENT * BLOCKS_PER_SEGMENT +
+		__seg_validity_table_blocks(nr_segment) * NR_CHECKPOINT_PACKS +
+		__data_seg_table_blocks(nr_segment) * NR_CHECKPOINT_PACKS +
+		__reverse_index_table_blocks(nr_segment * BLOCKS_PER_SEGMENT) * NR_CHECKPOINT_PACKS +
+		__seg_validity_table_blocks(nr_bits) * NR_CHECKPOINT_PACKS +
+		__bit_catalogue_blocks(nr_bits) * NR_CHECKPOINT_PACKS;
+}
+
 int metadata_init(struct metadata* this, char* key, char* iv, struct block_device* bdev) {
 	int r, valid_field0, valid_field1;
 	bool should_format;
@@ -953,11 +984,7 @@ int metadata_init(struct metadata* this, char* key, char* iv, struct block_devic
 	if (IS_ERR_OR_NULL(this->bm))
 		goto bad;
 
-	// init key, iv
-	memcpy(this->root_key, key, AES_GCM_KEY_SIZE);
-	memcpy(this->root_iv, iv, AES_GCM_IV_SIZE);
-
-	this->superblock = superblock_create(this->bm, &should_format);
+	this->superblock = superblock_create(this->bm, key, iv, &should_format);
 	if (IS_ERR_OR_NULL(this->superblock))
 		goto bad;
 
@@ -1024,6 +1051,7 @@ struct metadata* metadata_create(char* key, char* iv, struct block_device* bdev)
 
 void metadata_destroy(struct metadata* this) {
 	if (!IS_ERR_OR_NULL(this)) {
+		journal_region_destroy(this->journal);
 		if (!IS_ERR_OR_NULL(this->bm)) {
 			dm_bm_flush(this->bm);
 			dm_block_manager_destroy(this->bm);
