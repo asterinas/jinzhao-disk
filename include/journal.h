@@ -16,7 +16,6 @@
 #define MAX_RECORDS (MAX_BLOCKS * RECORDS_PER_BLOCK)
 #define BLOCK_CRYPT_LEN (sizeof(struct crypto_info) + RECORDS_PER_BLOCK \
 			 * sizeof(struct journal_record))
-#define SYNC_BLKNUM_THRESHOLD BLOCKS_PER_SEGMENT
 #define MAX_BITS 64
 #define NR_CHECKPOINT_PACKS 2
 
@@ -112,7 +111,14 @@ struct journal_block {
 
 struct journal_operations;
 
+struct journal_buffer {
+	int segno;
+	struct crypto_info previous_blk;
+	struct journal_block *blocks;
+};
+
 struct journal_region {
+	struct journal_buffer buffer;
 	struct journal_block **blocks;
 	struct superblock *superblock;
 	struct journal_operations *jops;
@@ -121,14 +127,15 @@ struct journal_region {
 	uint64_t record_end;
 	// sync_lock protects last_sync_blk
 	struct mutex sync_lock;
-	uint64_t last_sync_blk;
+	uint64_t last_sync_record;
 	enum journal_status status;
 	struct rw_semaphore valid_fields_lock;
 	DECLARE_BITMAP(valid_fields, NR_CHECKPOINT_FIELDS);
 };
 
 struct journal_operations {
-	void (*load)(struct journal_region *this);
+	void (*load)(struct journal_region *this, uint64_t record_start,
+		     uint64_t record_end);
 	bool (*should_recover)(struct journal_region *this);
 	void (*recover)(struct journal_region *this);
 	bool (*should_sync)(struct journal_region *this);

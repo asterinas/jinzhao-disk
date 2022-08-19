@@ -105,8 +105,10 @@ void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer)
 void segbuf_flush_bios(struct segment_buffer* buf) {
     struct default_segment_buffer* this = container_of(buf, struct default_segment_buffer, segment_buffer);
     dm_block_t blkaddr = this->cur_segment * BLOCKS_PER_SEGMENT;
+    size_t count = this->cur_sector / SECTORS_PER_BLOCK;
 
-    sworndisk_write_blocks(blkaddr, BLOCKS_PER_SEGMENT, this->pipe, DM_IO_VMA);
+    if (count)
+	    sworndisk_write_blocks(blkaddr, count, this->pipe, DM_IO_VMA);
 }
 
 int segbuf_query_bio(struct segment_buffer* buf, struct bio* bio) {

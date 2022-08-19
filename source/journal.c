@@ -46,10 +46,13 @@ void journal_region_io(struct dm_io_client *client, dm_block_t blk_pba,
 struct journal_block *journal_get_block(struct journal_region *this,
 					uint64_t blk_num)
 {
-	int seg_num = blk_num / BLOCKS_PER_SEGMENT;
-	int seg_offset = blk_num % BLOCKS_PER_SEGMENT;
+	int segno = blk_num / BLOCKS_PER_SEGMENT;
+	int offset = blk_num % BLOCKS_PER_SEGMENT;
 
-	return &this->blocks[seg_num][seg_offset];
+	if (segno != this->buffer.segno)
+		this->jops->load(this, blk_num * RECORDS_PER_BLOCK, this->record_end);
+
+	return &this->buffer.blocks[offset];
 }
 
 static int journal_derive_key(char *master_key, uint64_t blk_num,
@@ -102,16 +105,18 @@ out:
 void journal_encrypt_block(struct journal_region *this, uint64_t blk_num,
 			   struct journal_block *buffer)
 {
-	uint64_t pre_blk_num;
 	struct journal_block *pre_blk, *cur_blk;
 	char blk_key[AES_GCM_KEY_SIZE];
 	char *blk_mac, *blk_iv;
 	int rc;
 
-	pre_blk_num = (MAX_BLOCKS + blk_num - 1) % MAX_BLOCKS;
-	pre_blk = this->jops->get_block(this, pre_blk_num);
 	cur_blk = this->jops->get_block(this, blk_num);
-	cur_blk->previous_blk = pre_blk->current_blk;
+	if (blk_num % BLOCKS_PER_SEGMENT == 0)
+		cur_blk->previous_blk = this->buffer.previous_blk;
+	else {
+		pre_blk = this->jops->get_block(this, blk_num - 1);
+		cur_blk->previous_blk = pre_blk->current_blk;
+	}
 
 	rc = journal_derive_key(this->superblock->root_key, blk_num,
 				blk_key, AES_GCM_KEY_SIZE);
@@ -129,6 +134,8 @@ void journal_encrypt_block(struct journal_region *this, uint64_t blk_num,
 		DMERR("journal_encrypt_block failed\n");
 
 	buffer->current_blk = cur_blk->current_blk;
+	if (blk_num % BLOCKS_PER_SEGMENT == BLOCKS_PER_SEGMENT - 1)
+		this->buffer.previous_blk = cur_blk->current_blk;
 }
 
 void journal_decrypt_block(struct journal_region *this, uint64_t blk_num)
@@ -154,35 +161,45 @@ void journal_decrypt_block(struct journal_region *this, uint64_t blk_num)
 		DMERR("journal_decrypt_block failed\n");
 }
 
-// load journal_records from disk
-void journal_load(struct journal_region *this)
+void journal_buffer_load(struct journal_region *this, uint64_t record_start,
+			 uint64_t record_end)
 {
-	uint64_t blk_start, blk_end, blk_count;
-	uint64_t i, blk_num, blk_pba;
+	int i, offset, segno;
+	uint64_t blk_start, blk_end, blk_count, blk_pba;
 	struct journal_ctx *ctx;
 	struct journal_block *buffer;
 	struct completion wait;
 	atomic64_t read_cnt;
 	struct dm_io_client *client;
 
-	blk_start = this->record_start / RECORDS_PER_BLOCK;
-	blk_end = this->record_end / RECORDS_PER_BLOCK;
-	if (this->record_start == this->record_end)
-		goto out;
-	else if (this->record_start < this->record_end)
+	segno = record_start / RECORDS_PER_SEGMENT;
+	if (segno >= NR_JOURNAL_SEGMENT) {
+		DMERR("record_start out of the journal_region\n");
+		return;
+	}
+
+	mutex_lock(&this->sync_lock);
+	this->buffer.segno = segno;
+	mutex_unlock(&this->sync_lock);
+	if (record_start == record_end)
+		return;
+
+	blk_start = record_start / RECORDS_PER_BLOCK;
+	offset = blk_start % BLOCKS_PER_SEGMENT;
+	if (record_end > record_start && segno == (record_end / RECORDS_PER_SEGMENT)) {
+		blk_end = (record_end - 1) / RECORDS_PER_BLOCK;
 		blk_count = blk_end - blk_start + 1;
-	else
-		blk_count = min_t(uint64_t, MAX_BLOCKS,
-				  MAX_BLOCKS - blk_start + blk_end + 1);
+	} else {
+		blk_count = BLOCKS_PER_SEGMENT - offset;
+	}
 
 	client = dm_io_client_create();
 	init_completion(&wait);
 	atomic64_set(&read_cnt, blk_count);
 
 	for (i = 0;i < blk_count; i++) {
-		blk_num = (blk_start + i) % MAX_BLOCKS;
-		blk_pba = this->superblock->journal_region_start + blk_num;
-		buffer = this->jops->get_block(this, blk_num);
+		blk_pba = this->superblock->journal_region_start + blk_start + i;
+		buffer = &this->buffer.blocks[offset + i];
 
 		ctx = kmalloc(sizeof(struct journal_ctx), GFP_KERNEL);
 		if (!ctx) {
@@ -191,7 +208,7 @@ void journal_load(struct journal_region *this)
 		}
 
 		ctx->bi_op = REQ_OP_READ;
-		ctx->blk_num = blk_num;
+		ctx->blk_num = blk_start + i;
 		ctx->buffer = NULL;
 		ctx->wait = &wait;
 		ctx->cnt = &read_cnt;
@@ -204,60 +221,73 @@ void journal_load(struct journal_region *this)
 
 	dm_io_client_destroy(client);
 	if (i != blk_count) {
-		DMERR("load journal records failed\n");
+		DMERR("journal_buffer_load not completed\n");
 		return;
 	}
 
-	for (i = 0;i < blk_count; i++) {
-		blk_num = (blk_start + i) % MAX_BLOCKS;
+	for (i = 0;i < blk_count; i++)
+		this->jops->decrypt_block(this, blk_start + i);
 
-		this->jops->decrypt_block(this, blk_num);
-	}
-out:
-	this->last_sync_blk = blk_end;
 	this->status = JOURNAL_LOADED;
 }
+
 // check hmacs of journal_records, recover if failed
 bool journal_should_recover(struct journal_region *this)
 {
-	// check hmac chain, if failed
-	//	this->status = JOURNAL_RECOVERING; return true;
-	// else
-	//	this->status = JOURNAL_READY; return false;
-	this->status = JOURNAL_READY;
-	return false;
+	if (this->record_end == (this->record_start + 1) % MAX_RECORDS) {
+		this->status = JOURNAL_READY;
+		return false;
+	} else {
+		this->status = JOURNAL_RECOVERING;
+		return true;
+	}
 }
 
 void journal_recover(struct journal_region *this)
 {
+	uint64_t i;
+	struct journal_block *blk;
+	struct journal_record *record;
+
+	for (i = this->record_start; i != this->record_end;) {
+		blk = this->jops->get_block(this, i / RECORDS_PER_BLOCK);
+		record = &blk->records[i % RECORDS_PER_BLOCK];
+		// TODO: recover data_log/bit_compaction
+		i = (i + 1) % MAX_RECORDS;
+	}
+
+	this->last_sync_record = this->record_end;
 	this->status = JOURNAL_READY;
 }
 
 bool journal_should_sync(struct journal_region *this)
 {
-	uint64_t blk_end = this->record_end / RECORDS_PER_BLOCK;
-	uint64_t count = (MAX_BLOCKS - this->last_sync_blk + blk_end + 1) % MAX_BLOCKS;
+	int segno = this->record_end / RECORDS_PER_SEGMENT;
 
-	if (count < SYNC_BLKNUM_THRESHOLD)
-		return false;
-	else
-		return true;
+	return segno != this->buffer.segno;
 }
 // write journal_records to disk, also update the
 // superblock->record_start/end to disk
 void journal_synchronize(struct journal_region *this)
 {
-	uint64_t blk_start, blk_end, blk_count;
-	uint64_t i, blk_num, blk_pba;
+	int i, blk_count;
+	uint64_t blk_start, blk_end, blk_pba;
 	struct journal_ctx *ctx;
 	struct journal_block *buffer;
 	struct completion wait;
 	atomic64_t write_cnt;
 	struct dm_io_client *client;
 
-	blk_start = this->last_sync_blk;
-	blk_end = this->record_end / RECORDS_PER_BLOCK;
-	blk_count = (MAX_BLOCKS - blk_start + blk_end +1) % MAX_BLOCKS;
+	if (this->last_sync_record == this->record_end)
+		return;
+
+	blk_start = this->last_sync_record / RECORDS_PER_BLOCK;
+	if (this->record_end % RECORDS_PER_SEGMENT != 0) {
+		blk_end = (this->record_end - 1) / RECORDS_PER_BLOCK;
+		blk_count = blk_end - blk_start + 1;
+	} else {
+		blk_count = BLOCKS_PER_SEGMENT - (blk_start % BLOCKS_PER_SEGMENT);
+	}
 
 	client = dm_io_client_create();
 	init_completion(&wait);
@@ -265,8 +295,7 @@ void journal_synchronize(struct journal_region *this)
 	mutex_lock(&this->sync_lock);
 
 	for (i = 0;i < blk_count; i++) {
-		blk_num = (blk_start + i) % MAX_BLOCKS;
-		blk_pba = this->superblock->journal_region_start + blk_num;
+		blk_pba = this->superblock->journal_region_start + blk_start + i;
 
 		buffer = kmalloc(sizeof(struct journal_block), GFP_KERNEL);
 		if (!buffer) {
@@ -280,10 +309,10 @@ void journal_synchronize(struct journal_region *this)
 			break;
 		}
 
-		this->jops->encrypt_block(this, blk_num, buffer);
+		this->jops->encrypt_block(this, blk_start + i, buffer);
 
 		ctx->bi_op = REQ_OP_WRITE;
-		ctx->blk_num = blk_num;
+		ctx->blk_num = blk_start + i;
 		ctx->buffer = buffer;
 		ctx->wait = &wait;
 		ctx->cnt = &write_cnt;
@@ -293,11 +322,16 @@ void journal_synchronize(struct journal_region *this)
 	if (!atomic64_sub_and_test(blk_count - i, &write_cnt))
 		wait_for_completion_io(&wait);
 
-	this->last_sync_blk = (blk_start + i - 1) % MAX_BLOCKS;
+	if (i != blk_count) {
+		DMERR("journal_sync not completed\n");
+		this->last_sync_record = (blk_start + i) * RECORDS_PER_BLOCK;
+	} else {
+		this->last_sync_record = this->record_end;
+	}
 	mutex_unlock(&this->sync_lock);
 	dm_io_client_destroy(client);
 
-	if (this->record_end / RECORDS_PER_BLOCK == this->last_sync_blk) {
+	if (this->last_sync_record == this->record_end) {
 		this->superblock->record_start = this->record_start;
 		this->superblock->record_end = this->record_end;
 		this->superblock->write(this->superblock);
@@ -308,11 +342,11 @@ void journal_synchronize(struct journal_region *this)
 uint64_t journal_add_record(struct journal_region *this, struct journal_record *record)
 {
 	uint64_t ret;
-	uint64_t blk_num = this->record_end / RECORDS_PER_BLOCK;
-	int index = this->record_end % RECORDS_PER_BLOCK;
-	struct journal_block *blk = this->jops->get_block(this, blk_num);
-	struct journal_record *buffer = &blk->records[index];
+	struct journal_block *blk;
+	struct journal_record *buffer;
 
+	blk = this->jops->get_block(this, this->record_end / RECORDS_PER_BLOCK);
+	buffer = &blk->records[this->record_end % RECORDS_PER_BLOCK];
 	buffer->type = record->type;
 	switch (record->type) {
 	case DATA_LOG:
@@ -348,7 +382,7 @@ uint64_t journal_add_record(struct journal_region *this, struct journal_record *
 }
 
 struct journal_operations default_jops = {
-	.load		= journal_load,
+	.load		= journal_buffer_load,
 	.should_recover = journal_should_recover,
 	.recover	= journal_recover,
 	.should_sync	= journal_should_sync,
@@ -361,7 +395,7 @@ struct journal_operations default_jops = {
 
 int journal_region_init(struct journal_region *this, struct superblock *superblock)
 {
-	int i;
+	struct journal_record j_record;
 
 	this->status = JOURNAL_UNINITIALIZED;
 	this->superblock = superblock;
@@ -375,17 +409,25 @@ int journal_region_init(struct journal_region *this, struct superblock *superblo
 		DMERR("journal_region could not create cipher\n");
 		return -EAGAIN;
 	}
-	this->blocks = kmalloc(NR_JOURNAL_SEGMENT * sizeof(struct journal_block *),
-			       GFP_KERNEL);
-	if (!this->blocks)
+
+	this->buffer.blocks = kzalloc(BLOCKS_PER_SEGMENT * sizeof(struct journal_block),
+				      GFP_KERNEL);
+	if (!this->buffer.blocks) {
+		DMERR("journal_region kzalloc buffer failed\n");
 		return -ENOMEM;
-	for (i = 0; i < NR_JOURNAL_SEGMENT; i++) {
-		this->blocks[i] = kzalloc(SEGMENT_BUFFER_SIZE, GFP_KERNEL);
-		if (!this->blocks[i])
-			return -ENOMEM;
 	}
 
-	this->jops->load(this);
+	if (this->record_start != this->record_end)
+		this->jops->load(this, this->record_start, this->record_end);
+	else {
+		this->buffer.segno = this->record_start / RECORDS_PER_SEGMENT;
+
+		j_record.type = CHECKPOINT_PACK;
+		this->jops->add_record(this, &j_record);
+		this->last_sync_record = this->record_start;
+		this->status = JOURNAL_LOADED;
+	}
+
 	if (this->status == JOURNAL_LOADED && this->jops->should_recover(this))
 		this->jops->recover(this);
 
@@ -413,8 +455,6 @@ struct journal_region *journal_region_create(struct superblock *superblock)
 
 void journal_region_destroy(struct journal_region *this)
 {
-	int i;
-
 	if (!this)
 		return;
 
@@ -423,13 +463,8 @@ void journal_region_destroy(struct journal_region *this)
 	if (this->cipher)
 		this->cipher->destroy(this->cipher);
 
-	if (this->blocks) {
-		for (i = 0; i < NR_JOURNAL_SEGMENT; i++) {
-			if (this->blocks[i])
-				kfree(this->blocks[i]);
-		}
-		kfree(this->blocks);
-	}
-	if (this)
-		kfree(this);
+	if (this->buffer.blocks)
+		kfree(this->buffer.blocks);
+
+	kfree(this);
 }
