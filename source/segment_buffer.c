@@ -21,6 +21,7 @@ int segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
     buffer = this->buffer + this->cur_sector * SECTOR_SIZE;
     pipe = this->pipe + this->cur_sector * SECTOR_SIZE;
 
+    mutex_lock(&gc_lock);
     if (bio_sectors(bio) >= SECTORS_PER_BLOCK)
         goto fill_buffer;
 
@@ -41,6 +42,7 @@ int segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
             sworndisk->cipher->encrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, 
                 record.key, record.iv, record.mac, record.pba, pipe);
             sworndisk->lsm_tree->put(sworndisk->lsm_tree, lba, record_copy(&record));
+	    mutex_unlock(&gc_lock);
             return MODIFY_IN_MEM_BUFFER;
         }
     }
@@ -48,6 +50,7 @@ int segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
 fill_buffer:
     bio_get_data(bio, buffer + bio_block_sector_offset(bio) * SECTOR_SIZE, bio_get_data_len(bio));
     buf->push_block(buf, lba, buffer);
+    mutex_unlock(&gc_lock);
     return PUSH_NEW_BLOCK;
 }
 
