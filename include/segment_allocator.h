@@ -8,7 +8,9 @@ extern size_t NR_SEGMENT;
 
 #define DATA_BLOCK_SIZE (SECTORS_PER_BLOCK * SECTOR_SIZE)
 
-#define GC_THREADHOLD (NR_SEGMENT - 16) 
+#define NR_GC_PRESERVED 16
+#define FOREGROUND_GC_THRESHOLD (NR_SEGMENT - NR_GC_PRESERVED)
+#define BACKGROUND_GC_THRESHOLD (NR_SEGMENT - NR_GC_PRESERVED * 2)
 #define LEAST_CLEAN_SEGMENT_ONCE 1
 
 enum segment_allocator_status {
@@ -19,7 +21,6 @@ enum segment_allocator_status {
 struct segment_allocator {
     int (*alloc)(struct segment_allocator* al, size_t *seg);
     void (*foreground_gc)(struct segment_allocator* al);
-    bool (*will_trigger_gc)(struct segment_allocator* al);
     void (*destroy)(struct segment_allocator* al);
 };
 
@@ -32,7 +33,5 @@ struct default_segment_allocator {
 };
 
 struct segment_allocator* sa_create(void);
-
-extern struct mutex gc_lock;
 
 #endif

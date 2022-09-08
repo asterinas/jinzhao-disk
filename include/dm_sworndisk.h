@@ -40,8 +40,6 @@ struct dm_sworndisk {
     struct aead_cipher *cipher;
     // io client
     struct dm_io_client* io_client;
-    // read/write lock
-    struct rw_semaphore rw_lock;
     // max reader limit
     struct semaphore max_reader;
     // block io prefetcher

@@ -11,6 +11,7 @@
 #include "crypto.h"
 
 #define SEGMENT_BUFFER_SIZE (SECTOES_PER_SEGMENT * SECTOR_SIZE)
+#define POOL_SIZE 4
 
 void btox(char *xp, const char *bb, int n);
 
@@ -19,22 +20,22 @@ void btox(char *xp, const char *bb, int n);
 struct segment_buffer {
     int (*push_bio)(struct segment_buffer* buf, struct bio* bio);
     void (*push_block)(struct segment_buffer* buf, dm_block_t lba, void* buffer);
-    int (*query_bio)(struct segment_buffer* buf, struct bio* bio);
-    void (*flush_bios)(struct segment_buffer* buf);
+    int (*query_bio)(struct segment_buffer* buf, struct bio* bio, dm_block_t pba);
+    void (*flush_bios)(struct segment_buffer* buf, int index);
     void (*destroy)(struct segment_buffer* buf);
     void* (*implementer)(struct segment_buffer* buf);
 };
 
-
 struct default_segment_buffer {
     struct segment_buffer segment_buffer;
 
-    void *buffer, *pipe;
-    size_t cur_segment;
-    sector_t cur_sector;
+    int cur_buffer;
+    void *buffer[POOL_SIZE], *pipe[POOL_SIZE];
+    size_t cur_segment[POOL_SIZE];
+    sector_t cur_sector[POOL_SIZE];
+    struct rw_semaphore rw_lock;
 };
 
 struct segment_buffer* segbuf_create(void);
-int segbuf_query_encrypted_blocks(struct segment_buffer* buf, dm_block_t blkaddr, size_t count, void* buffer);
 
 #endif

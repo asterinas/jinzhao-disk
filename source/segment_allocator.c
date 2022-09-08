@@ -7,9 +7,7 @@
 #include "../include/segment_allocator.h"
 
 #define GC_DELAY 5000   // milliseconds
-#define BACKGROUND_GC_THRESHOLD (NR_SEGMENT - 32)
 struct timer_list gc_timer;
-DEFINE_MUTEX(gc_lock);
 struct work_struct gc_work;
 
 int sa_alloc(struct segment_allocator* al, size_t *seg) {
@@ -30,9 +28,6 @@ int sa_alloc(struct segment_allocator* al, size_t *seg) {
     if (r)
         return r;
 
-    if (al->will_trigger_gc(al) && this->status != SEGMENT_CLEANING) 
-        al->foreground_gc(al);
-
     return 0;
 }
 
@@ -41,15 +36,21 @@ bool offset_in_region(size_t offset, size_t region_begin, size_t region_end) {
 }
 
 void sa_foreground_gc(struct segment_allocator* al) {
-    int err;
+    int err, cur;
     size_t clean = 0, target = LEAST_CLEAN_SEGMENT_ONCE * BLOCKS_PER_SEGMENT;
     struct victim victim, *p_victim = NULL;
-    void* buffer = vmalloc(SEGMENT_BUFFER_SIZE);
-    void* plaintext = kzalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
+    void *buffer, *plaintext;
     struct default_segment_allocator* this = container_of(al, struct default_segment_allocator, segment_allocator); 
+    struct default_segment_buffer *segbuf = container_of(sworndisk->seg_buffer, struct default_segment_buffer, segment_buffer);
+
+    if (this->nr_valid_segment < FOREGROUND_GC_THRESHOLD || this->status == SEGMENT_CLEANING)
+	    return;
 
     this->status = SEGMENT_CLEANING;
-    if (!buffer) goto exit;
+
+    buffer = vmalloc(SEGMENT_BUFFER_SIZE);
+    plaintext = kzalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
+    if (!buffer || !plaintext) goto exit;
     while(clean < target && !sworndisk->meta->dst->victim_empty(sworndisk->meta->dst)) {
         bool valid;
 
@@ -72,11 +73,21 @@ void sa_foreground_gc(struct segment_allocator* al) {
                 }
                 
                 sworndisk->meta->rit->get(sworndisk->meta->rit, pba, &lba);
+		down_write(&segbuf->rw_lock);
+		cur = segbuf->cur_buffer;
                 sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &record);
+		if (record.pba != pba) {
+			up_write(&segbuf->rw_lock);
+			offset = find_next_bit(victim.block_validity_table, BLOCKS_PER_SEGMENT, offset + 1);
+			continue;
+		}
                 err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer + offset * DATA_BLOCK_SIZE, DATA_BLOCK_SIZE, 
                     record.key, record.iv, record.mac, record.pba, plaintext);
                 if (!err)
                     sworndisk->seg_buffer->push_block(sworndisk->seg_buffer, lba, plaintext);
+		up_write(&segbuf->rw_lock);
+		if (cur != segbuf->cur_buffer)
+		    sworndisk->seg_buffer->flush_bios(sworndisk->seg_buffer, cur);
                 offset = find_next_bit(victim.block_validity_table, BLOCKS_PER_SEGMENT, offset + 1);
             }
         }
@@ -101,26 +112,9 @@ exit:
     this->status = SEGMENT_ALLOCATING;
 }
 
-bool lba_in_segbuf(dm_block_t gc_lba)
-{
-	int i, count;
-	dm_block_t lba, pba;
-	struct default_segment_buffer *segbuf = container_of(sworndisk->seg_buffer, struct default_segment_buffer, segment_buffer);
-
-	count = segbuf->cur_sector / SECTORS_PER_BLOCK + 1;
-	for (i = 0; i < count; i++) {
-		pba = segbuf->cur_segment * BLOCKS_PER_SEGMENT + i;
-		sworndisk->meta->rit->get(sworndisk->meta->rit, pba, &lba);
-		if (gc_lba == lba)
-			return true;
-	}
-
-	return false;
-}
-
 void sa_background_gc(struct work_struct *ws)
 {
-	int err, offset;
+	int err, offset, cur;
 	bool valid = false;
 	void *buffer = NULL;
 	dm_block_t lba, pba;
@@ -128,9 +122,12 @@ void sa_background_gc(struct work_struct *ws)
 	size_t clean = 0, target = LEAST_CLEAN_SEGMENT_ONCE * BLOCKS_PER_SEGMENT;
 	struct victim victim, *p_victim = NULL;
 	struct default_segment_allocator *this = container_of(sworndisk->seg_allocator, struct default_segment_allocator, segment_allocator);
+	struct default_segment_buffer *segbuf = container_of(sworndisk->seg_buffer, struct default_segment_buffer, segment_buffer);
 
-	if (this->nr_valid_segment < BACKGROUND_GC_THRESHOLD)
+	if (this->nr_valid_segment < BACKGROUND_GC_THRESHOLD || this->status == SEGMENT_CLEANING)
 		return;
+
+	this->status = SEGMENT_CLEANING;
 
 	buffer = kzalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
 	if (!buffer) {
@@ -138,7 +135,6 @@ void sa_background_gc(struct work_struct *ws)
 		return;
 	}
 
-	this->status = SEGMENT_CLEANING;
 	while (clean < target && !sworndisk->meta->dst->victim_empty(sworndisk->meta->dst)) {
 		victim = *(sworndisk->meta->dst->peek_victim(sworndisk->meta->dst));
 		if (victim.nr_valid_block) {
@@ -146,19 +142,21 @@ void sa_background_gc(struct work_struct *ws)
 			do {
 				offset = find_next_bit(victim.block_validity_table, BLOCKS_PER_SEGMENT, offset);
 				pba = victim.segno * BLOCKS_PER_SEGMENT + offset;
-				mutex_lock(&gc_lock);
 				sworndisk->meta->rit->get(sworndisk->meta->rit, pba, &lba);
-				if (lba_in_segbuf(lba)) {
-					mutex_unlock(&gc_lock);
+				down_write(&segbuf->rw_lock);
+				cur = segbuf->cur_buffer;
+				sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &record);
+				if (record.pba != pba) {
+					up_write(&segbuf->rw_lock);
 					continue;
 				}
-
-				sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &record);
 				sworndisk_read_blocks(pba, 1, buffer, DM_IO_KMEM);
 				err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, record.key, record.iv, record.mac, record.pba, buffer);
 				if (!err)
 					sworndisk->seg_buffer->push_block(sworndisk->seg_buffer, lba, buffer);
-				mutex_unlock(&gc_lock);
+				up_write(&segbuf->rw_lock);
+				if (cur != segbuf->cur_buffer)
+					sworndisk->seg_buffer->flush_bios(sworndisk->seg_buffer, cur);
 			} while (++offset < BLOCKS_PER_SEGMENT);
 		}
 		err = sworndisk->meta->seg_validator->test_and_return(sworndisk->meta->seg_validator, victim.segno, &valid);
@@ -189,20 +187,12 @@ void sa_destroy(struct segment_allocator* al) {
     }
 }
 
-bool sa_will_trigger_gc(struct segment_allocator* al) {
-    struct default_segment_allocator* this = 
-        container_of(al, struct default_segment_allocator, segment_allocator); 
-
-    return this->nr_valid_segment > GC_THREADHOLD;
-}
-
 int sa_init(struct default_segment_allocator* this) {
     int err = 0;
 
     this->status = SEGMENT_ALLOCATING;
     this->segment_allocator.alloc = sa_alloc;
     this->segment_allocator.foreground_gc = sa_foreground_gc;
-    this->segment_allocator.will_trigger_gc = sa_will_trigger_gc;
     this->segment_allocator.destroy = sa_destroy;
 
     err = sworndisk->meta->seg_validator->valid_segment_count(sworndisk->meta->seg_validator, &this->nr_valid_segment);

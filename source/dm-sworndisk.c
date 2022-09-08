@@ -75,8 +75,6 @@ void sworndisk_block_io(dm_block_t blkaddr, size_t count, void* buffer, enum dm_
 
 void sworndisk_read_blocks(dm_block_t blkaddr, size_t count, void* buffer, enum dm_io_mem_type mem_type) {
     sworndisk_block_io(blkaddr, count, buffer, mem_type, REQ_OP_READ);
-    // read data block from segment buffer
-    segbuf_query_encrypted_blocks(sworndisk->seg_buffer, blkaddr, count, buffer);
 }
 
 void sworndisk_write_blocks(dm_block_t blkaddr, size_t count, void* buffer, enum dm_io_mem_type mem_type) {
@@ -113,7 +111,7 @@ bool sworndisk_should_threaded_logging(void) {
     struct default_segment_allocator* allocator = 
         container_of(sworndisk->seg_allocator, struct default_segment_allocator, segment_allocator);
 
-    if (allocator->nr_valid_segment < GC_THREADHOLD - THREAD_LOGGING_AHEAD)
+    if (allocator->nr_valid_segment < FOREGROUND_GC_THRESHOLD - THREAD_LOGGING_AHEAD)
         return false;
     return should_threaded_logging(sworndisk->meta->dst);
 }
@@ -185,28 +183,24 @@ void sworndisk_do_read(struct bio* bio) {
     struct record record;
     void* buffer = kmalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
 
-    down_read(&sworndisk->rw_lock);
     err = sworndisk->lsm_tree->search(sworndisk->lsm_tree, bio_get_block_address(bio), &record);
     if (err) {
         bio_endio(bio);
-        up_read(&sworndisk->rw_lock);
-        goto exit;
-    }
-    
-    bio_set_sector(bio, record.pba * SECTORS_PER_BLOCK + bio_block_sector_offset(bio));
-    err = sworndisk->seg_buffer->query_bio(sworndisk->seg_buffer, bio);
-    if (!err) {
-        bio_endio(bio);
-        up_read(&sworndisk->rw_lock);
         goto exit;
     }
 
-    bio_prefetcher_get(&sworndisk->prefetcher, record.pba, buffer, DM_IO_KMEM);
+    err = sworndisk->seg_buffer->query_bio(sworndisk->seg_buffer, bio, record.pba);
+    if (!err) {
+        bio_endio(bio);
+        goto exit;
+    }
+
+//    bio_prefetcher_get(&sworndisk->prefetcher, record.pba, buffer, DM_IO_KMEM);
+    sworndisk_read_blocks(record.pba, 1, buffer, DM_IO_KMEM);
     err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, record.key, record.iv, record.mac, record.pba, buffer);
     if (!err)
         bio_set_data(bio, buffer + bio_block_sector_offset(bio) * SECTOR_SIZE, bio_get_data_len(bio));
     bio_endio(bio);
-    up_read(&sworndisk->rw_lock);
 
 exit:
     if (buffer)
@@ -221,11 +215,9 @@ void async_read(void* context) {
 void sworndisk_do_write(struct bio* bio)
 {
 	down_read(&sworndisk->meta->journal->valid_fields_lock);
-	down_write(&sworndisk->rw_lock);
 	sworndisk->seg_buffer->push_bio(sworndisk->seg_buffer, bio);
 	bio_endio(bio);
-	bio_prefetcher_clear(&sworndisk->prefetcher);
-	up_write(&sworndisk->rw_lock);
+//	bio_prefetcher_clear(&sworndisk->prefetcher);
 	up_read(&sworndisk->meta->journal->valid_fields_lock);
 }
 
@@ -366,13 +358,15 @@ void add_checkpoint_pack_record(struct metadata *meta)
 
 void flush_and_commit(struct dm_sworndisk *sworndisk, struct bio *bio)
 {
+	int i;
 	loff_t start, end;
 	struct file *fp;
 	struct journal_region *journal;
 	struct journal_record j_record;
 
 	// flush data segment_buffer
-	sworndisk->seg_buffer->flush_bios(sworndisk->seg_buffer);
+	for (i = 0; i < POOL_SIZE; i++)
+		sworndisk->seg_buffer->flush_bios(sworndisk->seg_buffer, i);
 	// flush index region
 	fp = sworndisk->lsm_tree->file;
 	start = sworndisk->meta->superblock->index_region_start *
@@ -479,7 +473,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 	    goto bad;
     }
 
-    bio_prefetcher_init(&sworndisk->prefetcher);
+//    bio_prefetcher_init(&sworndisk->prefetcher);
     sema_init(&sworndisk->max_reader, MAX_READER);
     sworndisk->io_client = dm_io_client_create();
     if (!sworndisk->io_client) {
@@ -516,7 +510,6 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
 		goto bad;
     }
 
-    init_rwsem(&sworndisk->rw_lock);
     spin_lock_init(&sworndisk->req_lock);
 	bio_list_init(&sworndisk->deferred_bios);
     sworndisk->seg_buffer = segbuf_create();
@@ -531,7 +524,7 @@ static int dm_sworndisk_target_ctr(struct dm_target *target,
     return 0;
 
 bad:
-    __bio_prefetcher_destroy(&sworndisk->prefetcher);
+//    __bio_prefetcher_destroy(&sworndisk->prefetcher);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
     if (sworndisk->seg_allocator)
@@ -559,7 +552,7 @@ bad:
 static void dm_sworndisk_target_dtr(struct dm_target *ti)
 {
     struct dm_sworndisk *sworndisk = (struct dm_sworndisk *) ti->private;
-    __bio_prefetcher_destroy(&sworndisk->prefetcher);
+//    __bio_prefetcher_destroy(&sworndisk->prefetcher);
     if (sworndisk->seg_buffer)
         sworndisk->seg_buffer->destroy(sworndisk->seg_buffer);
     if (sworndisk->seg_allocator)
