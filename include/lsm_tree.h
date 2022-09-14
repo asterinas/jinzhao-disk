@@ -11,8 +11,8 @@
 #include "iterator.h"
 
 #define DEFAULT_LSM_TREE_NR_DISK_LEVEL 2
-#define DEFAULT_LSM_LEVEL0_NR_FILE 4
-#define DEFAULT_LSM_FILE_CAPACITY (1048576)
+#define DEFAULT_LSM_LEVEL0_NR_FILE 1
+#define DEFAULT_LSM_FILE_CAPACITY (131072) // 512M/4K records
 
 // record, lba => (pba, key, iv, mac)
 struct record {
@@ -184,6 +184,8 @@ struct lsm_tree {
     struct file* file;
     struct lsm_catalogue* catalogue;
     struct memtable* memtable;
+    struct memtable* immutable_memtable;
+    struct rw_semaphore im_lock;
     struct lsm_level** levels;
     // struct cache* cache;
     struct aead_cipher* cipher;

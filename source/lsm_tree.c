@@ -9,6 +9,11 @@
 #include "../include/memtable.h"
 #include "../include/metadata.h"
 
+struct compaction_work {
+	struct work_struct work;
+	void *data;
+};
+static struct workqueue_struct *compaction_wq;
 
 static struct aead_cipher* global_cipher; // global cipher
 
@@ -1235,11 +1240,18 @@ int lsm_tree_minor_compaction(struct lsm_tree* this) {
     struct list_head entries;
     struct journal_region *journal = sworndisk->meta->journal;
     struct journal_record j_record;
+    struct memtable *memtable;
 
     if (this->levels[0]->is_full(this->levels[0]))
         lsm_tree_major_compaction(this, 0);
 
-    this->memtable->get_all_entry(this->memtable, &entries);
+    if (this->immutable_memtable)
+        memtable = this->immutable_memtable;
+    else
+        memtable = this->memtable;
+
+    down_write(&this->im_lock);
+    memtable->get_all_entry(memtable, &entries);
     this->catalogue->alloc_file(this->catalogue, &fd);
 
     version = this->catalogue->get_next_version(this->catalogue);
@@ -1259,11 +1271,21 @@ int lsm_tree_minor_compaction(struct lsm_tree* this) {
     file = builder->complete(builder);
     this->catalogue->set_file_stats(this->catalogue, file->id, file->get_stats(file));
     this->levels[0]->add_file(this->levels[0], file);
-    this->memtable->clear(this->memtable);
+    memtable->destroy(memtable);
+    this->immutable_memtable = NULL;
+    up_write(&this->im_lock);
 
     if (builder)
         builder->destroy(builder);
     return err;
+}
+
+void minor_compaction_handler(struct work_struct *ws)
+{
+	struct compaction_work *cw = container_of(ws, struct compaction_work, work);
+	struct lsm_tree *this = cw->data;
+	lsm_tree_minor_compaction(this);
+	kfree(cw);
 }
 
 int lsm_tree_search(struct lsm_tree* this, uint32_t key, void* val) {
@@ -1282,8 +1304,19 @@ int lsm_tree_search(struct lsm_tree* this, uint32_t key, void* val) {
         *(struct record*)val = *record;
         // this->cache->put(this->cache, key, record_copy(record), record_destroy);
         return 0;
-    } 
-    
+    }
+    down_read(&this->im_lock);
+    if (this->immutable_memtable) {
+	err = this->immutable_memtable->get(this->immutable_memtable,
+					    key, (void**)&record);
+	up_read(&this->im_lock);
+	if (!err) {
+		*(struct record*)val = *record;
+		return 0;
+	}
+    } else
+	up_read(&this->im_lock);
+
     for (i = 0; i < this->catalogue->nr_disk_level; ++i) {
         err = this->levels[i]->search(this->levels[i], key, val);
         if (!err) {
@@ -1297,24 +1330,38 @@ int lsm_tree_search(struct lsm_tree* this, uint32_t key, void* val) {
 
 void lsm_tree_put(struct lsm_tree* this, uint32_t key, void* val) {
     struct record* record;
+    struct compaction_work *cw;
 
     record = this->memtable->put(this->memtable, key, val, record_destroy);
     if (record)
         record_destroy(record);
     // this->cache->put(this->cache, key, record_copy(val), record_destroy);
 
-    if (this->memtable->size >= DEFAULT_MEMTABLE_CAPACITY) 
-        lsm_tree_minor_compaction(this);
+    if (this->memtable->size >= DEFAULT_MEMTABLE_CAPACITY) {
+        down_write(&this->im_lock);
+        this->immutable_memtable = this->memtable;
+        up_write(&this->im_lock);
+        this->memtable = rbtree_memtable_create();
+
+        cw = kzalloc(sizeof(struct compaction_work), GFP_KERNEL);
+        cw->data = this;
+        INIT_WORK(&cw->work, minor_compaction_handler);
+        queue_work(compaction_wq, &cw->work);
+    }
 }
 
 void lsm_tree_destroy(struct lsm_tree* this) {
     size_t i;
 
+    if (compaction_wq)
+        destroy_workqueue(compaction_wq);
+
     if (!IS_ERR_OR_NULL(this)) {
         if (!IS_ERR_OR_NULL(this->memtable)) {
             if (this->memtable->size)
                 lsm_tree_minor_compaction(this);
-            this->memtable->destroy(this->memtable);
+            else
+                this->memtable->destroy(this->memtable);
             // this->cache->destroy(this->cache);
         }  
         if (!IS_ERR_OR_NULL(this->levels)) {
@@ -1340,9 +1387,16 @@ int lsm_tree_init(struct lsm_tree* this, const char* filename, struct lsm_catalo
         err = -EINVAL;
         goto bad;
     }
+    compaction_wq = alloc_workqueue("kxdisk-compaction", WQ_UNBOUND, WQ_UNBOUND_MAX_ACTIVE);
+    if (!compaction_wq) {
+        err = -EAGAIN;
+        goto bad;
+    }
 
     this->catalogue = catalogue;
     this->memtable = rbtree_memtable_create();
+    this->immutable_memtable = NULL;
+    init_rwsem(&this->im_lock);
     this->levels = kzalloc(catalogue->nr_disk_level * sizeof(struct lsm_level*), GFP_KERNEL);
     if (!this->levels) {
         err = -ENOMEM;
@@ -1372,6 +1426,8 @@ int lsm_tree_init(struct lsm_tree* this, const char* filename, struct lsm_catalo
 
     return 0;
 bad:
+    if (compaction_wq)
+        destroy_workqueue(compaction_wq);
     if (this->file) 
         filp_close(this->file, NULL);
     if (this->levels) 

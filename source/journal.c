@@ -1,5 +1,7 @@
 #include "../include/metadata.h"
 
+#define ENABLE_JOURNAL 1
+
 struct journal_ctx {
 	int bi_op;
 	int blk_num;
@@ -393,10 +395,56 @@ struct journal_operations default_jops = {
 	.decrypt_block	= journal_decrypt_block,
 };
 
+void nop_buffer_load(struct journal_region *this, uint64_t record_start,
+		     uint64_t record_end)
+{
+}
+bool nop_should_recover(struct journal_region *this)
+{
+	return false;
+}
+void nop_recover(struct journal_region *this)
+{
+}
+bool nop_should_sync(struct journal_region *this)
+{
+	return false;
+}
+void nop_synchronize(struct journal_region *this)
+{
+}
+uint64_t nop_add_record(struct journal_region *this, struct journal_record *record)
+{
+	return 0;
+}
+struct journal_block * nop_get_block(struct journal_region *this, uint64_t blk_num)
+{
+	return NULL;
+}
+void nop_encrypt_block(struct journal_region *this, uint64_t blk_num,
+		       struct journal_block *buffer)
+{
+}
+void nop_decrypt_block(struct journal_region *this, uint64_t blk_num)
+{
+}
+
+struct journal_operations nop_jops = {
+	.load		= nop_buffer_load,
+	.should_recover = nop_should_recover,
+	.recover	= nop_recover,
+	.should_sync	= nop_should_sync,
+	.synchronize	= nop_synchronize,
+	.add_record	= nop_add_record,
+	.get_block	= nop_get_block,
+	.encrypt_block	= nop_encrypt_block,
+	.decrypt_block	= nop_decrypt_block,
+};
+
 int journal_region_init(struct journal_region *this, struct superblock *superblock)
 {
+#if ENABLE_JOURNAL
 	struct journal_record j_record;
-
 	this->status = JOURNAL_UNINITIALIZED;
 	this->superblock = superblock;
 	this->jops = &default_jops;
@@ -435,6 +483,10 @@ int journal_region_init(struct journal_region *this, struct superblock *superblo
 		return 0;
 
 	return -EAGAIN;
+#else
+	this->jops = &nop_jops;
+	return 0;
+#endif
 }
 
 struct journal_region *journal_region_create(struct superblock *superblock)
@@ -457,7 +509,7 @@ void journal_region_destroy(struct journal_region *this)
 {
 	if (!this)
 		return;
-
+#if ENABLE_JOURNAL
 	this->jops->synchronize(this);
 	mutex_destroy(&this->sync_lock);
 	if (this->cipher)
@@ -465,6 +517,6 @@ void journal_region_destroy(struct journal_region *this)
 
 	if (this->buffer.blocks)
 		kfree(this->buffer.blocks);
-
+#endif
 	kfree(this);
 }
