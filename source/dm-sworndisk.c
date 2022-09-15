@@ -100,7 +100,6 @@ void sworndisk_write_blocks(dm_block_t blkaddr, size_t count, void* buffer, enum
 		j_record.data_log.hba = hba;
 		memcpy(j_record.data_log.key, d_record.key, AES_GCM_KEY_SIZE);
 		memcpy(j_record.data_log.mac, d_record.mac, AES_GCM_AUTH_SIZE);
-		memcpy(j_record.data_log.iv, d_record.iv, AES_GCM_IV_SIZE);
 
 		journal->jops->add_record(journal, &j_record);
 	}
@@ -197,7 +196,7 @@ void sworndisk_do_read(struct bio* bio) {
 
 //    bio_prefetcher_get(&sworndisk->prefetcher, record.pba, buffer, DM_IO_KMEM);
     sworndisk_read_blocks(record.pba, 1, buffer, DM_IO_KMEM);
-    err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, record.key, record.iv, record.mac, record.pba, buffer);
+    err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, record.key, NULL, record.mac, record.pba, buffer);
     if (!err)
         bio_set_data(bio, buffer + bio_block_sector_offset(bio) * SECTOR_SIZE, bio_get_data_len(bio));
     bio_endio(bio);

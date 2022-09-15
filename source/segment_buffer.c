@@ -41,7 +41,7 @@ int segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
         pipe = this->pipe[cur] + (record.pba % BLOCKS_PER_SEGMENT) * DATA_BLOCK_SIZE;
         bio_get_data(bio, buffer + bio_block_sector_offset(bio) * SECTOR_SIZE, bio_get_data_len(bio));
         sworndisk->cipher->encrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE,
-                record.key, record.iv, record.mac, record.pba, pipe);
+                record.key, NULL, record.mac, record.pba, pipe);
         sworndisk->lsm_tree->put(sworndisk->lsm_tree, lba, record_copy(&record));
         up_write(&this->rw_lock);
         return MODIFY_IN_MEM_BUFFER;
@@ -86,14 +86,14 @@ void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer)
     int cur = this->cur_buffer;
 
     pba = next_block(this, cur, threaded_logging);
-    record = record_create(pba, NULL, NULL, NULL);
+    record = record_create(pba, this->seg_key, NULL);
     block = this->buffer[cur] + this->cur_sector[cur] * SECTOR_SIZE;
     if (block != buffer)
 	memmove(block, buffer, DATA_BLOCK_SIZE);
 
     pipe = this->pipe[cur] + this->cur_sector[cur] * SECTOR_SIZE;
     sworndisk->cipher->encrypt(sworndisk->cipher, block, DATA_BLOCK_SIZE, 
-			record->key, record->iv, record->mac, record->pba, pipe);
+			record->key, NULL, record->mac, record->pba, pipe);
 
     sworndisk->lsm_tree->put(sworndisk->lsm_tree, lba, record);
     sworndisk->meta->rit->set(sworndisk->meta->rit, pba, lba);
@@ -108,6 +108,7 @@ void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer)
 	this->cur_buffer = (cur + 1) % POOL_SIZE;
         sworndisk->seg_allocator->alloc(sworndisk->seg_allocator, &this->cur_segment[this->cur_buffer]);
 	this->cur_sector[this->cur_buffer] = 0;
+	get_random_bytes(this->seg_key, sizeof(this->seg_key));
     }
 }
 
@@ -175,6 +176,7 @@ int segbuf_init(struct default_segment_buffer *buf)
 			goto bad;
 		}
 	}
+	get_random_bytes(buf->seg_key, sizeof(buf->seg_key));
 	buf->cur_buffer = 0;
 	err = sworndisk->seg_allocator->alloc(sworndisk->seg_allocator,
 					      &buf->cur_segment[0]);

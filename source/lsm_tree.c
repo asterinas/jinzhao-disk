@@ -27,12 +27,12 @@ void bit_node_print(struct bit_node* bit_node) {
             DMINFO("\tkey: %d", bit_node->leaf.keys[i]);
             DMINFO("\tvalue: %lld", bit_node->leaf.records[i].pba);
         }
-        DMINFO("next: %ld", bit_node->leaf.next.pos);
+        DMINFO("next: %ld", bit_node->leaf.next_pos);
     } else {
         for (i = 0; i < bit_node->inner.nr_child; ++i) {
             DMINFO("child %ld", i);
             DMINFO("\tkey: %d", bit_node->inner.children[i].key);
-            DMINFO("\tpos: %ld", bit_node->inner.children[i].pointer.pos);
+            DMINFO("\tpos: %ld", bit_node->inner.children[i].pos);
         }
     }
 }
@@ -127,7 +127,7 @@ struct bit_node __bit_inner(struct bit_builder_context* ctx) {
     for (i = 0; i < ctx->nr; ++i) {
         node.inner.children[i].is_leaf = ctx->nodes[i].is_leaf;
         node.inner.children[i].key = ctx->nodes[i].is_leaf ? ctx->nodes[i].leaf.keys[ctx->nodes[i].leaf.nr_record-1] : ctx->nodes[i].inner.children[ctx->nodes[i].inner.nr_child - 1].key;
-        node.inner.children[i].pointer = ctx->pointers[i];
+        node.inner.children[i].pos = ctx->pos[i];
     }
 
     return node;
@@ -149,9 +149,7 @@ int bit_builder_add_entry(struct lsm_file_builder* builder, struct entry* entry)
     size_t h = 0, cur, nr_record = this->cur_leaf.nr_record;
     struct journal_region *journal = sworndisk->meta->journal;
     struct journal_record j_record;
-    struct bit_pointer pointer = {
-        .pos = this->begin + this->cur,
-    };
+    size_t pos = this->begin + this->cur;
 
     if (!this->has_first_key) {
         this->first_key = entry->key;
@@ -167,16 +165,13 @@ int bit_builder_add_entry(struct lsm_file_builder* builder, struct entry* entry)
     if (this->cur_leaf.nr_record < BIT_LEAF_LEN)
         goto exit;
 
-    memcpy(pointer.key, this->next_key, AES_GCM_KEY_SIZE);
-    memcpy(pointer.iv, this->next_iv, AES_GCM_IV_SIZE);
-
     inner_node = kmalloc(sizeof(struct bit_node), GFP_KERNEL);
     leaf_node = kmalloc(sizeof(struct bit_node), GFP_KERNEL);
     leaf_node->is_leaf = true;
     leaf_node->leaf = this->cur_leaf;
 
     this->ctx[h].nodes[this->ctx[h].nr] = *leaf_node;
-    this->ctx[h].pointers[this->ctx[h].nr] = pointer;
+    this->ctx[h].pos[this->ctx[h].nr] = pos;
     bit_builder_buffer_flush_if_full(this);
     cur = this->cur;
     this->cur += BIT_LEAF_NODE_SIZE;
@@ -186,15 +181,12 @@ int bit_builder_add_entry(struct lsm_file_builder* builder, struct entry* entry)
 
     this->ctx[h].nr += 1;
     while (this->ctx[h].nr == DEFAULT_BIT_DEGREE) {
-        struct bit_pointer* ptr = &(this->ctx[h+1].pointers[this->ctx[h+1].nr]);
+        size_t *node_pos = &(this->ctx[h+1].pos[this->ctx[h+1].nr]);
 
         *inner_node = __bit_inner(&this->ctx[h]);
         this->ctx[h+1].nodes[this->ctx[h+1].nr] = *inner_node;
-        ptr->pos = this->begin + this->cur;
-        // generate random key and iv
-        get_random_bytes(ptr->key, AES_GCM_KEY_SIZE);
-        get_random_bytes(ptr->iv, AES_GCM_IV_SIZE);
-        bit_node_encode(inner_node, ptr->key, ptr->iv);
+        *node_pos = this->begin + this->cur;
+        bit_node_encode(inner_node, this->bit_key, NULL);
         memcpy(this->buffer + this->cur, inner_node, BIT_INNER_NODE_SIZE);
         this->cur += BIT_INNER_NODE_SIZE;
 
@@ -204,30 +196,23 @@ int bit_builder_add_entry(struct lsm_file_builder* builder, struct entry* entry)
 
 	j_record.bit_node.is_leaf = false;
 	j_record.bit_node.is_done = false;
-	j_record.bit_node.pos = ptr->pos;
-	memcpy(j_record.bit_node.key, ptr->key, AES_GCM_KEY_SIZE);
+	j_record.bit_node.pos = *node_pos;
+	memcpy(j_record.bit_node.key, this->bit_key, AES_GCM_KEY_SIZE);
 	memcpy(j_record.bit_node.mac, inner_node->mac, AES_GCM_AUTH_SIZE);
-	memcpy(j_record.bit_node.iv, ptr->iv, AES_GCM_IV_SIZE);
 	j_record.bit_node.timestamp = ktime_get_real_ns();
 	journal->jops->add_record(journal, &j_record);
     }
 
-    leaf_node->leaf.next.pos = this->begin + this->cur;
-    // generate random key and iv
-    get_random_bytes(this->next_key, AES_GCM_KEY_SIZE);
-    get_random_bytes(this->next_iv, AES_GCM_IV_SIZE);
-    memcpy(leaf_node->leaf.next.key, this->next_key, AES_GCM_KEY_SIZE);
-    memcpy(leaf_node->leaf.next.iv, this->next_iv, AES_GCM_IV_SIZE);
-    bit_node_encode(leaf_node, pointer.key, pointer.iv);
+    leaf_node->leaf.next_pos = this->begin + this->cur;
+    bit_node_encode(leaf_node, this->bit_key, NULL);
     memcpy(this->buffer + cur, leaf_node, BIT_LEAF_NODE_SIZE);
     this->cur_leaf.nr_record = 0;
 
     j_record.bit_node.is_leaf = true;
     j_record.bit_node.is_done = false;
-    j_record.bit_node.pos = pointer.pos;
-    memcpy(j_record.bit_node.key, pointer.key, AES_GCM_KEY_SIZE);
+    j_record.bit_node.pos = pos;
+    memcpy(j_record.bit_node.key, this->bit_key, AES_GCM_KEY_SIZE);
     memcpy(j_record.bit_node.mac, leaf_node->mac, AES_GCM_AUTH_SIZE);
-    memcpy(j_record.bit_node.iv, pointer.iv, AES_GCM_IV_SIZE);
     j_record.bit_node.timestamp = ktime_get_real_ns();
     journal->jops->add_record(journal, &j_record);
 
@@ -247,9 +232,7 @@ struct lsm_file* bit_builder_complete(struct lsm_file_builder* builder) {
     struct lsm_catalogue *catalogue = sworndisk->lsm_tree->catalogue;
     struct journal_region *journal = sworndisk->meta->journal;
     struct journal_record j_record;
-    struct bit_pointer *root_pointer, pointer = {
-        .pos = this->begin + this->cur,
-    };
+    size_t pos = this->begin + this->cur;
 
     if (this->ctx[this->height-1].nr) 
         goto exit;
@@ -261,11 +244,8 @@ struct lsm_file* bit_builder_complete(struct lsm_file_builder* builder) {
     leaf_node->is_leaf = true;
     leaf_node->leaf = this->cur_leaf;
     if (this->cur_leaf.nr_record > 0) {
-        memcpy(pointer.key, this->next_key, AES_GCM_KEY_SIZE);
-        memcpy(pointer.iv, this->next_iv, AES_GCM_IV_SIZE);
-
         this->ctx[h].nodes[this->ctx[h].nr] = *leaf_node;
-        this->ctx[h].pointers[this->ctx[h].nr] = pointer;
+        this->ctx[h].pos[this->ctx[h].nr] = pos;
         cur = this->cur;
         this->cur += BIT_LEAF_NODE_SIZE;
     }
@@ -274,7 +254,7 @@ struct lsm_file* bit_builder_complete(struct lsm_file_builder* builder) {
     j_record.bit_node.bit_id = this->id;
 
     while (h < this->height - 1) {
-        struct bit_pointer* ptr = &(this->ctx[h+1].pointers[this->ctx[h+1].nr]);
+        size_t *node_pos = &(this->ctx[h+1].pos[this->ctx[h+1].nr]);
 
         if (!this->ctx[h].nr) {
             h += 1;
@@ -283,10 +263,8 @@ struct lsm_file* bit_builder_complete(struct lsm_file_builder* builder) {
 
         *inner_node = __bit_inner(&this->ctx[h]);
         this->ctx[h+1].nodes[this->ctx[h+1].nr] = *inner_node;
-        ptr->pos = this->begin + this->cur;
-        get_random_bytes(ptr->key, AES_GCM_KEY_SIZE);
-        get_random_bytes(ptr->iv, AES_GCM_IV_SIZE);
-        bit_node_encode(inner_node, ptr->key, ptr->iv);
+        *node_pos = this->begin + this->cur;
+        bit_node_encode(inner_node, this->bit_key, NULL);
         memcpy(this->buffer + this->cur, inner_node, BIT_INNER_NODE_SIZE);
         this->cur += BIT_INNER_NODE_SIZE;
 
@@ -296,24 +274,22 @@ struct lsm_file* bit_builder_complete(struct lsm_file_builder* builder) {
 
 	j_record.bit_node.is_leaf = false;
 	j_record.bit_node.is_done = false;
-	j_record.bit_node.pos = ptr->pos;
-	memcpy(j_record.bit_node.key, ptr->key, AES_GCM_KEY_SIZE);
+	j_record.bit_node.pos = *node_pos;
+	memcpy(j_record.bit_node.key, this->bit_key, AES_GCM_KEY_SIZE);
 	memcpy(j_record.bit_node.mac, inner_node->mac, AES_GCM_AUTH_SIZE);
-	memcpy(j_record.bit_node.iv, ptr->iv, AES_GCM_IV_SIZE);
 	j_record.bit_node.timestamp = ktime_get_real_ns();
 	journal->jops->add_record(journal, &j_record);
     }
 
     if (this->cur_leaf.nr_record > 0) {
-        bit_node_encode(leaf_node, pointer.key, pointer.iv);
+        bit_node_encode(leaf_node, this->bit_key, NULL);
         memcpy(this->buffer + cur, leaf_node, BIT_LEAF_NODE_SIZE);
 
 	j_record.bit_node.is_leaf = true;
 	j_record.bit_node.is_done = false;
-	j_record.bit_node.pos = pointer.pos;
-	memcpy(j_record.bit_node.key, pointer.key, AES_GCM_KEY_SIZE);
+	j_record.bit_node.pos = pos;
+	memcpy(j_record.bit_node.key, this->bit_key, AES_GCM_KEY_SIZE);
 	memcpy(j_record.bit_node.mac, leaf_node->mac, AES_GCM_AUTH_SIZE);
-	memcpy(j_record.bit_node.iv, pointer.iv, AES_GCM_IV_SIZE);
 	j_record.bit_node.timestamp = ktime_get_real_ns();
 	journal->jops->add_record(journal, &j_record);
     }
@@ -325,7 +301,6 @@ exit:
         kfree(inner_node);
 
     kernel_write(this->file, this->buffer, this->cur, &addr);
-    root_pointer = &(this->ctx[this->height - 1].pointers[0]);
     root = this->begin + this->cur - BIT_INNER_NODE_SIZE;
     filter_begin = addr = root + BIT_INNER_NODE_SIZE;
     kernel_write(this->file, this->filter->bits, this->filter->size, &addr);
@@ -338,7 +313,7 @@ exit:
     journal->jops->add_record(journal, &j_record);
 
     return bit_file_create(this->file, root, this->id, this->level, this->version, this->first_key, this->last_key,
-        root_pointer->key, root_pointer->iv, filter_begin);
+        this->bit_key, NULL, filter_begin);
 }
 
 void bit_builder_destroy(struct lsm_file_builder* builder) {
@@ -381,9 +356,7 @@ int bit_builder_init(struct bit_builder* this, struct file* file, size_t begin, 
     this->height = __bit_height(DEFAULT_LSM_FILE_CAPACITY, DEFAULT_BIT_DEGREE);
     this->filter = bit_bloom_filter_create();
 
-    // generate random key and iv
-    get_random_bytes(this->next_key, AES_GCM_KEY_SIZE);
-    get_random_bytes(this->next_iv, AES_GCM_IV_SIZE);
+    get_random_bytes(this->bit_key, AES_GCM_KEY_SIZE);
     this->buffer = vmalloc(DEFAULT_LSM_FILE_BUILDER_BUFFER_SIZE);
     if (!this->buffer) {
         err = -ENOMEM;
@@ -460,14 +433,11 @@ int bit_file_search_leaf(struct bit_file* this, uint32_t key, struct bit_leaf* l
     bool is_leaf = false;
     loff_t addr;
     struct bit_node bit_node;
-    char encrypt_key[AES_GCM_KEY_SIZE], iv[AES_GCM_IV_SIZE];
 
     addr = this->root;
-    memcpy(encrypt_key, this->root_key, AES_GCM_KEY_SIZE);
-    memcpy(iv, this->root_iv, AES_GCM_IV_SIZE);
 next:
     kernel_read(this->file, &bit_node, sizeof(struct bit_node), &addr);
-    err = bit_node_decode((char*)&bit_node, is_leaf, encrypt_key, iv);
+    err = bit_node_decode((char*)&bit_node, is_leaf, this->root_key, NULL);
     if (err) 
         return -ENODATA;
 
@@ -486,9 +456,7 @@ next:
     for (i = 0; i < bit_node.inner.nr_child; ++i) {
         if (key <= bit_node.inner.children[i].key) {
             is_leaf = bit_node.inner.children[i].is_leaf;
-            addr = bit_node.inner.children[i].pointer.pos;
-            memcpy(encrypt_key, bit_node.inner.children[i].pointer.key, AES_GCM_KEY_SIZE);
-            memcpy(iv, bit_node.inner.children[i].pointer.iv, AES_GCM_IV_SIZE);
+            addr = bit_node.inner.children[i].pos;
             goto next;
         }
     }
@@ -560,9 +528,9 @@ int bit_iterator_next(struct iterator* iter, void* data) {
 
     this->cur_record += 1;
     if (this->cur_record == BIT_LEAF_LEN) {
-        pos = this->leaf.next.pos;
+        pos = this->leaf.next_pos;
         kernel_read(this->bit_file->file, &bit_node, sizeof(struct bit_node), &pos);
-        bit_node_decode((char*)&bit_node, true, this->leaf.next.key, this->leaf.next.iv);
+        bit_node_decode((char*)&bit_node, true, this->bit_file->root_key, NULL);
         this->leaf = bit_node.leaf;
         this->cur_record = 0;
     }
@@ -648,7 +616,6 @@ struct file_stat bit_file_get_stats(struct lsm_file* lsm_file) {
     };
     
     memcpy(stats.root_key, this->root_key, AES_GCM_KEY_SIZE);
-    memcpy(stats.root_iv, this->root_iv, AES_GCM_IV_SIZE);
     return stats;
 }
 
@@ -670,7 +637,6 @@ int bit_file_init(struct bit_file* this, struct file* file, loff_t root, size_t 
     this->first_key = first_key;
     this->last_key = last_key;
     memcpy(this->root_key, root_key, AES_GCM_KEY_SIZE);
-    memcpy(this->root_iv, root_iv, AES_GCM_IV_SIZE);
     init_rwsem(&this->lock);
     this->cached_leaf.nr_record = 0;
     this->filter_begin = filter_begin;
@@ -1326,7 +1292,6 @@ int lsm_tree_search(struct lsm_tree* this, uint32_t key, void* val) {
     }
     return -ENODATA;
 }
-
 
 void lsm_tree_put(struct lsm_tree* this, uint32_t key, void* val) {
     struct record* record;

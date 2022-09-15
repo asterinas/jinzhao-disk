@@ -29,6 +29,7 @@ struct segment_buffer {
 struct default_segment_buffer {
     struct segment_buffer segment_buffer;
 
+    char seg_key[AES_GCM_KEY_SIZE];
     int cur_buffer;
     void *buffer[POOL_SIZE], *pipe[POOL_SIZE];
     size_t cur_segment[POOL_SIZE];

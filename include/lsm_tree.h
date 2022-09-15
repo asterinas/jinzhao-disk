@@ -19,24 +19,17 @@ struct record {
     dm_block_t pba; // physical block address
     char mac[AES_GCM_AUTH_SIZE];
     char key[AES_GCM_KEY_SIZE];
-    char iv[AES_GCM_IV_SIZE];
 } __packed;  
 
-struct record* record_create(dm_block_t pba, char* key, char* iv, char* mac);
+struct record* record_create(dm_block_t pba, char* key, char* mac);
 struct record* record_copy(struct record* old);
 void record_destroy(void* record);
 
 #define DEFAULT_BIT_DEGREE 4
-struct bit_pointer {
-    size_t pos;
-    char key[AES_GCM_KEY_SIZE];
-    char iv[AES_GCM_IV_SIZE];
-} __packed;
-
 struct bit_child {
     bool is_leaf: 1;
     uint32_t key;
-    struct bit_pointer pointer;
+    size_t pos;
 } __packed;
 
 #define BIT_LEAF_LEN (DEFAULT_BIT_DEGREE << 1)
@@ -44,14 +37,13 @@ struct bit_leaf {
     size_t nr_record;
     uint32_t keys[BIT_LEAF_LEN];
     struct record records[BIT_LEAF_LEN];
-    struct bit_pointer next;
+    size_t next_pos;
 } __packed;
 
 struct bit_inner {
     size_t nr_child;
     struct bit_child children[DEFAULT_BIT_DEGREE];
 } __packed;
-
 
 #define BIT_NODE_SIZE sizeof(struct bit_node)
 #define BIT_LEAF_SIZE sizeof(struct bit_leaf)
@@ -113,8 +105,8 @@ struct lsm_file_builder {
 
 struct bit_builder_context {
     size_t nr;
-    struct bit_pointer pointers[DEFAULT_BIT_DEGREE];
     struct bit_node nodes[DEFAULT_BIT_DEGREE];
+    size_t pos[DEFAULT_BIT_DEGREE];
 };
 
 struct bit_builder {
@@ -127,8 +119,7 @@ struct bit_builder {
     size_t cur, height, id, level, version;
     void* buffer;
     struct bit_builder_context* ctx;
-    char next_key[AES_GCM_KEY_SIZE];
-    char next_iv[AES_GCM_IV_SIZE];
+    char bit_key[AES_GCM_KEY_SIZE];
     struct bit_leaf cur_leaf;
     struct bloom_filter* filter;
 };

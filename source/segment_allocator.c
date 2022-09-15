@@ -82,7 +82,7 @@ void sa_foreground_gc(struct segment_allocator* al) {
 			continue;
 		}
                 err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer + offset * DATA_BLOCK_SIZE, DATA_BLOCK_SIZE, 
-                    record.key, record.iv, record.mac, record.pba, plaintext);
+                    record.key, NULL, record.mac, record.pba, plaintext);
                 if (!err)
                     sworndisk->seg_buffer->push_block(sworndisk->seg_buffer, lba, plaintext);
 		up_write(&segbuf->rw_lock);
@@ -151,7 +151,7 @@ void sa_background_gc(struct work_struct *ws)
 					continue;
 				}
 				sworndisk_read_blocks(pba, 1, buffer, DM_IO_KMEM);
-				err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, record.key, record.iv, record.mac, record.pba, buffer);
+				err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, record.key, NULL, record.mac, record.pba, buffer);
 				if (!err)
 					sworndisk->seg_buffer->push_block(sworndisk->seg_buffer, lba, buffer);
 				up_write(&segbuf->rw_lock);

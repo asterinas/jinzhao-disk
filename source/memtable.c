@@ -16,7 +16,7 @@ void __copy_or_random(void* dst, void* src, size_t len) {
     memcpy(dst, src, len);
 }
 
-struct record* record_create(dm_block_t pba, char* key, char* iv, char* mac) {
+struct record* record_create(dm_block_t pba, char* key, char* mac) {
     struct record* record;
 
     record = (struct record*) kzalloc(sizeof(struct record), GFP_KERNEL);
@@ -26,7 +26,6 @@ struct record* record_create(dm_block_t pba, char* key, char* iv, char* mac) {
     }
 
     __copy_or_random(record->key, key, AES_GCM_KEY_SIZE);
-    __copy_or_random(record->iv, iv, AES_GCM_IV_SIZE);
     if (mac)
         memcpy(record->mac, mac, AES_GCM_AUTH_SIZE);
 

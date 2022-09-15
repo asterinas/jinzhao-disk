@@ -26,20 +26,27 @@ int aes_gcm_get_random_iv(char** p_iv, int iv_len) {
 
 int aes_gcm_cipher_encrypt(struct aead_cipher *ac, char* data, int len, char* key, char* iv, char* mac, uint64_t seq, char* out) {
     int r;
+    char *riv;
     struct aead_request* req;
+    char zero_iv[AES_GCM_IV_SIZE] = { 0 };
     struct scatterlist sg_in[AEAD_MSG_NR_PART], sg_out[AEAD_MSG_NR_PART];
     DECLARE_CRYPTO_WAIT(wait);
     struct aes_gcm_cipher* this = container_of(ac, struct aes_gcm_cipher, aead_cipher);
 
+    if (iv)
+        riv = iv;
+    else
+        riv = zero_iv;
+
     sg_init_table(sg_in, AEAD_MSG_NR_PART);
     sg_set_buf(&sg_in[0], &seq, sizeof(uint64_t));
-    sg_set_buf(&sg_in[1], iv, this->iv_size);
+    sg_set_buf(&sg_in[1], riv, this->iv_size);
     sg_set_buf(&sg_in[2], data, len);
     sg_set_buf(&sg_in[3], mac, this->auth_size);
 
     sg_init_table(sg_out, AEAD_MSG_NR_PART);
     sg_set_buf(&sg_out[0], &seq, sizeof(uint64_t));
-    sg_set_buf(&sg_out[1], iv, this->iv_size);
+    sg_set_buf(&sg_out[1], riv, this->iv_size);
     sg_set_buf(&sg_out[2], out, len);
     sg_set_buf(&sg_out[3], mac, this->auth_size);
 
@@ -54,7 +61,7 @@ int aes_gcm_cipher_encrypt(struct aead_cipher *ac, char* data, int len, char* ke
         goto exit;
     }
     
-    aead_request_set_crypt(req, sg_in, sg_out, len, iv);
+    aead_request_set_crypt(req, sg_in, sg_out, len, riv);
     aead_request_set_ad(req, sizeof(uint64_t) + this->iv_size);
 
     r = crypto_aead_setkey(this->tfm, key, this->key_size);
@@ -79,8 +86,10 @@ exit:
 
 int aes_gcm_cipher_decrypt(struct aead_cipher *ac, char* data, int len, char* key, char* iv, char* mac, uint64_t seq, char* out) {
     int r = 0;
+    char *riv;
     uint32_t checksum = 0;
     struct aead_request* req;
+    char zero_iv[AES_GCM_IV_SIZE] = { 0 };
     struct scatterlist sg_in[AEAD_MSG_NR_PART], sg_out[AEAD_MSG_NR_PART];
     DECLARE_CRYPTO_WAIT(wait);
     struct aes_gcm_cipher* this = container_of(ac, struct aes_gcm_cipher, aead_cipher);
@@ -89,15 +98,20 @@ int aes_gcm_cipher_decrypt(struct aead_cipher *ac, char* data, int len, char* ke
     checksum = dm_bm_checksum(data, len, 0);
 #endif
 
+    if (iv)
+        riv = iv;
+    else
+        riv = zero_iv;
+
     sg_init_table(sg_in, AEAD_MSG_NR_PART);
     sg_set_buf(&sg_in[0], &seq, sizeof(uint64_t));
-    sg_set_buf(&sg_in[1], iv, this->iv_size);
+    sg_set_buf(&sg_in[1], riv, this->iv_size);
     sg_set_buf(&sg_in[2], data, len);
     sg_set_buf(&sg_in[3], mac, this->auth_size);
 
     sg_init_table(sg_out, AEAD_MSG_NR_PART);
     sg_set_buf(&sg_out[0], &seq, sizeof(uint64_t));
-    sg_set_buf(&sg_out[1], iv, this->iv_size);
+    sg_set_buf(&sg_out[1], riv, this->iv_size);
     sg_set_buf(&sg_out[2], out, len);
     sg_set_buf(&sg_out[3], mac, this->auth_size);
 
@@ -112,7 +126,7 @@ int aes_gcm_cipher_decrypt(struct aead_cipher *ac, char* data, int len, char* ke
         goto exit;
     }
 
-    aead_request_set_crypt(req, sg_in, sg_out, len + this->auth_size, iv);
+    aead_request_set_crypt(req, sg_in, sg_out, len + this->auth_size, riv);
     aead_request_set_ad(req, sizeof(uint64_t) + this->iv_size);
 
     r = crypto_aead_setkey(this->tfm, key, this->key_size);
@@ -129,7 +143,7 @@ int aes_gcm_cipher_decrypt(struct aead_cipher *ac, char* data, int len, char* ke
         char iv_hex[(AES_GCM_IV_SIZE << 1) + 1] = {0};
 
         btox(key_hex, key, AES_GCM_KEY_SIZE << 1);
-        btox(iv_hex, iv, AES_GCM_IV_SIZE << 1);
+        btox(iv_hex, riv, AES_GCM_IV_SIZE << 1);
         btox(mac_hex, mac, AES_GCM_AUTH_SIZE << 1);
         DMWARN("gcm(aes) authentication failed, key: %s, iv: %s, mac: %s, seq: %llu, checksum: %u", 
             key_hex, iv_hex, mac_hex, seq, checksum);
