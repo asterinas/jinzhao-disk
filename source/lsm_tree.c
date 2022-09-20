@@ -1208,6 +1208,7 @@ int lsm_tree_minor_compaction(struct lsm_tree* this) {
     struct journal_record j_record;
     struct memtable *memtable;
 
+    down_write(&this->im_lock);
     if (this->levels[0]->is_full(this->levels[0]))
         lsm_tree_major_compaction(this, 0);
 
@@ -1216,7 +1217,6 @@ int lsm_tree_minor_compaction(struct lsm_tree* this) {
     else
         memtable = this->memtable;
 
-    down_write(&this->im_lock);
     memtable->get_all_entry(memtable, &entries);
     this->catalogue->alloc_file(this->catalogue, &fd);
 

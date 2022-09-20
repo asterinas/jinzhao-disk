@@ -73,11 +73,11 @@ void sa_foreground_gc(struct segment_allocator* al) {
                 }
                 
                 sworndisk->meta->rit->get(sworndisk->meta->rit, pba, &lba);
-		down_write(&segbuf->rw_lock);
 		cur = segbuf->cur_buffer;
+		down_write(&segbuf->rw_lock[cur]);
                 sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &record);
 		if (record.pba != pba) {
-			up_write(&segbuf->rw_lock);
+			up_write(&segbuf->rw_lock[cur]);
 			offset = find_next_bit(victim.block_validity_table, BLOCKS_PER_SEGMENT, offset + 1);
 			continue;
 		}
@@ -85,9 +85,7 @@ void sa_foreground_gc(struct segment_allocator* al) {
                     record.key, NULL, record.mac, record.pba, plaintext);
                 if (!err)
                     sworndisk->seg_buffer->push_block(sworndisk->seg_buffer, lba, plaintext);
-		up_write(&segbuf->rw_lock);
-		if (cur != segbuf->cur_buffer)
-		    sworndisk->seg_buffer->flush_bios(sworndisk->seg_buffer, cur);
+		up_write(&segbuf->rw_lock[cur]);
                 offset = find_next_bit(victim.block_validity_table, BLOCKS_PER_SEGMENT, offset + 1);
             }
         }
@@ -143,20 +141,18 @@ void sa_background_gc(struct work_struct *ws)
 				offset = find_next_bit(victim.block_validity_table, BLOCKS_PER_SEGMENT, offset);
 				pba = victim.segno * BLOCKS_PER_SEGMENT + offset;
 				sworndisk->meta->rit->get(sworndisk->meta->rit, pba, &lba);
-				down_write(&segbuf->rw_lock);
 				cur = segbuf->cur_buffer;
+				down_write(&segbuf->rw_lock[cur]);
 				sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &record);
 				if (record.pba != pba) {
-					up_write(&segbuf->rw_lock);
+					up_write(&segbuf->rw_lock[cur]);
 					continue;
 				}
 				sworndisk_read_blocks(pba, 1, buffer, DM_IO_KMEM);
 				err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, record.key, NULL, record.mac, record.pba, buffer);
 				if (!err)
 					sworndisk->seg_buffer->push_block(sworndisk->seg_buffer, lba, buffer);
-				up_write(&segbuf->rw_lock);
-				if (cur != segbuf->cur_buffer)
-					sworndisk->seg_buffer->flush_bios(sworndisk->seg_buffer, cur);
+				up_write(&segbuf->rw_lock[cur]);
 			} while (++offset < BLOCKS_PER_SEGMENT);
 		}
 		err = sworndisk->meta->seg_validator->test_and_return(sworndisk->meta->seg_validator, victim.segno, &valid);

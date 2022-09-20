@@ -34,7 +34,7 @@ struct default_segment_buffer {
     void *buffer[POOL_SIZE], *pipe[POOL_SIZE];
     size_t cur_segment[POOL_SIZE];
     sector_t cur_sector[POOL_SIZE];
-    struct rw_semaphore rw_lock;
+    struct rw_semaphore rw_lock[POOL_SIZE];
 };
 
 struct segment_buffer* segbuf_create(void);
