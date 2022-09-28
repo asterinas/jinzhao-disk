@@ -39,7 +39,7 @@ void sa_foreground_gc(struct segment_allocator* al) {
     int err, cur;
     size_t clean = 0, target = LEAST_CLEAN_SEGMENT_ONCE * BLOCKS_PER_SEGMENT;
     struct victim victim, *p_victim = NULL;
-    void *buffer, *plaintext;
+    void *buffer;
     struct default_segment_allocator* this = container_of(al, struct default_segment_allocator, segment_allocator); 
     struct default_segment_buffer *segbuf = container_of(sworndisk->seg_buffer, struct default_segment_buffer, segment_buffer);
 
@@ -48,9 +48,11 @@ void sa_foreground_gc(struct segment_allocator* al) {
 
     this->status = SEGMENT_CLEANING;
 
-    buffer = vmalloc(SEGMENT_BUFFER_SIZE);
-    plaintext = kzalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
-    if (!buffer || !plaintext) goto exit;
+    buffer = kzalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
+    if (!buffer){
+	    DMERR("sa_foreground_gc kzalloc buffer failed\n");
+	    return;
+    }
     while(clean < target && !sworndisk->meta->dst->victim_empty(sworndisk->meta->dst)) {
         bool valid;
 
@@ -58,7 +60,6 @@ void sa_foreground_gc(struct segment_allocator* al) {
         // TODO: don't GC current segment buffer
         if (victim.nr_valid_block) {
             size_t offset;
-            unsigned int region_begin = 0, region_end = 0;
 
             offset = find_first_bit(victim.block_validity_table, BLOCKS_PER_SEGMENT);
             while(offset < BLOCKS_PER_SEGMENT) {
@@ -66,26 +67,22 @@ void sa_foreground_gc(struct segment_allocator* al) {
                 struct record record;
 
                 pba = victim.segno * BLOCKS_PER_SEGMENT + offset;
-                if (!offset_in_region(offset, region_begin, region_end)) {
-                    region_begin = offset;
-                    region_end = find_next_zero_bit(victim.block_validity_table, BLOCKS_PER_SEGMENT, region_begin);
-                    sworndisk_read_blocks(pba, region_end - region_begin, buffer + offset * DATA_BLOCK_SIZE, DM_IO_VMA);
-                }
-                
                 sworndisk->meta->rit->get(sworndisk->meta->rit, pba, &lba);
+		err = sworndisk->seg_buffer->query_block(sworndisk->seg_buffer, lba, buffer);
+		if (!err)
+			goto next;
+
 		cur = segbuf->cur_buffer;
 		down_write(&segbuf->rw_lock[cur]);
+		sworndisk_read_blocks(pba, 1, buffer, DM_IO_KMEM);
                 sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &record);
-		if (record.pba != pba) {
-			up_write(&segbuf->rw_lock[cur]);
-			offset = find_next_bit(victim.block_validity_table, BLOCKS_PER_SEGMENT, offset + 1);
-			continue;
-		}
-                err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer + offset * DATA_BLOCK_SIZE, DATA_BLOCK_SIZE, 
-                    record.key, NULL, record.mac, record.pba, plaintext);
+                err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE,
+						 record.key, NULL, record.mac,
+						 record.pba, buffer);
                 if (!err)
-                    sworndisk->seg_buffer->push_block(sworndisk->seg_buffer, lba, plaintext);
+                    sworndisk->seg_buffer->push_block(sworndisk->seg_buffer, lba, buffer);
 		up_write(&segbuf->rw_lock[cur]);
+next:
                 offset = find_next_bit(victim.block_validity_table, BLOCKS_PER_SEGMENT, offset + 1);
             }
         }
@@ -101,13 +98,8 @@ void sa_foreground_gc(struct segment_allocator* al) {
         victim_destroy(p_victim);
     }
 
-exit:
-    if (buffer)
-        vfree(buffer);
-    if (plaintext)
-        kfree(plaintext);
-
     this->status = SEGMENT_ALLOCATING;
+    kfree(buffer);
 }
 
 void sa_background_gc(struct work_struct *ws)
@@ -141,15 +133,18 @@ void sa_background_gc(struct work_struct *ws)
 				offset = find_next_bit(victim.block_validity_table, BLOCKS_PER_SEGMENT, offset);
 				pba = victim.segno * BLOCKS_PER_SEGMENT + offset;
 				sworndisk->meta->rit->get(sworndisk->meta->rit, pba, &lba);
+				err = sworndisk->seg_buffer->query_block(sworndisk->seg_buffer, lba, buffer);
+				if (!err)
+					continue;
+
 				cur = segbuf->cur_buffer;
 				down_write(&segbuf->rw_lock[cur]);
-				sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &record);
-				if (record.pba != pba) {
-					up_write(&segbuf->rw_lock[cur]);
-					continue;
-				}
 				sworndisk_read_blocks(pba, 1, buffer, DM_IO_KMEM);
-				err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, record.key, NULL, record.mac, record.pba, buffer);
+				sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &record);
+				err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer,
+								 DATA_BLOCK_SIZE, record.key,
+								 NULL, record.mac, record.pba,
+								 buffer);
 				if (!err)
 					sworndisk->seg_buffer->push_block(sworndisk->seg_buffer, lba, buffer);
 				up_write(&segbuf->rw_lock[cur]);

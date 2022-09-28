@@ -78,13 +78,14 @@ void sworndisk_read_blocks(dm_block_t blkaddr, size_t count, void* buffer, enum 
 }
 
 void sworndisk_write_blocks(dm_block_t blkaddr, size_t count, void* buffer, enum dm_io_mem_type mem_type) {
+	sworndisk_block_io(blkaddr, count, buffer, mem_type, REQ_OP_WRITE);
+
+#if ENABLE_JOURNAL
 	uint64_t i, ts;
 	dm_block_t lba, hba;
 	struct record d_record;
 	struct journal_region *journal;
 	struct journal_record j_record;
-
-	sworndisk_block_io(blkaddr, count, buffer, mem_type, REQ_OP_WRITE);
 
 	hba = blkaddr;
 	journal = sworndisk->meta->journal;
@@ -103,6 +104,7 @@ void sworndisk_write_blocks(dm_block_t blkaddr, size_t count, void* buffer, enum
 
 		journal->jops->add_record(journal, &j_record);
 	}
+#endif
 }
 
 #define THREAD_LOGGING_AHEAD 1
@@ -177,33 +179,43 @@ int bio_prefetcher_get(struct bio_prefetcher* this, dm_block_t blkaddr, void* bu
     return err;
 }
 
-void sworndisk_do_read(struct bio* bio) {
-    int err = 0;
-    struct record record;
-    void* buffer = kmalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
+void sworndisk_do_read(struct bio* bio)
+{
+	int err = 0;
+//	struct record old;
+	struct record *old;
+	struct memtable *results;
+	dm_block_t start = bio_get_block_address(bio);
+	int count = bio->bi_iter.bi_size / DATA_BLOCK_SIZE;
 
-    err = sworndisk->lsm_tree->search(sworndisk->lsm_tree, bio_get_block_address(bio), &record);
-    if (err) {
-        bio_endio(bio);
-        goto exit;
-    }
+	results = sworndisk->lsm_tree->range_search(sworndisk->lsm_tree, start,
+						    start + count - 1);
+	while (bio->bi_iter.bi_size) {
+		struct bio_vec bv = bio_iter_iovec(bio, bio->bi_iter);
+		dm_block_t lba = bio_get_block_address(bio);
+		void *data_out = page_address(bv.bv_page);
 
-    err = sworndisk->seg_buffer->query_bio(sworndisk->seg_buffer, bio, record.pba);
-    if (!err) {
-        bio_endio(bio);
-        goto exit;
-    }
-
-//    bio_prefetcher_get(&sworndisk->prefetcher, record.pba, buffer, DM_IO_KMEM);
-    sworndisk_read_blocks(record.pba, 1, buffer, DM_IO_KMEM);
-    err = sworndisk->cipher->decrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE, record.key, NULL, record.mac, record.pba, buffer);
-    if (!err)
-        bio_set_data(bio, buffer + bio_block_sector_offset(bio) * SECTOR_SIZE, bio_get_data_len(bio));
-    bio_endio(bio);
-
-exit:
-    if (buffer)
-        kfree(buffer);
+		err = sworndisk->seg_buffer->query_block(sworndisk->seg_buffer,
+							 lba, data_out);
+		if (!err)
+			goto next;
+//		err = sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &old);
+//		if (err)
+//			goto next;
+		if (results)
+			err = results->get(results, lba, (void **)&old);
+		if (!results || err)
+			goto next;
+		sworndisk_read_blocks(old->pba, 1, data_out, DM_IO_KMEM);
+		err = sworndisk->cipher->decrypt(sworndisk->cipher, data_out,
+						 DATA_BLOCK_SIZE, old->key, NULL,
+						 old->mac, old->pba, data_out);
+		if (err)
+			DMERR("sworndisk_do_read decrypt data failed\n");
+	next:
+		bio_advance_iter(bio, &bio->bi_iter, DATA_BLOCK_SIZE);
+	}
+	bio_endio(bio);
 }
 
 void async_read(void* context) {
@@ -389,15 +401,13 @@ void flush_and_commit(struct dm_sworndisk *sworndisk, struct bio *bio)
 
 static int dm_sworndisk_target_map(struct dm_target *target, struct bio *bio)
 {
-    sector_t block_aligned;
     struct dm_sworndisk* sworndisk;
 
     sworndisk = target->private;    
     bio_set_dev(bio, sworndisk->raw_dev->bdev);
 
-    block_aligned = SECTORS_PER_BLOCK - bio_block_sector_offset(bio);
-    if (bio_sectors(bio) > block_aligned)
-        dm_accept_partial_bio(bio, block_aligned);
+    if (unlikely(bio->bi_iter.bi_size > (MAX_NR_FETCH * DATA_BLOCK_SIZE)))
+        dm_accept_partial_bio(bio, (MAX_NR_FETCH * SECTORS_PER_BLOCK));
 
     switch (bio_op(bio)) {
         case REQ_OP_READ:

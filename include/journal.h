@@ -7,6 +7,7 @@
 #include "segment_buffer.h"
 #include "metadata.h"
 
+#define ENABLE_JOURNAL 0
 #define JOURNAL_BLOCK_SIZE 4096
 #define RECORDS_PER_BLOCK ((JOURNAL_BLOCK_SIZE - 2 * sizeof(struct crypto_info)) \
 				/ sizeof(struct journal_record))

@@ -20,141 +20,233 @@ void btox(char *xp, const char *bb, int n)  {
     while (--n >= 0) xp[n] = xx[(bb[n>>1] >> ((1 - (n&1)) << 2)) & 0xF];
 }
 
-int segbuf_push_bio(struct segment_buffer* buf, struct bio *bio) {
-    int err = 0, cur;
-    void *buffer, *pipe;
-    struct record record = {0};
-    dm_block_t lba = bio_get_block_address(bio);
-    struct default_segment_buffer* this = container_of(buf, struct default_segment_buffer, segment_buffer);
+struct segment_block *segment_block_new(uint32_t lba)
+{
+	struct segment_block *blk = kzalloc(sizeof(struct segment_block), GFP_KERNEL);
 
-    cur = this->cur_buffer;
-    down_write(&this->rw_lock[cur]);
-
-    err = sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &record);
-    if (!err && this->cur_segment[cur] == (record.pba >> 10)) {
-        buffer = this->buffer[cur] + (record.pba % BLOCKS_PER_SEGMENT) * DATA_BLOCK_SIZE;
-        pipe = this->pipe[cur] + (record.pba % BLOCKS_PER_SEGMENT) * DATA_BLOCK_SIZE;
-        bio_get_data(bio, buffer + bio_block_sector_offset(bio) * SECTOR_SIZE, bio_get_data_len(bio));
-        sworndisk->cipher->encrypt(sworndisk->cipher, buffer, DATA_BLOCK_SIZE,
-                record.key, NULL, record.mac, record.pba, pipe);
-        sworndisk->lsm_tree->put(sworndisk->lsm_tree, lba, record_copy(&record));
-        up_write(&this->rw_lock[cur]);
-        return MODIFY_IN_MEM_BUFFER;
-    }
-
-    buffer = this->buffer[cur] + this->cur_sector[cur] * SECTOR_SIZE;
-    bio_get_data(bio, buffer + bio_block_sector_offset(bio) * SECTOR_SIZE, bio_get_data_len(bio));
-    buf->push_block(buf, lba, buffer);
-    up_write(&this->rw_lock[cur]);
-
-    sworndisk->seg_allocator->foreground_gc(sworndisk->seg_allocator);
-    return PUSH_NEW_BLOCK;
+	if (!blk) {
+		DMERR("segment_block_new kzalloc segment_block failed\n");
+		return NULL;
+	}
+	blk->lba = lba;
+	blk->plain_block = kzalloc(DATA_BLOCK_SIZE, GFP_KERNEL);
+	if (!blk->plain_block) {
+		DMERR("segment_block_new kzalloc plain_block failed\n");
+		kfree(blk);
+		return NULL;
+	}
+	return blk;
 }
 
-dm_block_t next_block(struct default_segment_buffer* this, int index, bool threaded_logging)
+void segment_block_delete(struct segment_block *blk)
 {
-    struct victim victim;
-    size_t offset;
-    dm_block_t blkaddr;
+	if (blk) {
+		kfree(blk->plain_block);
+		kfree(blk);
+	}
+}
+int segment_block_cmp_key(const void *key, const struct rb_node *node)
+{
+	struct segment_block *blk = rb_entry(node, struct segment_block, node);
 
-    if (!threaded_logging)
-        return (this->cur_segment[index] * SECTOES_PER_SEGMENT + this->cur_sector[index]) / SECTORS_PER_BLOCK;
-    
-    victim = *sworndisk->meta->dst->peek_victim(sworndisk->meta->dst);
-    offset = find_first_zero_bit(victim.block_validity_table, BLOCKS_PER_SEGMENT);
-    blkaddr = victim.segno * BLOCKS_PER_SEGMENT + offset;
-    sworndisk->meta->dst->take_block(sworndisk->meta->dst, blkaddr);
-    return blkaddr;
-} 
+	return (int64_t)(*(uint32_t *)key) - (int64_t)(blk->lba);
+}
+
+struct segment_block *data_segment_get(struct data_segment *ds, uint32_t lba)
+{
+	struct rb_node *node;
+
+	node = rb_find(&lba, &ds->root, segment_block_cmp_key);
+	if (node) {
+		return rb_entry(node, struct segment_block, node);
+	} else
+		return NULL;
+}
+
+void data_segment_remove(struct data_segment *ds, struct segment_block *blk)
+{
+	rb_erase(&blk->node, &ds->root);
+	ds->size -= 1;
+	segment_block_delete(blk);
+}
+
+int segment_block_cmp_node(struct rb_node *node, const struct rb_node *parent)
+{
+	struct segment_block *node_blk = rb_entry(node, struct segment_block, node);
+	struct segment_block *node_parent = rb_entry(parent, struct segment_block, node);
+
+	return (int64_t)node_blk->lba - (int64_t)node_parent->lba;
+}
+
+void data_segment_add(struct data_segment *ds, struct segment_block *blk)
+{
+	struct rb_node *old;
+	struct segment_block *old_blk;
+
+	old = rb_find_add(&blk->node, &ds->root, segment_block_cmp_node);
+	if (old) {
+		old_blk = rb_entry(old, struct segment_block, node);
+		rb_erase(old, &ds->root);
+		segment_block_delete(old_blk);
+	} else
+		ds->size += 1;
+}
+
+int data_segment_init(struct data_segment *ds)
+{
+	int err = 0;
+
+	ds->size = 0;
+	ds->root = RB_ROOT;
+	get_random_bytes(ds->seg_key, sizeof(ds->seg_key));
+	ds->cipher_segment = vmalloc(SEGMENT_BUFFER_SIZE);
+	if (!ds->cipher_segment) {
+		DMERR("data_segment_init failed\n");
+		return -ENOMEM;
+	}
+	err = sworndisk->seg_allocator->alloc(sworndisk->seg_allocator,
+					      &ds->cur_segment);
+	return err;
+}
+
+void data_segment_destroy(struct data_segment *ds)
+{
+	struct segment_block *blk;
+
+	if (ds->cipher_segment)
+		vfree(ds->cipher_segment);
+	while (!RB_EMPTY_ROOT(&ds->root)) {
+		blk = rb_entry(rb_first(&ds->root), struct segment_block, node);
+		rb_erase(&blk->node, &ds->root);
+		segment_block_delete(blk);
+	}
+}
+
+int segbuf_push_bio(struct segment_buffer* buf, struct bio *bio)
+{
+	struct default_segment_buffer* this = container_of(buf, struct default_segment_buffer,
+							   segment_buffer);
+
+	while (bio->bi_iter.bi_size) {
+		struct bio_vec bv = bio_iter_iovec(bio, bio->bi_iter);
+		dm_block_t lba = bio_get_block_address(bio);
+		struct segment_block *blk = NULL;
+		int cur = this->cur_buffer;
+		void *data_in = page_address(bv.bv_page);
+
+		down_write(&this->rw_lock[cur]);
+		blk = data_segment_get(&this->buffer[cur], lba);
+		if (blk) {
+			memcpy(blk->plain_block, data_in, DATA_BLOCK_SIZE);
+		} else {
+			buf->push_block(buf, lba, data_in);
+		}
+		up_write(&this->rw_lock[cur]);
+
+		bio_advance_iter(bio, &bio->bi_iter, DATA_BLOCK_SIZE);
+	}
+
+	sworndisk->seg_allocator->foreground_gc(sworndisk->seg_allocator);
+	return 0;
+}
 
 void bufferio_handler(struct work_struct *ws)
 {
 	struct bufferio_work *bw = container_of(ws, struct bufferio_work, work);
 	struct segment_buffer *buf = bw->segbuf;
-	struct default_segment_buffer *this = container_of(buf, struct default_segment_buffer, segment_buffer);
+	struct default_segment_buffer *this = container_of(buf, struct default_segment_buffer,
+							   segment_buffer);
 	down_read(&this->rw_lock[bw->index]);
 	buf->flush_bios(buf, bw->index);
 	up_read(&this->rw_lock[bw->index]);
 	kfree(bw);
 }
 
-void segbuf_push_block(struct segment_buffer* buf, dm_block_t lba, void* buffer)
+void segbuf_push_block(struct segment_buffer *buf, dm_block_t lba, void *buffer)
 {
-    int err = 0;
-    dm_block_t pba;
-    void *pipe = NULL, *block = NULL;
-    struct record *record, pre;
-    struct bufferio_work *bw;
-    struct default_segment_buffer* this = container_of(buf, struct default_segment_buffer, segment_buffer);
-    bool threaded_logging = sworndisk_should_threaded_logging();
-    int cur = this->cur_buffer;
+	struct default_segment_buffer* this = container_of(buf, struct default_segment_buffer,
+							   segment_buffer);
+	struct bufferio_work *bw;
+	struct segment_block *blk;
+	int cur = this->cur_buffer;
 
-    err = sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &pre);
-    if (!err)
-        sworndisk->meta->dst->return_block(sworndisk->meta->dst, pre.pba);
+	blk = segment_block_new(lba);
+	if (!blk) {
+		return;
+	}
+	memcpy(blk->plain_block, buffer, DATA_BLOCK_SIZE);
+	data_segment_add(&this->buffer[cur], blk);
+	if (this->buffer[cur].size >= BLOCKS_PER_SEGMENT) {
+		bw = kzalloc(sizeof(struct bufferio_work), GFP_KERNEL);
+		bw->segbuf = buf;
+		bw->index = cur;
+		INIT_WORK(&bw->work, bufferio_handler);
+		queue_work(bufferio_wq, &bw->work);
 
-    pba = next_block(this, cur, threaded_logging);
-    record = record_create(pba, this->seg_key, NULL);
-    block = this->buffer[cur] + this->cur_sector[cur] * SECTOR_SIZE;
-    if (block != buffer)
-	memmove(block, buffer, DATA_BLOCK_SIZE);
-
-    pipe = this->pipe[cur] + this->cur_sector[cur] * SECTOR_SIZE;
-    sworndisk->cipher->encrypt(sworndisk->cipher, block, DATA_BLOCK_SIZE, 
-			record->key, NULL, record->mac, record->pba, pipe);
-
-    sworndisk->lsm_tree->put(sworndisk->lsm_tree, lba, record);
-    sworndisk->meta->rit->set(sworndisk->meta->rit, pba, lba);
-
-    if (threaded_logging) {
-        sworndisk_write_blocks(pba, 1, pipe, DM_IO_VMA);
-        return;
-    }
-
-    this->cur_sector[cur] += SECTORS_PER_BLOCK;
-    if (this->cur_sector[cur] >= SECTOES_PER_SEGMENT) {
-        bw = kzalloc(sizeof(struct bufferio_work), GFP_KERNEL);
-	bw->segbuf = buf;
-	bw->index = cur;
-	INIT_WORK(&bw->work, bufferio_handler);
-	queue_work(bufferio_wq, &bw->work);
-
-	this->cur_buffer = (cur + 1) % POOL_SIZE;
-	down_write(&this->rw_lock[this->cur_buffer]);
-        sworndisk->seg_allocator->alloc(sworndisk->seg_allocator, &this->cur_segment[this->cur_buffer]);
-	this->cur_sector[this->cur_buffer] = 0;
-	get_random_bytes(this->seg_key, sizeof(this->seg_key));
-	up_write(&this->rw_lock[this->cur_buffer]);
-    }
+		this->cur_buffer = (cur + 1) % POOL_SIZE;
+		down_write(&this->rw_lock[this->cur_buffer]);
+		if (this->buffer[this->cur_buffer].size > 0)
+			data_segment_destroy(&this->buffer[this->cur_buffer]);
+		data_segment_init(&this->buffer[this->cur_buffer]);
+		up_write(&this->rw_lock[this->cur_buffer]);
+	}
 }
 
-void segbuf_flush_bios(struct segment_buffer* buf, int index) {
-    struct default_segment_buffer* this = container_of(buf, struct default_segment_buffer, segment_buffer);
-    dm_block_t blkaddr = this->cur_segment[index] * BLOCKS_PER_SEGMENT;
-    size_t count = (this->cur_sector[index] - 1) / SECTORS_PER_BLOCK + 1;
+void segbuf_flush_bios(struct segment_buffer* buf, int index)
+{
+	struct default_segment_buffer* this = container_of(buf, struct default_segment_buffer,
+							   segment_buffer);
+	struct data_segment *ds = &this->buffer[index];
+	dm_block_t blkaddr = ds->cur_segment * BLOCKS_PER_SEGMENT;
+	size_t count = ds->size;
+	struct record *new, old;
+	struct segment_block *blk;
+	struct rb_node *node;
+	dm_block_t pba;
+	int err = 0, i = 0;
 
-    if (this->cur_sector[index])
-	    sworndisk_write_blocks(blkaddr, count, this->pipe[index], DM_IO_VMA);
+	if (!count)
+		return;
+
+	for (node = rb_first(&ds->root); node; node = rb_next(node), i++) {
+		blk = rb_entry(node, struct segment_block, node);
+
+		err = sworndisk->lsm_tree->search(sworndisk->lsm_tree, blk->lba, &old);
+		if (!err)
+			sworndisk->meta->dst->return_block(sworndisk->meta->dst, old.pba);
+
+		pba = blkaddr + i;
+		new = record_create(pba, ds->seg_key, NULL);
+		sworndisk->cipher->encrypt(sworndisk->cipher, (char *)blk->plain_block,
+					   DATA_BLOCK_SIZE, new->key, NULL, new->mac,
+					   new->pba, (char *)(ds->cipher_segment) +
+					   i * DATA_BLOCK_SIZE);
+		sworndisk->lsm_tree->put(sworndisk->lsm_tree, blk->lba, new);
+		sworndisk->meta->rit->set(sworndisk->meta->rit, pba, blk->lba);
+	}
+	sworndisk_write_blocks(blkaddr, count, ds->cipher_segment, DM_IO_VMA);
 }
 
-int segbuf_query_bio(struct segment_buffer* buf, struct bio* bio, dm_block_t pba) {
-    struct default_segment_buffer* this = container_of(buf, struct default_segment_buffer, segment_buffer);
-    int i, j, index;
+int segbuf_query_block(struct segment_buffer* buf, uint32_t lba, void *data_out)
+{
+	struct default_segment_buffer* this = container_of(buf, struct default_segment_buffer,
+							   segment_buffer);
+	struct segment_block *blk;
+	int i, j, index;
 
-    for (i = 0, j = this->cur_buffer + POOL_SIZE; i < POOL_SIZE; i++) {
-	    index = (j - i) % POOL_SIZE;
-	    down_read(&this->rw_lock[index]);
-	    if (this->cur_segment[index] == pba >> 10)
-		    break;
-	    up_read(&this->rw_lock[index]);
-	    index = -1;
-    }
-    if (index < 0) {
-	    return -ENODATA;
-    }
-    bio_set_data(bio, this->buffer[index] + (pba % BLOCKS_PER_SEGMENT) * DATA_BLOCK_SIZE, bio_get_data_len(bio));
-    up_read(&this->rw_lock[index]);
-    return 0;
+	for (i = 0, j = this->cur_buffer + POOL_SIZE; i < POOL_SIZE; i++) {
+		index = (j - i) % POOL_SIZE;
+
+		down_read(&this->rw_lock[index]);
+		blk = data_segment_get(&this->buffer[index], lba);
+		if (blk) {
+			memcpy(data_out, blk->plain_block, DATA_BLOCK_SIZE);
+			up_read(&this->rw_lock[index]);
+			return 0;
+		}
+		up_read(&this->rw_lock[index]);
+	}
+	return -ENODATA;
 }
 
 void* segbuf_implementer(struct segment_buffer* buf) {
@@ -167,16 +259,14 @@ void segbuf_destroy(struct segment_buffer* buf) {
 	int i;
 	struct default_segment_buffer* this = container_of(buf, struct default_segment_buffer, segment_buffer);
 
+	buf->flush_bios(buf, this->cur_buffer);
+
 	if (bufferio_wq)
 		destroy_workqueue(bufferio_wq);
 
 	for (i = 0; i < POOL_SIZE; i++)
-		buf->flush_bios(buf, i);
+		data_segment_destroy(&this->buffer[i]);
 
-	for (i = 0; i < POOL_SIZE; i++) {
-		vfree(this->buffer[i]);
-		vfree(this->pipe[i]);
-	}
 	kfree(this);
 }
 
@@ -190,33 +280,17 @@ int segbuf_init(struct default_segment_buffer *buf)
 		err = -EAGAIN;
 		goto bad;
 	}
-	for (i = 0; i < POOL_SIZE; i++) {
-		buf->cur_segment[i] = INF_SEGNO;
-		buf->cur_sector[i] = 0;
+	for (i = 0; i < POOL_SIZE; i++)
 		init_rwsem(&buf->rw_lock[i]);
 
-		buf->buffer[i] = vmalloc(SEGMENT_BUFFER_SIZE);
-		if (!buf->buffer[i]) {
-			err = -ENOMEM;
-			goto bad;
-		}
-
-		buf->pipe[i] = vmalloc(SEGMENT_BUFFER_SIZE);
-		if (!buf->pipe[i]) {
-			err = -ENOMEM;
-			goto bad;
-		}
-	}
-	get_random_bytes(buf->seg_key, sizeof(buf->seg_key));
 	buf->cur_buffer = 0;
-	err = sworndisk->seg_allocator->alloc(sworndisk->seg_allocator,
-					      &buf->cur_segment[0]);
+	err = data_segment_init(&buf->buffer[0]);
 	if (err)
 		goto bad;
 
 	buf->segment_buffer.push_bio = segbuf_push_bio;
 	buf->segment_buffer.push_block = segbuf_push_block;
-	buf->segment_buffer.query_bio = segbuf_query_bio;
+	buf->segment_buffer.query_block = segbuf_query_block;
 	buf->segment_buffer.flush_bios = segbuf_flush_bios;
 	buf->segment_buffer.implementer = segbuf_implementer;
 	buf->segment_buffer.destroy = segbuf_destroy;
@@ -225,12 +299,9 @@ int segbuf_init(struct default_segment_buffer *buf)
 bad:
 	if (bufferio_wq)
 		destroy_workqueue(bufferio_wq);
-	for (i = 0; i < POOL_SIZE; i++) {
-		if (buf->buffer[i])
-			vfree(buf->buffer[i]);
-		if (buf->pipe[i])
-			vfree(buf->pipe[i]);
-	}
+
+	data_segment_destroy(&buf->buffer[0]);
+
 	return err;
 }
 

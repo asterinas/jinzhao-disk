@@ -1,7 +1,5 @@
 #include "../include/metadata.h"
 
-#define ENABLE_JOURNAL 1
-
 struct journal_ctx {
 	int bi_op;
 	int blk_num;

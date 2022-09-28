@@ -175,6 +175,7 @@ struct lsm_tree {
     struct file* file;
     struct lsm_catalogue* catalogue;
     struct memtable* memtable;
+    struct rw_semaphore m_lock;
     struct memtable* immutable_memtable;
     struct rw_semaphore im_lock;
     struct lsm_level** levels;
@@ -183,6 +184,7 @@ struct lsm_tree {
 
     void (*put)(struct lsm_tree* this, uint32_t key, void* val);
     int (*search)(struct lsm_tree* this, uint32_t key, void* val);
+    struct memtable *(*range_search)(struct lsm_tree *this, uint32_t start, uint32_t end);
     void (*destroy)(struct lsm_tree* this);
 };
 
