@@ -416,15 +416,20 @@ struct entry __entry(memtable_key_t key, void* val) {
 
 int bit_leaf_search(struct bit_leaf* leaf, uint32_t key, struct record* record) {
     size_t i;
+    bool found = false;
+    struct lsm_tree *lt = sworndisk->lsm_tree;
 
     for (i = 0; i < leaf->nr_record; ++i) {
+        lt->cache->put(lt->cache, leaf->keys[i], record_copy(&leaf->records[i]), record_destroy);
         if (leaf->keys[i] == key) {
             *record = leaf->records[i];
-            return 0;
+            found = true;
         }
     }
-
-    return -ENODATA;
+    if (found)
+        return 0;
+    else
+        return -ENODATA;
 }
 
 uint32_t bit_leaf_range_search(struct bit_leaf *leaf, uint32_t start, uint32_t end,
@@ -491,27 +496,33 @@ int bit_file_first_leaf(struct bit_file* this, struct bit_leaf* leaf) {
 }
 
 int bit_file_search(struct lsm_file* lsm_file, uint32_t key, void* val) {
-    int err = 0;
+    int err = 0, i;
     struct bit_leaf leaf;
     struct bit_file* this = container_of(lsm_file, struct bit_file, lsm_file);
 
     if (!bloom_filter_contains(this->filter, &key, sizeof(uint32_t)))
         return -ENODATA;
 
-    down_read(&this->lock);
-    err = bit_leaf_search(&this->cached_leaf, key, val);
-    up_read(&this->lock);
-    if (!err) 
-        return 0;
+//    down_read(&this->lock);
+//    err = bit_leaf_search(&this->cached_leaf, key, val);
+//    up_read(&this->lock);
+//    if (!err) 
+//        return 0;
 
     err = bit_file_search_leaf(this, key, &leaf);
     if (err)
         return err;
 
-    down_write(&this->lock);
-    this->cached_leaf = leaf;
-    up_write(&this->lock);
-    return bit_leaf_search(&leaf, key, val);
+    for (i = 0; i < leaf.nr_record; ++i) {
+        if (leaf.keys[i] == key) {
+            *(struct record*)val = leaf.records[i];
+            break;
+        }
+    }
+//    down_write(&this->lock);
+//    this->cached_leaf = leaf;
+//    up_write(&this->lock);
+    return 0;
 }
 
 uint32_t bit_file_range_search(struct lsm_file *lsm_file, uint32_t start,
@@ -694,7 +705,7 @@ int bit_file_init(struct bit_file* this, struct file* file, loff_t root, size_t 
     this->last_key = last_key;
     memcpy(this->root_key, root_key, AES_GCM_KEY_SIZE);
     init_rwsem(&this->lock);
-    this->cached_leaf.nr_record = 0;
+//    this->cached_leaf.nr_record = 0;
     this->filter_begin = filter_begin;
     this->filter = bit_bloom_filter_create();
     bloom_filter_load(this->filter, file, filter_begin);
@@ -1328,17 +1339,17 @@ void minor_compaction_handler(struct work_struct *ws)
 	up_read(&this->im_lock);
 	kfree(cw);
 }
-
 int lsm_tree_search(struct lsm_tree* this, uint32_t key, void* val) {
     int err = 0;
     size_t i;
     struct record* record;
 
-    // record = this->cache->get(this->cache, key);
-    // if (record) {
-    //     *(struct record*)val = *record;
-    //     return 0;
-    // }
+    record = this->cache->get(this->cache, key);
+    if (record) {
+//	DMINFO("lru cache hit key:%d pba:%lld\n", key, record->pba);
+	*(struct record*)val = *record;
+	return 0;
+    }
 
     down_read(&this->m_lock);
     err = this->memtable->get(this->memtable, key, (void**)&record);
@@ -1379,7 +1390,7 @@ void lsm_tree_put(struct lsm_tree* this, uint32_t key, void* val) {
     record = this->memtable->put(this->memtable, key, val, record_destroy);
     if (record)
         record_destroy(record);
-    // this->cache->put(this->cache, key, record_copy(val), record_destroy);
+    this->cache->put(this->cache, key, record_copy(val), record_destroy);
 
     if (this->memtable->size >= DEFAULT_MEMTABLE_CAPACITY) {
         down_write(&this->im_lock);
@@ -1528,7 +1539,7 @@ int lsm_tree_init(struct lsm_tree* this, const char* filename, struct lsm_catalo
         kfree(stat);
     }
 
-    // this->cache = lru_cache_create(DEFAULT_LSM_FILE_CAPACITY << 4);
+    this->cache = lru_cache_create(DEFAULT_LRU_CACHE_CAPACITY);
     this->put = lsm_tree_put;
     this->search = lsm_tree_search;
     this->range_search = lsm_tree_range_search;

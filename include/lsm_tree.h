@@ -179,7 +179,7 @@ struct lsm_tree {
     struct memtable* immutable_memtable;
     struct rw_semaphore im_lock;
     struct lsm_level** levels;
-    // struct cache* cache;
+    struct cache* cache;
     struct aead_cipher* cipher;
 
     void (*put)(struct lsm_tree* this, uint32_t key, void* val);

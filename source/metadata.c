@@ -585,24 +585,22 @@ int dst_return_block(struct dst* this, dm_block_t blkaddr) {
 	segno = __block_to_segment(blkaddr);
 	offset = __block_offset_whthin_segment(blkaddr);
 
+	down_write(&this->dst_lock);
 	err = this->array->get(this->array, segno, &entry);
-	if (err)
-		return err;
-
-	if (!entry.nr_valid_block)
-		return -EINVAL;
+	if (err || !entry.nr_valid_block)
+		goto out;
 
 	entry.nr_valid_block -= 1;
 	bitmap_clear(entry.block_validity_table, offset, 1);
 
 	err = this->array->set(this->array, segno, &entry);
 	if (err) 
-		return err;
+		goto out;
 
 	err = dst_update_victim(this, segno, entry.nr_valid_block, entry.block_validity_table);
-	if (err)
-		return err;
 
+out:
+	up_write(&this->dst_lock);
 	return err;
 }
 
@@ -693,6 +691,7 @@ int dst_init(struct dst* this, struct dm_block_manager* bm, dm_block_t start,
 	this->remove_victim = dst_remove_victim;
 	this->format = dst_format;
 
+	init_rwsem(&this->dst_lock);
 	this->bm = bm;
 	this->start = start;
 	this->nr_segment = nr_segment;

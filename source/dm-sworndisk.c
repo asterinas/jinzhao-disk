@@ -182,14 +182,14 @@ int bio_prefetcher_get(struct bio_prefetcher* this, dm_block_t blkaddr, void* bu
 void sworndisk_do_read(struct bio* bio)
 {
 	int err = 0;
-//	struct record old;
-	struct record *old;
-	struct memtable *results;
-	dm_block_t start = bio_get_block_address(bio);
-	int count = bio->bi_iter.bi_size / DATA_BLOCK_SIZE;
-
-	results = sworndisk->lsm_tree->range_search(sworndisk->lsm_tree, start,
-						    start + count - 1);
+	struct record old;
+//	struct record *old;
+//	struct memtable *results;
+//	dm_block_t start = bio_get_block_address(bio);
+//	int count = bio->bi_iter.bi_size / DATA_BLOCK_SIZE;
+//
+//	results = sworndisk->lsm_tree->range_search(sworndisk->lsm_tree, start,
+//						    start + count - 1);
 	while (bio->bi_iter.bi_size) {
 		struct bio_vec bv = bio_iter_iovec(bio, bio->bi_iter);
 		dm_block_t lba = bio_get_block_address(bio);
@@ -199,17 +199,17 @@ void sworndisk_do_read(struct bio* bio)
 							 lba, data_out);
 		if (!err)
 			goto next;
-//		err = sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &old);
-//		if (err)
-//			goto next;
-		if (results)
-			err = results->get(results, lba, (void **)&old);
-		if (!results || err)
+		err = sworndisk->lsm_tree->search(sworndisk->lsm_tree, lba, &old);
+		if (err)
 			goto next;
-		sworndisk_read_blocks(old->pba, 1, data_out, DM_IO_KMEM);
+//		if (results)
+//			err = results->get(results, lba, (void **)&old);
+//		if (!results || err)
+//			goto next;
+		sworndisk_read_blocks(old.pba, 1, data_out, DM_IO_KMEM);
 		err = sworndisk->cipher->decrypt(sworndisk->cipher, data_out,
-						 DATA_BLOCK_SIZE, old->key, NULL,
-						 old->mac, old->pba, data_out);
+						 DATA_BLOCK_SIZE, old.key, NULL,
+						 old.mac, old.pba, data_out);
 		if (err)
 			DMERR("sworndisk_do_read decrypt data failed\n");
 	next:

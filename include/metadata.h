@@ -127,6 +127,7 @@ struct dst {
 	struct rb_node** node_list;
 	struct rb_root victims;
 	struct dm_block_manager* bm;
+	struct rw_semaphore dst_lock;
 
 	int (*format)(struct dst* this);
 	int (*load)(struct dst* this);
