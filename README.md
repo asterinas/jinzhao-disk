@@ -40,4 +40,4 @@ This repository contains not only the Linux kernel module source of JinDisk, but
 
 - `kernel-module`: the Linux kernel module source, only contains the [C implementation](kernel-module/c/README.md) now; however, the Rust one is also in the development process, which is based on the [Rust for Linux](https://github.com/Rust-for-Linux/linux) project.
 
-- `setup-tool`: a utility (set) used to conveniently set up disk encryption based on the JinDisk. Refer to the README to configure and deploy a confidential VM image from the Guest Owner's perspective.
+- `setup-tool`: a utility (set) used to conveniently set up disk encryption based on the JinDisk. Refer to the [README](setup-tool/README.md) to configure and deploy a confidential VM image from the Guest Owner's perspective.

@@ -1,0 +1,35 @@
+#!/bin/sh
+# Example of jindisk unlocking boot script
+# This script should be in /etc/initramfs-tools/scripts/init-premount
+
+prereqs()
+{
+	echo "$PREREQ"
+}
+
+case $1 in
+prereqs)
+	prereqs
+	exit 0
+	;;
+esac
+
+. /scripts/functions
+
+# Begin real processing below this line
+
+if [ ! -x "/sbin/jindisk_unlocking" ]; then
+	panic "jindisk unlocking executable not found"
+fi
+
+
+log_begin_msg "Mounting jindisk rootfs"
+/sbin/jindisk_unlocking || panic "jindisk unlocking failed"
+log_end_msg
+
+
+if [ ! -e "/dev/mapper/jindisk_rootfs" ]; then
+	panic "jindisk rootfs dm target not found"
+fi
+
+exit 0

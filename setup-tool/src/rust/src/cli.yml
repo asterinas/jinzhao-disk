@@ -1,0 +1,49 @@
+name: jindisksetup
+version: "0.1"
+about: jindisk-Setup is a utility (set) used to conveniently set up disk encryption based on jindisk.
+args:
+    - verbose:
+        short: v
+        multiple: true
+        help: verbosity level
+subcommands:
+    - create:
+        about: Create a jindisk device
+        version: "0.1"
+        args:
+            - password:
+                short: p
+                help: Specify password
+                takes_value: true
+            - device_name:
+                short: d
+                help: Specify a device to open
+                takes_value: true
+            - dm_target:
+                short: t
+                help: Specify the dm target you want to create
+                takes_value: true
+    - open:
+        about: Open a jindisk device
+        version: "0.1"
+        args:
+            - password:
+                short: p
+                help: Specify password
+                takes_value: true
+            - device_name:
+                short: d
+                help: Specify a device to open
+                takes_value: true
+            - dm_target:
+                short: t
+                help: Specify the dm target you want to create
+                takes_value: true
+    - close:
+        about: Close a jindisk device
+        version: "0.1"
+        args:
+            - dm_target:
+                short: t
+                help: Specify a dm target
+                takes_value: true
