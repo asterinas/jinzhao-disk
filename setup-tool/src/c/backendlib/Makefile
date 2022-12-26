@@ -6,7 +6,6 @@ objs = $(patsubst %.c,%.o, $(src))
 
 all: libdm
 	cp libdm_jindisk.so ../
-	cp libdm_jindisk.so ../../rust/
 
 libdm: libdm_jindisk.so
 

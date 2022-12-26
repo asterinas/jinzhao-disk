@@ -2,7 +2,7 @@
 
 if [ $# -ne 1 ];
 then
-	echo "Usage: sudo install-jindisk <your_path_to_jindisk-linux-c>!"
+	echo "Usage: sudo install-km <your_path_to_jindisk-linux/kernel-module/c>!"
 	exit
 fi
 
@@ -10,14 +10,14 @@ fi
 jindisk_SRC="$1"
 
 rmmod jindisk
-modprobe -r dm-persistent-data jindisk
+modprobe -r dm-bufio jindisk
 
 cd $jindisk_SRC
 
 make clean
 make
 
-modprobe dm-persistent-data
+modprobe dm-bufio
 insmod ./jindisk.ko
 
 cp ./jindisk.ko /lib/modules/`uname -r`/kernel

@@ -28,7 +28,6 @@ void PBKDF2_HMAC_SHA_512(const char *pass, int passlen,
 int action_create(const char *password, const char *dev_path,
 		  const char *dm_name)
 {
-	int passwornd_size = 20; /* max passphrase size */
 	int key_size = 128; /* SHA512 output has 128 chars */
 	// WL: generate keyset using Pbkdf2
 	int r = 0;
@@ -62,7 +61,6 @@ int action_create(const char *password, const char *dev_path,
 
 int action_open(const char *password, const char *dev_path, const char *dm_name)
 {
-	int passwornd_size = 20; /* max passphrase size */
 	int key_size = 128; /* SHA512 output has 128 chars */
 	int r = 0;
 	// WL: using default salt, round (131072) to generate key, iv
