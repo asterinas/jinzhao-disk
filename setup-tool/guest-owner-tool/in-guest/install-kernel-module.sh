@@ -1,18 +1,15 @@
 #!/bin/sh
 
-if [ $# -ne 1 ];
-then
-	echo "Usage: sudo install-km <your_path_to_jindisk-linux/kernel-module/c>!"
-	exit
-fi
+# For Linux 5.15/5.17
 
+SHELL_FOLDER=$(cd "$(dirname "$0")";pwd)
 
-jindisk_SRC="$1"
+KERNEL_MODULE_SRC="${SHELL_FOLDER}/../../../kernel-module/c"
 
 rmmod jindisk
 modprobe -r dm-bufio jindisk
 
-cd $jindisk_SRC
+cd $KERNEL_MODULE_SRC
 
 make clean
 make
