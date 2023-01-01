@@ -1,12 +1,14 @@
-# JinDisk Linux Kernel Module Source
+# JinDisk Linux Kernel Module
 
-This is the prototype of JinDisk, a Linux kernel module written in C.
+## A New Device Mapper Target
 
-JinDisk is based on an OS abstraction layer for virtual block devices, which enables file systems to use different virtual block devices as storage in a uniform way. In the Linux kernel, this abstraction layer is called [device mapper](https://docs.kernel.org/admin-guide/device-mapper/index.html).
+This Linux kernel module implements `dm-jindisk`, a new Linux [device mapper](https://docs.kernel.org/admin-guide/device-mapper/index.html) target that adds JinDisk as a new type of secure block devices to Linux.
+
+In a nut shell, a device mapper target provides a class of virtual block devices with some unique functionalities, including security enhancement. For example, there are various kinds of secure virtual block devices provided by device mapper targets, including `dm-crypt`, `dm-integrity`, and `dm-verity`. Although `dm-jindisk` is late to join the party, it is unique in its strong security protection against TEE adversaries.
 
 ## Build Instructions
 
-JinDisk is developed and tested with Linux kernel v5.15.x, later version may also work. Since JinDisk is an external module, to build and install JinDisk, you must have a prebuilt kernel available that contains the configuration and header files used in the build. Also, the kernel must have been built with modules enabled.
+JinDisk is developed and tested with Linux kernel v5.15.x, later version may also work. Since JinDisk is an external module, to build and install JinDisk, you must have a prebuilt kernel available that contains the configuration and header files used in the build.
 
 ### Prepare Kernel Development Environment
 
@@ -20,7 +22,7 @@ Nevertheless, building Linux kernel from scratch is more recommended. Following 
 ```bash
 $ git clone git://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
 $ cd linux
-$ git checkout v5.15.1 -b <your_branch_name>
+$ git checkout v5.15.1
 ```
 
 #### Step 2. Install Required Packages (Ubuntu)
@@ -29,6 +31,9 @@ $ sudo apt install dpkg-dev libncurses5-dev openssl libssl-dev build-essential p
 ```
 
 #### Step 3. Configure with CONFIG_DM_BUFIO=m/y
+
+We need to enable `dm-bufio`, a kernel module that `dm-jindisk` depends on.
+
 ```bash
 $ make mrproper
 $ cp -v /boot/config-$(uname -r) .config
@@ -59,54 +64,68 @@ $ sudo update-grub
 $ uname -mrs
 ```
 
-### Take Advantage of JinDisk
+### Build JinDisk
 
-When the kernel development environment is ready, you can clone this repository to build JinDisk.
 
-#### Build JinDisk
+To build JinDisk's kernel module (`dm-jindisk.ko`), run the following commands.
 
 ```bash
-$ cd <path_to_jindisk_kernel_module>
+$ cd <jindisk_repo>/kernel-module/c
 $ make
 ```
 or
 ```bash
 $ make DEBUG=1
 ```
-If you followed the above instructions, you should obtain the `jindisk.ko` module in the current directory eventually.
 
-#### Install JinDisk
+### Enable JinDisk
+
+To load JinDisk's kernel module, run the following commands.
 
 ```bash
-$ cd <path_to_jindisk_kernel_module>
 $ sudo modprobe dm-bufio
-$ sudo insmod jindisk.ko
+$ sudo insmod dm-jindisk.ko
 ```
 
-#### Create a JinDisk Device
+### Create a JinDisk device
 
-Now you can use the following cmdline to create a virtual block device enabled by JinDisk. Each field is explained as below:
-- start: the start sector of JinDisk, usually set to `0`;
-- end: the end sector of JinDisk;
-- root_key: JinDisk utilized [AES-128-GCM](https://en.wikipedia.org/wiki/Galois/Counter_Mode) to encrypt & decrypt blocks, so you should specify the key/iv to format or reload a JinDisk; here, `key` should be a `128 bit` hexadecimal number (one character represents 4 bits), such as `a7f67ad520bd83b971225df6ebd76c3e`;
-- root_iv: the the initialization vector used by AES-128-GCM, `96 bit` hexadecimal number, such as `c01be00ba5f730aacb039e86`;
-- host_dev_path: the underlying host disk, JinDisk will store data & metadata on it;
-- format: indicate that if the driver should format the `host_dev` when create a  `logical_dev` of JinDisk; `1` means that it will `wipe out` old data in host_dev, and write the metadate of JinDisk; `0` means that it will only try to reload metadata of JinDisk, using the root_key/iv to decrypt host_dev;
-- logical_dev_name: the name of virtual block device;
+To create a virtual block device of JinDisk, one can use the [dmsetup](https://man7.org/linux/man-pages/man8/dmsetup.8.html) command of the following form.
 
 ```bash
-$ sudo echo <start> <end> jindisk <root_key> <root_iv> <host_dev_path> <format> | dmsetup create <logic_dev_name>
+$ sudo dmsetup create <jindisk_dev_name> <<JINDISK_ARGS
+<start_sector> <num_sectors> jindisk <root_key> <root_iv> <untrusted_dev_path> <format>
+JINDISK_ARGS
 ```
-For example:
+
+The `create` sub-command of `dmsetup` takes as the first argument the name of the JinDisk logical block device to be created. If the command succeeds, the new JinDisk device will appear at `/dev/mapper/<jindisk_dev_name>`.
+
+The second argument, which is read from the standard input (between the pair of `JINDISK_ARGS`), is a data structure called _table_, which gives the parameters of the logical block device to be created by a device mapper target. For JinDisk, the table contains the following fields:
+
+- `<start_sector>`: the start sector of the logical device. Usually set to `0`.
+- `<num_sectors>`: the capacity of the logical device in sectors.
+- `jindisk`: the device mapper type of the logical device.
+- `<root_key>`: the root key of the logical device, represented in hexadecimal numbers. JinDisk utilizes [AES-128-GCM](https://en.wikipedia.org/wiki/Galois/Counter_Mode) to encrypt and decrypt blocks. The root key has a length of 128 bits, which means 32 hexadecimal digits (e.g., `a7f67ad520bd83b971225df6ebd76c3e`).
+- `<root_iv>`: the root initialization vector (IV) of the logical device, represented in hexadecimal numbers. The IV has a length of 96 bits, which means 24 hexadecimal digits (e.g., `c01be00ba5f730aacb039e86`).
+- `<untrusted_dev_path>`: the path of the underlying _untrusted_ block device where the JinDisk logical block device stores its data. This device is not trusted by JinDisk.
+- `<format>`: deciding whether the untrusted device should be formatted when creating the JinDisk device. If `<format>` equals to `1`, then all data on the untrusted device will be wiped out and an empty JinDisk instance will be created with `root_key` and `root_iv`. If `<format>` equals to `0`, then an JinDisk instance will be loaded from the untrusted device, using the `root_key` and `root_iv`.
+
+Here is a concrete example.
+
 ```bash
-$ sudo echo 0 20971520 jindisk a7f67ad520bd83b971225df6ebd76c3e c01be00ba5f730aacb039e86 /dev/sdb 1 | dmsetup create test-jindisk
+$ sudo dmsetup create test-jindisk <<JINDISK_ARGS
+0 20971520 jindisk a7f67ad520bd83b971225df6ebd76c3e c01be00ba5f730aacb039e86 /dev/sdb 1
+JINDISK_ARGS
 ```
-**NOTICE**: the logical_dev_size should be less than the host_dev_size, you can calculate available logical_dev_size using such sysfs interface:
+
+Note that the capacity of a JinDisk logical block device must be less than that of the underlying untrusted block device. This is because some storage space of the untrusted block device is consumed by JinDisk to store metadata, instead of user data. Given the capacity of an untrusted block device, one can use the following sysfs interface provided by JinDisk to calculate the maximum capacity of a JinDisk instance that may be created on the untrusted block device.
+
 ```bash
-$ sudo echo <host_dev_size> > /sys/module/jindisk/calc_avail_sectors
+$ sudo echo <untrusted_dev_sectors> > /sys/module/jindisk/calc_avail_sectors
 $ sudo cat /sys/module/jindisk/calc_avail_sectors
 ```
-Now, you should find the JinDisk in the system, like that:
+
+If a JinDisk instance is created successfully, then you should find the JinDisk device in the system with `lsblk`.
+
 ```bash
 $ sudo lsblk
 NAME           MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
@@ -115,6 +134,7 @@ sdb              8:16   0   12G  0 disk
 ```
 
 ## Fio Benchmark
+
 To benchmark persistent disk performance, you can use [FIO](https://fio.readthedocs.io/) instead of other disk benchmarking tools such as [dd](https://en.wikipedia.org/wiki/Dd_(Unix)). By default, `dd` uses a very low I/O queue depth, so it is difficult to ensure that the benchmark is generating a sufficient number of I/Os and bytes to accurately test disk performance.
 
 #### Step 1. Install FIO (use apt or yum)
