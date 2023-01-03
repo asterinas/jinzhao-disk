@@ -25,7 +25,7 @@ RA procedures can be integrated into JinDisk-Setup by replacing different RA imp
 
 The following diagram shows the high-level workflow and component relationships.
 
-![](images/workflow.jpeg)
+![](./figures/workflow.jpeg)
 
 The workflow of JinDisk-Setup can be described as five steps.
 
