@@ -14,7 +14,7 @@ Jinzhao Disk (or JinDisk) is a **log-structured secure block device for TEEs**, 
 
 JinDisk targets a typical setting of TEE usage, where applications are ported into the TEE with no (or few) modifications thanks to a TEE-aware runtime. For enclave TEEs (e.g., Intel SGX), one popular choice for such a runtime is library OSes (e.g., [Occlum](https://github.com/occlum/occlum)). For VM TEEs (e.g., AMD SEV), one can choose off-the-shelf OS kernels like Linux.
 
-![The threat model of JinDisk.](docs/images/jindisk-threat-model.png)
+![The threat model of JinDisk.](./docs/figures/jindisk-threat-model.png)
 
 As shown in the image above, the TEE runtime is integrated with JinDisk, which serves as a trusted logical block device that supports four standard block I/O commands including `read()`, `write()`, `flush()`, and `trim()`. From the perspective of JinDisk's users (e.g., file systems), all data written to or read from JinDisk is in plaintext. To serve these I/O requests securely, JinDisk takes some extra security measures, including but not limited to encrypting/decrypting the data transferred to/from the host block device properly.
 
