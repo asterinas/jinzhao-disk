@@ -4,7 +4,7 @@
 
 ### Hardware checking
 
-Make sure allocating enough ASIDs for SEV-SNP guests:
+Make sure to allocate enough ASIDs for SEV-SNP guests:
 https://github.com/AMDESE/AMDSEV/issues/84
 
 ```
@@ -33,7 +33,7 @@ Make sure the firmware version >= 1.51. If you see the following message, update
 [    6.400343] ccp 0000:46:00.1: SEV API:1.40 build:40
 ```
 
-Steps to update the firmware are as follows.
+The steps to update the firmware are as follows.
 
 ```
 # wget https://developer.amd.com/wp-content/resources/amd_sev_fam19h_model0xh_1.33.03.zip
