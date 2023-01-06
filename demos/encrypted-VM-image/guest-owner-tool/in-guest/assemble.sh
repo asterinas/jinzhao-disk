@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 #
-# Assume we already have a jindisk-installed image
+# Assume we already have a JinDisk-installed image
 
 set -e
 

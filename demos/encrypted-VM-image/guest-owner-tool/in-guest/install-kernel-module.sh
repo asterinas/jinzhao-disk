@@ -21,6 +21,6 @@ cp ./jindisk.ko /lib/modules/`uname -r`/kernel
 depmod
 
 echo "" >> /etc/initramfs-tools/modules
-echo "dm-persistent-data" >> /etc/initramfs-tools/modules
+echo "dm-bufio" >> /etc/initramfs-tools/modules
 echo "jindisk" >> /etc/initramfs-tools/modules
 update-initramfs -u -k all

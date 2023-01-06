@@ -1,11 +1,11 @@
 ## JinDisk (Linux) Functionalities
 
-### JinDisk-Setup APIs
+### JinDisk User CLI APIs
 
 Currently, `jindisksetup` provides the following functions.
 
 ```
-$ jindisksetup action (device) dmname
+$ jindisksetup action (password) (device) dmname
 ```
 
 The action can be **create** **open** and **close**.
@@ -36,7 +36,7 @@ Currently, `dm-jindisk` provides these operations: *ctr* and *dtr*.
 
 *dtr* operation invokes the `dm_jindisk_target_dtr`. It is the destruction function, which removes device and decrement device count.
 
-### Mapping table for jindisk target
+### Mapping table for JinDisk DM target
 
 Mapping table in device mapper is defined like `<start_sector> <size> <target name> <target mapping table>`.
 
