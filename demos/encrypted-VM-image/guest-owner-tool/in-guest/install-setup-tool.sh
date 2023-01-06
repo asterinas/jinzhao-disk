@@ -13,6 +13,4 @@ sudo apt install libdevmapper-dev
 cd ${SETUP_TOOL_SRC}/
 make clean
 make
-make install
-
-make clean
+sudo make install
