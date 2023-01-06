@@ -1,14 +1,16 @@
+# Operating principle of the demo
+
 ## Components
 
-The project includes several components. The first one is the jindisksetup command line tool used to conveniently setup the dm-jindisk kernel module, which works as a device mapper and provides transparent encryption of block devices. Secondly, we make an initramfs hook that should be called to decrypt the encrypted image when the guest VM is booted. The third is a tool designed for guest owner to transform its own reference image to a JinDisk-protected image. Lastly, we put some examples here to demonstrate how this toolchain helps building a confidential VM with corresponding (SEV/TDX) Remote Attestation procedures.
+The project depends on several components. The first one is the jindisksetup command line tool used to conveniently set up the dm-jindisk kernel module, which works as a device mapper and provides transparent encryption of block devices. Secondly, we make an initramfs hook that should be called to decrypt the encrypted image when the guest VM is booted. The third is a tool designed for the guest owner(s) to transform their reference image to a JinDisk-protected image. Lastly, we put some examples here to demonstrate how this toolchain helps build a confidential VM with corresponding (SEV/TDX) Remote Attestation procedures.
 
-### jindisksetup
+### JinDisk user CLI
 
-jindisksetup is the command line interface for creating, accessing and managing encrypted JinDisk devices. Just like dm-jindisk is an alternative of dm-crypt, jindisksetup is as a counterpart to cryptsetup. 
+The `jindisksetup` is the command line interface for creating, accessing, and managing encrypted JinDisk devices. Just like dm-jindisk is an alternative to dm-crypt, jindisksetup is a counterpart to cryptsetup. 
 
 ### Initramfs Hooks
 
-Initramfs hook is a early stage service (in guest kernel's initram image) we developed for decrypting the root filesystem when the guest kernel is loaded. This hook can be set to execute decryption after fstab mount. The key to decrypt the root partition is retrieved from the RA (Remote Attestation) protocol, i.e., the RA procedure will perform key exchange between the guest kernel and the guest owner. Note that the RA procedure can be implemented as a pluggable module according to corresponding RA protocols.
+Initramfs hook is an early-stage service (in the guest kernel's initramfs image) we developed for decrypting the root filesystem when the guest kernel is loaded. This hook can be set to execute decryption after fstab mount. The key to decrypt the root partition is retrieved from the RA (Remote Attestation) protocol, i.e., the RA procedure will perform a key exchange between the guest kernel and the guest owner. Note that the RA procedure can be implemented as a pluggable module according to corresponding RA protocols.
 
 ### Guest Owner Tool
 
@@ -16,9 +18,9 @@ This Guest Owner tool will also include the abovementioned initramfs hook(s) int
 
 ## Examples integrated with RA
 
-Remote attestation is necessary to let the confidential computing user (client/Guest Owner in VM-based TEE environment) trust the code running on a remote cloud. 
+Remote attestation is necessary to let the confidential computing user (client/Guest Owner in a VM-based TEE environment) trust the code running on a remote cloud. 
 
-RA procedures can be integrated into JinDisk-Setup by replacing different RA implementations lying in the initramfs hooks (or any early stage systemd services). To integrate RA more conveniently, the sub-procedure of retrieving the attestation reports/certificates and the sub-procedure of how disk encryption/decryption key is exchanged can be implemented modularly. 
+RA procedures can be integrated into JinDisk-Setup by replacing different RA implementations lying in the initramfs hooks (or any early-stage systemd services). To integrate RA more conveniently, the sub-procedure of retrieving the attestation reports/certificates and the sub-procedure of how disk encryption/decryption key is exchanged can be implemented modularly. 
 
 
 # Detailed Workflow

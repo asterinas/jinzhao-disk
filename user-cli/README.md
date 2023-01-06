@@ -1,12 +1,12 @@
 # JinDisk User CLI
 
-JinDisk User CLI is a utility (set) used to conveniently set up disk encryption based on the JinDisk. This is a part of the whole JinDisk project (the other part is dm-jindisk). `jindisksetup` is the command line tool for creating, accessing and managing encrypted JinDisk devices. Just like dm-jindisk is an alternative of dm-crypt, `jindisksetup` is as a counterpart to cryptsetup. 
+JinDisk User CLI is a utility (set) used to conveniently set up disk encryption based on the JinDisk. This is a part of the whole JinDisk project (the other part is dm-jindisk). `jindisksetup` is the command line tool for creating, accessing ,and managing encrypted JinDisk devices. Just like dm-jindisk is an alternative to dm-crypt, `jindisksetup` is a counterpart to cryptsetup. 
 
-This README covers how this user-space CLI to utilize dm-jindisk to encrypt a disk device.
+This README covers how this user-space CLI utilizes dm-jindisk to encrypt a disk device.
 
 ## Software dependencies
 
-Here is the list of packages recommended for the compilation of project for particular distributions:
+Here is the list of packages recommended for the compilation for particular distributions:
 
 - For Debian and Ubuntu: `git gcc make autoconf automake autopoint pkg-config libtool gettext libssl-dev libdevmapper-dev libpopt-dev uuid-dev libssh-dev`. To run the demo(s) you probably also need to install `sharutils dmsetup jq xxd expect keyutils netcat passwd openssh-client sshpass`.
 
@@ -14,7 +14,7 @@ Note that the list could change as the distributions evolve.
 
 ## Installation
 
-Download JinDisk source code and install user-space CLI.
+Download the JinDisk source code and install user-space CLI.
 
 ```bash
 sudo apt install build-essential libssl-dev libdevmapper-dev
@@ -52,17 +52,17 @@ $ jindisksetup open password /dev/sda1 test-jindisk
 
 Once opened, the `test-jindisk` device path would be `/dev/mapper/test-jindisk` instead of the partition (e.g. `/dev/sda1`).
 
-**Note that we support to use both ways (jindisksetup/dmsetup) to manipulate dm-jindisk.** Refer to [interfaces.md](../docs/interfaces.md) for more details.
+**Note that we support using both ways (jindisksetup/dmsetup) to manipulate dm-jindisk.** Refer to [interfaces.md](../docs/interfaces.md) for more details.
 
 ---
 
-In order to write encrypted data into the partition it must be accessed through the device mapped name. The first step of access will typically be to create a file system. For example:
+To write encrypted data into the partition it must be accessed through the device mapper name. The first step of access will typically be to create a file system. For example:
 
 ```
 $ mkfs -t ext4 /dev/mapper/test-jindisk
 ```
 
-- jindisksetup **close** *dm_name* - closing the jindisk target, unmount the partition and do close
+- jindisksetup **close** *dm_name* - closing the JinDisk target, unmount the partition and do close
 
 For example:
 

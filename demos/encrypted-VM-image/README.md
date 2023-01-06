@@ -1,6 +1,8 @@
-# Encrypted VM image
+# Trusted startup of Encrypted VM image
 
 This demo consists of source, scripts, and configuration files for several tools that can be used together to demonstrate one way to perform remote attestation. It can help Guest Owner to transform his/her plain base image to a encrypted JinDisk image. And inside the folder there is a jindisksetup command can be used to manage a JinDisk-formatted partition by creating, controlling, and removing a JinDisk DM target.
+
+The operating principle and the workflow of this demo is provided at [overview](./overview.md).
 
 This (README) guide also covers the usage of deploying a confidential VM image from the Guest Owner's perspective. 
 
