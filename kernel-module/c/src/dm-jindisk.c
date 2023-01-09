@@ -539,11 +539,21 @@ void flush_and_commit(struct dm_jindisk *jindisk, struct bio *bio)
 	journal->jops->synchronize(journal);
 }
 
+static void jindisk_map_bio(struct dm_target *ti, struct bio *bio)
+{
+	struct dm_jindisk *jindisk = ti->private;
+	sector_t origin = bio->bi_iter.bi_sector;
+
+	bio_set_dev(bio, jindisk->raw_dev->bdev);
+	if (unlikely(ti->begin != 0))
+		bio->bi_iter.bi_sector = dm_target_offset(ti, origin);
+}
+
 static int dm_jindisk_target_map(struct dm_target *target, struct bio *bio)
 {
 	struct dm_jindisk *jindisk = target->private;
 
-	bio_set_dev(bio, jindisk->raw_dev->bdev);
+	jindisk_map_bio(target, bio);
 
 	if (unlikely(bio->bi_iter.bi_size > (MAX_NR_FETCH * DATA_BLOCK_SIZE)))
 		dm_accept_partial_bio(bio, (MAX_NR_FETCH * SECTORS_PER_BLOCK));
