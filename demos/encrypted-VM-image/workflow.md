@@ -1,4 +1,4 @@
-# Operating principle of the demo
+# Workflow of the demo
 
 ## Components
 
@@ -27,11 +27,11 @@ RA procedures can be integrated into JinDisk-Setup by replacing different RA imp
 
 The following diagram shows the high-level workflow and component relationships.
 
-![](./figures/workflow.jpeg)
+![](./workflow.jpeg)
 
-The workflow of JinDisk-Setup can be described as five steps.
+The workflow of this demo can be described as five steps.
 
-- Step 1: We use the guest-owner-tool to generate a protected guest image from a base image. 
+- Step 1: We use scripts for GO to generate a protected guest image from a base image. 
 
 - Step 2: The GO uses Qemu/KVM to launch a secure VM.
 
