@@ -4,7 +4,7 @@
 
 SHELL_FOLDER=$(cd "$(dirname "$0")";pwd)
 
-KERNEL_MODULE_SRC="${SHELL_FOLDER}/../../../kernel-module/c"
+KERNEL_MODULE_SRC="${SHELL_FOLDER}/../../../../kernel-module/c"
 
 rmmod jindisk
 modprobe -r dm-bufio jindisk
@@ -15,12 +15,12 @@ make clean
 make
 
 modprobe dm-bufio
-insmod ./jindisk.ko
+insmod ./dm-jindisk.ko
 
-cp ./jindisk.ko /lib/modules/`uname -r`/kernel
+cp ./dm-jindisk.ko /lib/modules/`uname -r`/kernel
 depmod
 
 echo "" >> /etc/initramfs-tools/modules
 echo "dm-bufio" >> /etc/initramfs-tools/modules
-echo "jindisk" >> /etc/initramfs-tools/modules
+echo "dm-jindisk" >> /etc/initramfs-tools/modules
 update-initramfs -u -k all

@@ -4,6 +4,6 @@
 
 You can use the [script](./install-kernel-module.sh) to build the Jindisk source code and install the kernel module into the initramfs.
 
-### Jindisk-Setup Installation
+### Jindisk User-space CLI Installation
 
-You can build source code and install jindisksetup CLI using this [script](./install-setup-tool.sh).
+Same as the kernel module, you can build source code and install jindisksetup CLI using this [script](./install-user-cli.sh).
