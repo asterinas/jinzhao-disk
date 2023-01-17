@@ -24,9 +24,9 @@ After the Ubuntu has been installed, restart the guest VM. This time remove the 
 
 ### JinDisk Installation
 
-The second step is to install JinDisk kernel module and JinDisk setup tool on the Guest VM. You can find build instructions in the [In-guest Installation Guide](./in-guest/README.md).
+The second step is to install JinDisk kernel module and JinDisk user-space CLI tool on the Guest VM. You can find build instructions in the [In-guest Installation Guide](./in-guest/README.md).
 
-You may have to reinstall the Linux kernel when installing JinDisk kernel module. Refer to its [README](../../kernel-module/c/README.md) for more details.
+You may have to reinstall the Linux kernel when installing JinDisk kernel module. Refer to its [README](../../../kernel-module/c/README.md) for more details. And you can also refer to the [README](../../../user-cli/README.md) for the installation of JinDisk user-space CLI.
 
 ### JinDisk Image preparation
 

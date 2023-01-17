@@ -1,0 +1,21 @@
+#!/bin/sh
+# This script should be in /etc/initramfs-tools/hooks
+
+PREREQ=""
+
+prereqs()
+{
+	echo "$PREREQ"
+}
+
+case $1 in
+	prereqs) echo "${PREREQS}"; exit 0;;
+esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+copy_exec /usr/bin/jindisksetup
+# copy_exec /usr/bin/jindisksetup-rust
+copy_exec /usr/lib/x86_64-linux-gnu/libdm_jindisk.so
+
+

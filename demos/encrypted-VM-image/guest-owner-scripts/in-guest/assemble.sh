@@ -193,7 +193,7 @@ echo "Add initramfs-jindisk hooks..."
 if [ "${ID}" == "ubuntu" ]; then
 
     echo "Copying initramfs hooks..."
-    cp -f ${initramfs_hook_dir}/hook-add-binary ${jindisk_mnt}/etc/initramfs-tools/hooks/
+    cp -f ${initramfs_hook_dir}/hook-add-executables ${jindisk_mnt}/etc/initramfs-tools/hooks/
     cp -f ${initramfs_hook_dir}/hook-unlock ${jindisk_mnt}/etc/initramfs-tools/scripts/init-premount/
 
     #uuid=$(blkid -s UUID -o value ${jindisk_partition})

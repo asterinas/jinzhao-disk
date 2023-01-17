@@ -10,11 +10,11 @@ This (README) guide also covers the usage of deploying a confidential VM image f
 
 The first thing of building a confidential computing environment is preparing a TEE-equipped host. Installation instructions for the cloud host and the Guest Owner infrastructure are outlined below. Note that for simplicity, these two servers can be the same physical machine.
 
-We take SEV-SNP as an example. To deploy and test a confidential Guest VM using Qemu, check the [sev-snp-installation.md](../docs/sev-snp-installation.md) in the docs directory.
+We take SEV-SNP as an example. To deploy and test a confidential Guest VM using Qemu, check the [sev-snp-installation.md](../../docs/sev-snp-installation.md) in the docs directory.
 
 NOTE: For standard instructions to build SEV and SEV-ES kernels, see the main branch of the AMDSEV repository. For instructions to build SEV-SNP kernels, see the sev-snp-devel.
 
-Once upon the boot test is done, you can use this JinDisk user-space CLI to prepare your own encrypted VM image. The aim is to fully protect the confidentiality of Guest Owner's secret data. To better understand the security rationale behind it, see [security-considerations.md](../docs/security-considerations.md) in docs.
+Once upon the boot test is done, you can use this JinDisk user-space CLI to prepare your own encrypted VM image. The aim is to fully protect the confidentiality of Guest Owner's secret data. To better understand the security rationale behind it, see [security-considerations.md](../../docs/security-considerations.md) in docs.
 
 ## Usage
 
@@ -50,7 +50,7 @@ Use the [startup-new.sh](./guest-owner-scripts/startup-new.sh) to launch the new
 
 The operating principle and standard procedure to boot up an encrypted VM image is provided at the [Workflow](./workflow.md) of the demo.
 
-Architectural discussions and security considerations for each example are available in the [docs](../docs/) directory. 
+Architectural discussions and security considerations are available in the [docs](../../docs/) directory. 
 
 
 ## Compatibility Policy
