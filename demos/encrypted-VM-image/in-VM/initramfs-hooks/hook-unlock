@@ -18,13 +18,13 @@ esac
 
 # Begin real processing below this line
 
-if [ ! -x "/sbin/jindisk_unlocking" ]; then
+if [ ! -x "/sbin/opening_disk" ]; then
 	panic "jindisk unlocking executable not found"
 fi
 
 
 log_begin_msg "Mounting jindisk rootfs"
-/sbin/jindisk_unlocking || panic "jindisk unlocking failed"
+/sbin/opening_disk || panic "jindisk unlocking failed"
 log_end_msg
 
 
