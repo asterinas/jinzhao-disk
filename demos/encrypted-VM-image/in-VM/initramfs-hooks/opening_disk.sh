@@ -1,5 +1,6 @@
 #!/bin/sh
 
+# Saved for RA
 key=`/sbin/getting_key`
 
 jindisksetup open ${key} /dev/sda3 jindisk_rootfs
