@@ -2,15 +2,15 @@
 
 This demo consists of source, scripts, and configuration files that can be used together to demonstrate how we can boot up a confidential virtual machine (VM) whose VM image protected with JinDisk. It can help the user of a confidential computing cloud to transform his/her base image to a encrypted JinDisk image. And scripts are designed for the guest user to build a confidential VM image and to start up the confidential VM automatically.
 
-We first describe the components that this demo needs.
+We first describe the [components](#1) that this demo needs.
 
-We then show the general workflow of deploying a confidential VM image from the Guest Owner's perspective. Here, the *Guest Owner (GO)* is the client in a VM-based TEE environment that would like to use the confidential computing cloud.
+We then show the [general workflow](#2) of deploying a confidential VM image from the Guest Owner's perspective. Here, the *Guest Owner (GO)* is the client in a VM-based TEE environment that would like to use the confidential computing cloud.
 
-Finally, we give a step-by-step guide to show how the Guest Owner can prepare the encrypted image.
+Finally, we give a [step-by-step guide](#3) to show how the Guest Owner can prepare the encrypted image.
 
 ---
 
-## Components
+<h2 id="1"> Components </h2>
 
 The demo depends on several components. 
 The first one is the `jindisksetup` command line tool used to conveniently set up the `dm-jindisk` kernel module, which works as a device mapper and provides transparent encryption of block devices. 
@@ -29,7 +29,7 @@ To start up the encrypted VM automatically, namely to unlock the root partition 
 
 Initramfs hook is an early-stage service (in the guest kernel's initramfs image) we developed for decrypting the root partition when the guest kernel is loaded. This hook can be set to execute decryption after fstab mount. The key to decrypt the root partition is retrieved from the RA (Remote Attestation) protocol.
 
-### Remote attestation procedure
+### Remote attestation procedure (TODO)
 
 Remote attestation is necessary to let the confidential computing cloud user to trust the code running on a remote cloud.
 The RA procedure will perform a key exchange between the guest kernel and the guest owner.
@@ -39,7 +39,7 @@ RA procedures can be integrated into JinDisk-Setup by replacing different RA imp
 
 ---
 
-## High-level Workflow
+<h2 id="2"> High-level Workflow </h2>
 
 The following diagram shows the high-level workflow and component relationships.
 
@@ -69,7 +69,7 @@ After that, GO can launch the secure VM through a TEE-supported Hypervisor (such
 
 To fully set up a confidential VM is not easy. It involves complex encryption complicated among multiple parties. Unlocking the RootFS of the guest's VM image is the main goal of the initramfs hook. But, before unlocking the root filesystem, the root partition should be mounted automatically during the kernel boot.
 
-Then, initramfs hook invokes the functions in jindisksetup, to open the JinDisk-formatted root partition.
+Then, initramfs hook invokes the functions in the `jindisksetup`, to open the JinDisk-formatted root partition.
 
 ### Portable RA
 
@@ -87,7 +87,7 @@ This procedure can be portable as long as the Step 3 and Step 4 are modular. Int
 
 ---
 
-## Step-by-step Workflow
+<h2 id="3"> Step-by-step Workflow </h2>
 
 Here, we give step-by-step instructions to show how we can prepare the JinDisk-encrypted image and launch it.
 
@@ -131,7 +131,7 @@ You can use Vncviewer to connect the guest VM (or via ssh).
 
 ### JinDisk Installation (in-VM)
 
-Right after starting up and logging on the reference VM, you need to install the JinDisk (the `jindisksetup` binaries and the `dm-jindisk` kernel module) in the initramfs first. To do that, simply run the [install-user-cli.sh](./in-VM/setup-scripts/install-user-cli.sh) and the [install-kernel-module.sh](./in-VM/setup-scripts/install-kernel-module.sh).
+Right after starting up and logging on the reference VM, you need to install the JinDisk (the `jindisksetup` binaries and the `dm-jindisk` kernel module) in the initramfs first. **So, this step should be executed inside the VM.** To do that, simply run the [install-user-cli.sh](./in-VM/setup-scripts/install-user-cli.sh) and the [install-kernel-module.sh](./in-VM/setup-scripts/install-kernel-module.sh).
 
 You may have to reinstall the Linux kernel when installing JinDisk kernel module. Refer to its [README](../../kernel-module/c/README.md) for more details. And you can also refer to the [README](../../user-cli/README.md) for the installation of JinDisk user-space CLI.
 
@@ -142,7 +142,7 @@ You may have to reinstall the Linux kernel when installing JinDisk kernel module
 
 After the kernel module and JinDisk user-space tool are installed and the initramfs hooks are placed, you can start to prepare the JinDisk-encrypted image. In the [in-VM](./in-VM/) directory, which stores the scripts that should be running inside a VM, you can use the [assemble.sh](./in-VM/assemble.sh) to create the new JinDisk-encrypted image.
 
-If not specified, the output file name will be `new_image`, and the size will be `DEFAULT_IMG_SIZE` which can be set in [env.sh](./out-of-VM/env.sh). 
+If not specified, the output file name will be `new_image`, and the size will be `DEFAULT_IMG_SIZE` which can be set in the [env.sh](./out-of-VM/env.sh). 
 
 Once the `assemble.sh` script being executed successfully, you will see three partitions have been built on the virtual disk (`/dev/sdb`) of the new image, including a boot partition, an EFI partition, and a JinDisk RootFS partition. Then, you can shutdown the reference VM (or detach the virtual disk `/dev/sdb`) for launching the newly-created image later.
 
