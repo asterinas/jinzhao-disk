@@ -4,22 +4,22 @@ This demo consists of source, scripts, and configuration files that can be used 
 
 We first describe the components that this demo needs.
 
-We then show the general workflow of deploying a confidential VM image from the Guest Owner's perspective. Here, the *Guest Owner* is the client in a VM-based TEE environment that would like to use the confidential computing cloud.
+We then show the general workflow of deploying a confidential VM image from the Guest Owner's perspective. Here, the *Guest Owner (GO)* is the client in a VM-based TEE environment that would like to use the confidential computing cloud.
 
-Finally, we give a step-by-step guide to show how the Guest Owner (GO) can prepare the encrypted image and launch it.
+Finally, we give a step-by-step guide to show how the Guest Owner can prepare the encrypted image.
 
 ---
 
 ## Components
 
 The demo depends on several components. 
-The first one is the jindisksetup command line tool used to conveniently set up the dm-jindisk kernel module, which works as a device mapper and provides transparent encryption of block devices. 
+The first one is the `jindisksetup` command line tool used to conveniently set up the `dm-jindisk` kernel module, which works as a device mapper and provides transparent encryption of block devices. 
 Secondly, we need an initramfs hook that can be called to decrypt the encrypted image when the guest VM is booted. 
 The third one is the remote attestation part that finishes the key exchange.
 
-### JinDisk user CLI and kernel module
+### JinDisk user CLI and JinDisk kernel module
 
-The `jindisksetup` is the command line interface for creating, accessing, and managing encrypted JinDisk devices. Just like `dm-jindisk` is an alternative to dm-crypt, jindisksetup is a counterpart to cryptsetup. 
+The `jindisksetup` is the command line interface for creating, accessing, and managing encrypted JinDisk devices.
 
 In this demo, we use the CLI and the kernel module to format a blank disk to an encrypted disk.
 
@@ -63,7 +63,7 @@ This is the Step 1 - guest disk encryption. Specifically, we prepare image and p
 
 The first thing is to create a new image, which includes an EFI partition, a boot partition and the most important - a root partition. To protect the root partition, the guest owner tool will then encrypt it using JinDisk's data encryption scheme. The encryption key should be stored in a safe place and be managed properly. The tool will also set up necessary execution enviroment for later Guest Disk Unlocking and the component (the initramfs hook) to do it.
 
-After that, GO can launch the secure VM through a TEE-supported VMM (such as Qemu). The VMM will help calculating the measurement of the guest VM's kernel and reported to GO, to ensure that GO is launching an expected VM image.
+After that, GO can launch the secure VM through a TEE-supported Hypervisor (such as QEMU). The Hypervisor will help calculating the measurement of the guest VM's kernel and reported to GO, to ensure that GO is launching an expected VM image.
 
 ### Guest VM setup
 
@@ -75,7 +75,7 @@ Then, initramfs hook invokes the functions in jindisksetup, to open the JinDisk-
 
 Various remote attestation protocols can be integrated into this JinDisk-Setup project.
 
-Here we first brief how JinDisk-Setup works with RA. For example in SEV-SNP, a guest VM can makes use of the proposed SEV-SNP support to obtain an attestation report via the `sevguest.ko` and `ccp.ko`  kernel modules. The ccp.ko module can optionally store the VCEK certificate for the platform along with the certificate chain necessary to validate the VCEK certificate.  This guest kernel driver is responsible for sending the SNP_GUEST_REQUEST message to the ASP firmware and presenting the reply back to user space.
+Here we first brief how JinDisk-Setup works with RA. For example in SEV-SNP, a guest VM can makes use of the proposed SEV-SNP support to obtain an attestation report via the `sevguest.ko` and `ccp.ko`  kernel modules ([CCP](https://lwn.net/Articles/735732/)). The `ccp.ko` module can optionally store the VCEK certificate for the platform along with the certificate chain necessary to validate the VCEK certificate.  This guest kernel driver is responsible for sending the `SNP_GUEST_REQUEST` message to the ASP firmware and presenting the reply back to user space.
 
  The attestation report can then be sent to the Guest Owner.
 
@@ -88,6 +88,8 @@ This procedure can be portable as long as the Step 3 and Step 4 are modular. Int
 ---
 
 ## Step-by-step Workflow
+
+Here, we give step-by-step instructions to show how we can prepare the JinDisk-encrypted image and launch it.
 
 ### Environment settings
 
@@ -122,21 +124,21 @@ After the Ubuntu has been installed, restart the guest VM and check whether the 
 After setting environment variables, you can launch the reference image (the clean image that is deployed from the Ubuntu ISO), you can use the [startup-ref.sh](./out-of-VM/startup-ref.sh) script to do so.
 Feel free to modify this bash script to costomize your own VM. 
 Remember to set the configurations in the [env.sh](./out-of-VM/env.sh) and the `startup-ref.sh` before launching the guest VM. 
-Since we take SEV-SNP as the example to explain the image preparation procedures, therefore to launch a SEV-SNP guest, a QEMU argument has to be added: `-object sev-guest,id=sev0,cbitpos=51,reduced-phys-bits=1`. Note that the params for SEV passed to the QEMU should be different from the ones on Intel TDX hosts. So, it's recommended that you use your own QEMU binary and your own path to the OVMF_CODE/OVMF_VARS (virtual firmwares). 
+Since we take SEV-SNP as the example to explain the image preparation procedures, therefore to launch a SEV-SNP guest, a QEMU argument has to be added: `-object sev-guest,id=sev0,cbitpos=51,reduced-phys-bits=1`. Note that the params for SEV passed to the QEMU should be different from the ones on Intel TDX hosts. So, it's recommended that you use your own QEMU binary and your own path to the `OVMF_CODE`/`OVMF_VARS` (virtual firmwares). 
 
 You can use Vncviewer to connect the guest VM (or via ssh). 
 
 
 ### JinDisk Installation (in-VM)
 
-Right after starting up and logging on the reference VM, you need to install the JinDisk (the jindisksetup binaries and the dm-jindisk kernel module) in the initramfs first. To do that, simply run the [install-user-cli.sh](./in-VM/setup-scripts/install-user-cli.sh) and the [install-kernel-module.sh](./in-VM/setup-scripts/install-kernel-module.sh).
+Right after starting up and logging on the reference VM, you need to install the JinDisk (the `jindisksetup` binaries and the `dm-jindisk` kernel module) in the initramfs first. To do that, simply run the [install-user-cli.sh](./in-VM/setup-scripts/install-user-cli.sh) and the [install-kernel-module.sh](./in-VM/setup-scripts/install-kernel-module.sh).
 
-You may have to reinstall the Linux kernel when installing JinDisk kernel module. Refer to its [README](../../../kernel-module/c/README.md) for more details. And you can also refer to the [README](../../../user-cli/README.md) for the installation of JinDisk user-space CLI.
+You may have to reinstall the Linux kernel when installing JinDisk kernel module. Refer to its [README](../../kernel-module/c/README.md) for more details. And you can also refer to the [README](../../user-cli/README.md) for the installation of JinDisk user-space CLI.
 
 
 ### Buiding the new JinDisk image (in-VM)
 
-**Note that we recommand to use an in-VM approach to generate JinDisk-encrypted image, which is faster than generating it on a non-virtualized host (just like what the [official SEV-SNP end-to-end remote attestation example](https://github.com/AMDESE/sev-guest) does). And the in-VM way has less compatibility issues.**
+**Note that we recommand to use an in-VM approach to generate JinDisk-encrypted image, which is faster than generating it on a non-virtualized host (just like what the [official SEV-SNP end-to-end remote attestation example](https://github.com/AMDESE/sev-guest) does). Also, the in-VM way has less compatibility issues.**
 
 After the kernel module and JinDisk user-space tool are installed and the initramfs hooks are placed, you can start to prepare the JinDisk-encrypted image. In the [in-VM](./in-VM/) directory, which stores the scripts that should be running inside a VM, you can use the [assemble.sh](./in-VM/assemble.sh) to create the new JinDisk-encrypted image.
 
@@ -146,9 +148,9 @@ Once the `assemble.sh` script being executed successfully, you will see three pa
 
 ### Launching the new JinDisk-encrypted guest image (out-of-VM)
 
-Once you've done all the above-mentioned preparation, the last step is to startup the new image. Use [startup-new.sh](./out-of-VM/startup-new.sh) to do so.
+Once you've done all the above-mentioned preparation, the last step is to start up the new image. Use [startup-new.sh](./out-of-VM/startup-new.sh) to do so.
 
-When using the `startup-new.sh`, remember to set the [env.sh](./out-of-VM/env.sh) and attach the blank new QCOW2 file (e.g., `ubuntu-22.04-new.qcow2`) as the virtual disk of the new image.
+When using the `startup-new.sh`, remember to set the [env.sh](./out-of-VM/env.sh) and attach the blank new Qcow2 file (e.g., `ubuntu-22.04-new.qcow2`) as the virtual disk of the new image.
 
 
 ## Compatibility and Security
