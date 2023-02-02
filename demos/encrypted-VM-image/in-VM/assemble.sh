@@ -32,7 +32,8 @@ ref_rootfs=/dev/sda2
 
 jindisk_MNT=$(mktemp -d /tmp/jindisk-mnt-XXXXXX)
 
-initramfs_hook_dir=../../initramfs-hook-ubuntu
+SHELL_FOLDER=$(cd "$(dirname "$0")";pwd)
+initramfs_hook_dir="${SHELL_FOLDER}/initramfs-hooks"
 
 cleanup()
 {
@@ -191,26 +192,22 @@ echo "Add initramfs-jindisk hooks..."
 #TODO: make sure this script can be also used in CentOS
 
 if [ "${ID}" == "ubuntu" ]; then
-
-    echo "Copying initramfs hooks..."
-    cp -f ${initramfs_hook_dir}/hook-add-executables ${jindisk_mnt}/etc/initramfs-tools/hooks/
-    cp -f ${initramfs_hook_dir}/hook-unlock ${jindisk_mnt}/etc/initramfs-tools/scripts/init-premount/
-
     #uuid=$(blkid -s UUID -o value ${jindisk_partition})
 
-    echo "Replacing fstab..."
-    cp -f ${initramfs_hook_dir}/fstab ${jindisk_mnt}/etc/fstab
-
-    echo "Preparing RA & unlocking scripts..."
+    echo "Preparing key obtaining & unlocking scripts..."
     pushd ${initramfs_hook_dir}
-        #TODO: remove the following later
-        cp -f key.example ${jindisk_mnt}/sbin/
+        echo "Copying initramfs hooks..."
+        cp -f hook-add-executables ${jindisk_mnt}/etc/initramfs-tools/hooks/
+        cp -f hook-unlock ${jindisk_mnt}/etc/initramfs-tools/scripts/init-premount/
+        echo "Replacing fstab..."
+        cp -f fstab ${jindisk_mnt}/etc/fstab
         echo "Filling getting-key script..."
+        cp -f key.example ${jindisk_mnt}/sbin/
         #TODO: reading key/certificate using RA script/binary 'getting_key'
-        cp -f getting_key ${jindisk_mnt}/sbin/
+        cp -f getting_key.sh ${jindisk_mnt}/sbin/
         echo "Filling unlocking script..."
         #TODO: entry can be read from /etc/jindisktab
-        cp -f jindisk_unlocking ${jindisk_mnt}/sbin/
+        cp -f opening_disk.sh ${jindisk_mnt}/sbin/
     popd
     
 

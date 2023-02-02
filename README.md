@@ -50,7 +50,7 @@ The repository contains the Linux version of JinDisk, which consists of two part
 
 * [`kernel-module`](kernel-module/) is the kernel-space component of JinDisk, a [Linux device mapper](https://www.kernel.org/doc/html/next/admin-guide/device-mapper/index.html) target that implements the log-structured secure block device.
 
-* [`setup-tool`](setup-tool/) is the user-space component of JinDisk, which includes a set of tools used to set up JinDisk-enabled virtual disks conveniently.
+* [`user-cli`](user-cli/) is the user-space component of JinDisk, which includes a set of tools used to set up JinDisk-enabled virtual disks conveniently.
 
 ## License
 
