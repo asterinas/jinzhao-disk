@@ -2,7 +2,7 @@
 
 This demo consists of source, scripts, and configuration files that can be used together to demonstrate how we can boot up a confidential virtual machine (VM) whose VM image protected with JinDisk. It can help the user of a confidential computing cloud to transform his/her base image to a encrypted JinDisk image. And scripts are designed for the guest user to build a confidential VM image and to start up the confidential VM automatically.
 
-We first describe the [components](#1) that this demo needs.
+We first outline the necessary [components](#1) for this demonstration.
 
 We then show the [general workflow](#2) of deploying a confidential VM image from the Guest Owner's perspective. Here, the *Guest Owner (GO)* is the client in a VM-based TEE environment that would like to use the confidential computing cloud.
 
@@ -13,8 +13,8 @@ Finally, we give a [step-by-step guide](#3) to show how the Guest Owner can prep
 <h2 id="1"> Components </h2>
 
 The demo depends on several components. 
-The first one is the `jindisksetup` command line tool used to conveniently set up the `dm-jindisk` kernel module, which works as a device mapper and provides transparent encryption of block devices. 
-Secondly, we need an initramfs hook that can be called to decrypt the encrypted image when the guest VM is booted. 
+The foremost is the `jindisksetup` command line tool used to conveniently set up the `dm-jindisk` kernel module, which works as a device mapper and provides transparent encryption of block devices. 
+Secondly, we require an initramfs hook that can be invoked to decrypt the encrypted image when the guest virtual machine is initiated. 
 The third one is the remote attestation part that finishes the key exchange.
 
 ### JinDisk user CLI (jindisksetup) and JinDisk kernel module (dm-jindisk)
@@ -26,11 +26,13 @@ In this demo, we use the CLI and the kernel module to format a blank disk to an 
 
 ### Initramfs hooks
 
-To start up the encrypted VM automatically, namely to unlock the root partition (RootFS) of the the encrypted VM image, we should insert certain programs/hooks to decrypt the RootFS during the kernel boot process. We choose to deploy hooks into the initramfs of the VM image. Those hooks can be invoked after the kernel is initialized before the RootFS is mounted.
+To start up the encrypted VM, namely to unlock the root partition (RootFS) of the the encrypted VM image, we should insert certain programs/hooks to decrypt the RootFS during the kernel boot process. We choose to deploy hooks into the initramfs of the VM image. This initramfs also contains a minimal version of jindisksetup, which is used to unlock the encrypted RootFS partition. When the kernel starts, it will first invoke the initramfs scripts to decrypt the RootFS before mounting it to the root file system. In this way, the RootFS will be decrypted and accessible automatically.
 
 Initramfs hook is an early-stage service (in the guest kernel's initramfs image) we developed for decrypting the root partition when the guest kernel is loaded. This hook can be set to execute decryption after fstab mount. The cryptographic key to decrypt the root partition is retrieved from the RA (Remote Attestation) protocol.
 
-We implement the initramfs hooks with Ubuntu's [initramfs-tools](https://manpages.ubuntu.com/manpages/xenial/en/man8/initramfs-tools.8.html). Check our initramfs hook [implementation](./in-VM/initramfs-hooks/) for more information. 
+We implement the initramfs hooks with Ubuntu's [initramfs-tools](https://manpages.ubuntu.com/manpages/xenial/en/man8/initramfs-tools.8.html). 
+They provide an easy way to implement initramfs hooks. The easiest way to create an initramfs hook is to modify the `scripts/init-premount/` directory inside the initramfs-tools package.
+Check our initramfs hook [implementation](./in-VM/initramfs-hooks/) for more information. 
 
 ### Remote attestation procedure (TODO)
 
@@ -44,7 +46,7 @@ RA procedures can be integrated into JinDisk-Setup by replacing different RA imp
 
 <h2 id="2"> High-level Workflow </h2>
 
-The following diagram shows the high-level workflow and component relationships.
+The following diagram illustrates the high-level workflow and interdependencies between components.
 
 ![](./workflow.jpeg)
 
@@ -68,17 +70,17 @@ The first thing is to create a new image, which includes an EFI partition, a boo
 
 After that, GO can launch the secure VM through a TEE-supported Hypervisor (such as QEMU). The Hypervisor will help calculating the measurement of the guest VM's kernel and reported to GO, to ensure that GO is launching an expected VM image.
 
-### Guest VM setup
+### Guest VM startup
 
-To fully set up a confidential VM is not easy. It involves complex encryption complicated among multiple parties. Unlocking the RootFS of the guest's VM image is the main goal of the initramfs hook. But, before unlocking the root filesystem, the root partition should be mounted automatically during the kernel boot.
+This is the Step 5 - guest disk decryption. 
+Unlocking the RootFS of the guest's VM image is the main goal of the initramfs hook. Before unlocking the root filesystem, the root partition should be mounted automatically during the kernel boot.
+Then, initramfs hook invokes the functionalities in the `jindisksetup` automatically, to open the JinDisk-formatted root partition.
 
-Then, initramfs hook invokes the functions in the `jindisksetup`, to open the JinDisk-formatted root partition.
+### Portable RA and key provisioning
 
-### Portable RA
+This is the Step 3 and 4. Various remote attestation protocols can be integrated into this demo.
 
-Various remote attestation protocols can be integrated into this demo.
-
-Here we brief how the demo works with RA. For example in AMD SEV-SNP, a guest VM can makes use of the SEV-SNP hardware to obtain an attestation report via the `sevguest.ko` and `ccp.ko` kernel modules ([CCP](https://lwn.net/Articles/735732/)). The `ccp.ko` module can optionally store the VCEK certificate for the platform along with the certificate chain necessary to validate the VCEK certificate. This guest kernel driver is also responsible for sending the `SNP_GUEST_REQUEST` message to the ASP firmware and presenting the reply back to user space.
+Here we brief how the demo works with AMD SEV's RA. For example in SEV-SNP, a guest VM can makes use of the SEV-SNP hardware to obtain an attestation report via the `sevguest.ko` and `ccp.ko` kernel modules ([CCP](https://lwn.net/Articles/735732/)). The `ccp.ko` module can optionally store the VCEK certificate for the platform along with the certificate chain necessary to validate the VCEK certificate. This guest kernel driver is also responsible for sending the `SNP_GUEST_REQUEST` message to the ASP firmware and presenting the reply back to user space.
 
 The attestation report can then be sent to the Guest Owner via network.
 
@@ -86,13 +88,13 @@ The Guest Owner can retrieve the certificate chain to validate the attestation r
 
 Later the disk encryption key can be transmitted to the guest VM via the trusted channel.
 
-This procedure can be portable as long as the Step 3 and Step 4 are modular. Intel TDX also provides such similar measurement (just like SEV's attestation report) for GO to verify, so the Step 3 can be replaced with retrieving any other corresponding certificates (such as the TDREPORT in TDX). And Step 4 can be implemented as a protocol like RA-TLS. In this case, the establishment of secure channel could be portable.
+This procedure can be portable as long as the Step 3 and Step 4 are modular. Intel TDX also provides such similar measurement (just like SEV's attestation report) for GO to verify, so the Step 3 can be replaced with retrieving any other corresponding certificates (such as the TDREPORT in TDX). And Step 4 can be implemented as a protocol like RA-TLS. In this case, the establishment of secure channel could be portable. And all these operations can be programmed into the initramfs hooks.
 
 ---
 
 <h2 id="3"> Step-by-step Workflow </h2>
 
-Here, we give step-by-step instructions to show how we can prepare the JinDisk-encrypted image and launch it. Some steps (such as installing and launching VM) must be performed on the host (aka. out of the VM) and some steps (installing JinDisk into initramfs) are better to run inside the guest VM.
+Here, we provide step-by-step guidance on how to prepare the JinDisk-encrypted image and boot it. Some processes (e.g. installing and launching the virtual machine) should be done on the host (i.e. outside the VM) while others (such as installing JinDisk into initramfs) are best done within the guest VM.
 
 ### Environment settings
 
@@ -102,7 +104,7 @@ We take SEV-SNP as an example. To deploy and test a confidential Guest VM using 
 
 NOTE: For standard instructions to build SEV and SEV-ES kernels, check the main branch of the AMDSEV repository please. For instructions to build SEV-SNP kernels, see the `sev-snp-devel` branch.
 
-Once upon the boot test is done, you can use the following steps to prepare your own encrypted VM image. The aim is to fully protect the confidentiality of Guest Owner's secret data. To better understand the security rationale behind it, see [security-considerations.md](../../docs/security-considerations.md) in docs.
+Once upon the boot test is complete, you can use the following steps to prepare your own encrypted VM image. The aim is to fully protect the confidentiality of Guest Owner's secret data. To better understand the security rationale and security implications behind it, consult [security-considerations.md](../../docs/security-considerations.md) in docs.
 
 ### Blank (Reference) Disk Preparation (out-of-VM)
 
@@ -121,7 +123,7 @@ qemu-img create -f qcow2 ubuntu-22.04-ref.qcow2 50G
 ```
 
 Then, install the guest VM using the downloaded ISO. Refer to the [official manual](https://ubuntu.com/server/docs/installation) for more details.
-After the Ubuntu has been installed, restart the guest VM and check whether the installation is successful. This time remove the `-boot dc` argument and detach the ISO drive.
+AAfter the installation is complete, reboot the guest VM and check if the installation was successful. This time remove the `-boot dc` argument and detach the ISO drive.
 
 
 After setting environment variables, you can launch the reference image (the clean image that is deployed from the Ubuntu ISO), you can use the [startup-ref.sh](./out-of-VM/startup-ref.sh) script to do so.
@@ -141,7 +143,7 @@ You may have to reinstall the Linux kernel when installing JinDisk kernel module
 
 ### Buiding the new JinDisk image (in-VM)
 
-**Note that we recommand to use an in-VM approach to generate JinDisk-encrypted image, which is faster than generating it on a non-virtualized host (just like what the [official SEV-SNP end-to-end remote attestation example](https://github.com/AMDESE/sev-guest) does). Also, the in-VM way has less compatibility issues.**
+**Note that we recommend to use an in-VM approach to generate JinDisk-encrypted image, which is faster than generating it on a non-virtualized host (just like what the [official SEV-SNP end-to-end remote attestation example](https://github.com/AMDESE/sev-guest) does). Also, the in-VM way has less compatibility issues.**
 
 After the kernel module and user-space tool are installed, you can start to prepare the JinDisk-encrypted image. The [in-VM](./in-VM/) directory stores the scripts that should be running inside a VM, where you can use the [assemble.sh](./in-VM/assemble.sh) to create the new JinDisk-encrypted image. Encrypted partitions will be created and initramfs hooks will be placed.
 
@@ -155,6 +157,7 @@ Once you've done all the above-mentioned preparation, the last step is to start 
 
 When using the `startup-new.sh`, remember to set the [env.sh](./out-of-VM/env.sh) and attach the blank new Qcow2 file (e.g., `ubuntu-22.04-new.qcow2`) as the virtual disk of the new image.
 
+---
 
 ## Compatibility and Security
 
@@ -162,6 +165,7 @@ This demo has been tested on Ubuntu 20.04/22.04 as the guest OS, with Linux 5.15
 
 Architectural discussions and security considerations are available in the [docs](../../docs/) directory. 
 
+---
 
 ## Future Work
 
