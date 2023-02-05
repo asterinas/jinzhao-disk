@@ -213,6 +213,7 @@ struct metadata {
 	void (*destroy)(struct metadata *this);
 };
 
+uint64_t calc_avail_sectors(uint64_t real_sectors);
 uint64_t calc_metadata_blocks(uint64_t nr_segment);
 struct metadata *metadata_create(char *key, char *iv, unsigned long action_flag,
 				 struct block_device *bdev);

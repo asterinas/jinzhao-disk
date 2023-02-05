@@ -1282,6 +1282,48 @@ uint64_t calc_metadata_blocks(uint64_t nr_segment)
 	       __bit_catalogue_blocks(nr_bits) * NR_CHECKPOINT_PACKS;
 }
 
+/*
+ * calc_avail_sectors - calculate the maximum available sectors
+ * @real_sectors: The total sectors of an untrusted block device, which can be
+ *  acquired through bdev_nr_sectors().
+ *
+ * Return the maximum available sectors, which ban be considered as the logical
+ * size of a JinDisk device.
+ */
+uint64_t calc_avail_sectors(uint64_t real_sectors)
+{
+	uint64_t avail_sectors, meta_sectors, probe_sectors;
+	uint64_t total_segments, step_segments;
+
+	/*
+	 * JinDisk preserved NR_GC_PRESERVED segments to do segment cleanning
+	 * efficiently, subtract these sectors at first.
+	 */
+	if (real_sectors < NR_GC_PRESERVED * SECTORS_PER_SEGMENT)
+		return 0;
+
+	real_sectors -= NR_GC_PRESERVED * SECTORS_PER_SEGMENT;
+
+	/*
+	 * Binary probes for maximum available sectors.
+	 */
+	avail_sectors = 0;
+	step_segments = div_u64((real_sectors >> 1), SECTORS_PER_SEGMENT);
+	while (avail_sectors < real_sectors && step_segments != 0) {
+		probe_sectors =
+			avail_sectors + step_segments * SECTORS_PER_SEGMENT;
+		total_segments = div_u64(probe_sectors, SECTORS_PER_SEGMENT) +
+				 NR_GC_PRESERVED;
+		meta_sectors = calc_metadata_blocks(total_segments) *
+			       SECTORS_PER_BLOCK;
+		if (meta_sectors <= real_sectors - probe_sectors)
+			avail_sectors = probe_sectors;
+		else
+			step_segments >>= 1;
+	}
+	return avail_sectors;
+}
+
 void metadata_destroy(struct metadata *this)
 {
 	if (!IS_ERR_OR_NULL(this)) {
