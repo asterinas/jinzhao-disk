@@ -8,6 +8,8 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/spinlock.h>
+#include <linux/ioctl.h>
+#include <linux/miscdevice.h>
 
 #include "../include/async.h"
 #include "../include/dm_jindisk.h"
@@ -793,78 +795,97 @@ static ssize_t clear_stats_store(struct kobject *kobj,
 static const struct kobj_attribute clear_stats =
 	__ATTR(clear_stats, 0200, NULL, clear_stats_store);
 
-#define INITIAL_RATIO (80 / 100)
-#define SECTORS_LOOP_STEP (8 * 1024)
-#define ALIGN_MASK (~0x1FFFULL)
+static const struct attribute *disk_attributes[] = { &disk_stats.attr,
+						     &clear_stats.attr, NULL };
 
-static uint64_t real_sectors = 0;
-static ssize_t calc_avail_sectors_show(struct kobject *kobj,
-				       struct kobj_attribute *attr, char *buf)
+/*---- ioctl interface ----*/
+
+struct calc_task {
+	uint64_t real_sectors;
+	uint64_t avail_sectors;
+};
+
+static long ctl_calc_avail_sectors(unsigned long arg)
 {
-	int size = 0;
-	uint64_t available = 0, next;
-	uint64_t segments, sectors;
+	long r = -EINVAL;
+	struct calc_task ct;
 
-	//	size += sysfs_emit_at(buf, size, "real_sectors:%llu\n", real_sectors);
-	if (real_sectors == 0)
+	r = copy_from_user(&ct, (void __user *)arg, sizeof(struct calc_task));
+	if (r)
 		goto out;
 
-	available = (real_sectors * INITIAL_RATIO) & ALIGN_MASK;
-	available += NR_GC_PRESERVED * SECTORS_PER_SEGMENT;
-	while (available < real_sectors) {
-		next = available + SECTORS_LOOP_STEP;
-		if (next > real_sectors)
-			break;
-		segments = div_u64(next, SECTORS_PER_SEGMENT);
-		sectors = calc_metadata_blocks(segments + NR_GC_PRESERVED) *
-				  SECTORS_PER_BLOCK +
-			  next;
-		if (sectors > real_sectors)
-			break;
-		available = next;
-	}
+	ct.avail_sectors = calc_avail_sectors(ct.real_sectors);
+
+	r = copy_to_user((void __user *)arg, &ct, sizeof(struct calc_task));
 out:
-	//	size += sysfs_emit_at(buf, size, "available:%llu\n", available);
-	size += sysfs_emit_at(buf, size, "%llu", available);
-	return size;
+	return r;
 }
-static ssize_t calc_avail_sectors_store(struct kobject *kobj,
-					struct kobj_attribute *attr,
-					const char *buf, size_t n)
+
+#define JINDISK_IOC_MAGIC 'J'
+#define NR_CALC_AVAIL_SECTORS 0
+
+#define JINDISK_CALC_AVAIL_SECTORS                                             \
+	_IOWR(JINDISK_IOC_MAGIC, NR_CALC_AVAIL_SECTORS, struct calc_task)
+
+static long dev_jindisk_ioctl(struct file *filp, unsigned int ioctl,
+			      unsigned long arg)
 {
-	if (kstrtoull(buf, 10, &real_sectors) < 0) {
-		real_sectors = 0;
-		return -EINVAL;
+	long r = -EINVAL;
+
+	switch (ioctl) {
+	case JINDISK_CALC_AVAIL_SECTORS:
+		r = ctl_calc_avail_sectors(arg);
+		break;
+	default:
+		break;
 	}
-	return n;
+	return r;
 }
 
-static const struct kobj_attribute calc_avail_sectors =
-	__ATTR(calc_avail_sectors, 0600, calc_avail_sectors_show,
-	       calc_avail_sectors_store);
+static const struct file_operations dev_jindisk_fops = {
+	.owner = THIS_MODULE,
+	.unlocked_ioctl = dev_jindisk_ioctl,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl = dev_jindisk_ioctl,
+#endif
+};
 
-static const struct attribute *disk_attributes[] = {
-	&disk_stats.attr, &clear_stats.attr, &calc_avail_sectors.attr, NULL
+static struct miscdevice dev_jindisk = {
+	MISC_DYNAMIC_MINOR,
+	"jindisk",
+	&dev_jindisk_fops,
 };
 
 /*---------Module Functions -----------------*/
 static int init_dm_jindisk_target(void)
 {
 	int r;
-	struct kobject *mod_kobj = NULL;
+	struct kobject *mod_kobj = &(THIS_MODULE->mkobj.kobj);
 
-	r = dm_register_target(&dm_jindisk);
-	if (r < 0) {
-		DMERR("Error in registering target");
+	r = sysfs_create_files(mod_kobj, disk_attributes);
+	if (r) {
+		DMERR("sysfs_create_files failed err:%d", r);
 		goto out;
-	} else {
-		DMINFO("Target registered");
 	}
 
-	mod_kobj = &(THIS_MODULE->mkobj.kobj);
-	r = sysfs_create_files(mod_kobj, disk_attributes);
-	if (r)
-		DMERR("sysfs_create_files failed err:%d", r);
+	r = misc_register(&dev_jindisk);
+	if (r) {
+		DMERR("misc_register failed err:%d", r);
+		goto free_sysfs;
+	}
+
+	r = dm_register_target(&dm_jindisk);
+	if (r) {
+		DMERR("dm_register_target failed err:%d", r);
+		goto free_misc;
+	}
+
+	DMINFO("target registered");
+	return 0;
+free_misc:
+	misc_deregister(&dev_jindisk);
+free_sysfs:
+	sysfs_remove_files(mod_kobj, disk_attributes);
 out:
 	return r;
 }
@@ -873,9 +894,10 @@ static void cleanup_dm_jindisk_target(void)
 {
 	struct kobject *mod_kobj = &(THIS_MODULE->mkobj.kobj);
 
-	dm_unregister_target(&dm_jindisk);
 	sysfs_remove_files(mod_kobj, disk_attributes);
-	DMINFO("Target unregistered");
+	misc_deregister(&dev_jindisk);
+	dm_unregister_target(&dm_jindisk);
+	DMINFO("target unregistered");
 }
 
 module_init(init_dm_jindisk_target);

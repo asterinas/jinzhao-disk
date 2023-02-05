@@ -8,6 +8,7 @@
 
 #include "../include/lsm_tree.h"
 #include "../include/memtable.h"
+#include "../include/metadata.h"
 
 void rbtree_memtable_test(struct kunit *test)
 {
@@ -36,9 +37,20 @@ void rbtree_memtable_test(struct kunit *test)
 	}
 }
 
-static struct kunit_case jindisk_test_cases[] = { KUNIT_CASE(
-							  rbtree_memtable_test),
-						  {} };
+static void calc_avail_sectors_test(struct kunit *test)
+{
+	// minimum input test: 0x0
+	KUNIT_EXPECT_EQ(test, calc_avail_sectors(0ull), 0ull);
+	// maximum input test: 0xFFFFFFFFFFFFFFFF
+	KUNIT_EXPECT_EQ(test, calc_avail_sectors(0xFFFFFFFFFFFFFFFF),
+			18372064450009194496ull)
+}
+
+static struct kunit_case jindisk_test_cases[] = {
+	KUNIT_CASE(rbtree_memtable_test),
+	KUNIT_CASE(calc_avail_sectors_test);
+	{}
+};
 
 static struct kunit_suite jindisk_test_suite = {
 	.name = "dm-jindisk",
