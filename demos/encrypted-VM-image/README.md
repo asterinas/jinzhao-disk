@@ -22,7 +22,9 @@ The third one is the remote attestation part that finishes the key exchange.
 The [jindisksetup](../../user-cli/) is the command line interface for creating, accessing, and managing encrypted JinDisk devices.
 The [dm-jindisk](../../kernel-module/) a new Linux [device mapper](https://docs.kernel.org/admin-guide/device-mapper/index.html) target that takes JinDisk as a type of secure block devices to Linux.
 
-In this demo, we use the CLI and the kernel module to format a blank disk to an encrypted disk.
+In this demo, we use the CLI and the kernel module to 1) format a blank disk to an encrypted disk and 2) open an encrypted disk.
+
+We provide [scripts](./in-VM/setup-scripts/) to facilitate the installation of JinDisk on Linux and to enable it inside the Linux initramfs. These scripts are reusable on Ubuntu and can be adopted on other Linux distributions with minor modifications.
 
 ### Initramfs hooks
 
@@ -150,7 +152,7 @@ You may have to reinstall the Linux kernel when installing JinDisk kernel module
 
 After the kernel module and user-space tool are installed, you can start to prepare the JinDisk-encrypted image. The [in-VM](./in-VM/) directory stores the scripts that should be running inside a VM, where you can use the [assemble.sh](./in-VM/assemble.sh) to create the new JinDisk-encrypted image. Encrypted partitions will be created and initramfs hooks will be placed.
 
-If not specified, the output file name will be `new_image`, and the size will be `DEFAULT_IMG_SIZE` which can be set in the [env.sh](./out-of-VM/env.sh). 
+If not specified, the output file name will be the `new_image` by default, and the size will be the `DEFAULT_IMG_SIZE` which can be set in the [env.sh](./out-of-VM/env.sh). 
 
 Once the `assemble.sh` script being executed successfully, you will see three partitions have been built on the virtual disk (`/dev/sdb`) of the new image, including a boot partition, an EFI partition, and a JinDisk RootFS partition. Then, you can shutdown the reference VM (or detach the virtual disk `/dev/sdb`) for launching the newly-created image later.
 
