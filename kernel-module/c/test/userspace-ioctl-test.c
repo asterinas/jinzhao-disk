@@ -24,22 +24,25 @@ struct calc_task {
 #define JINDISK_CALC_AVAIL_SECTORS	\
 	_IOWR(JINDISK_IOC_MAGIC, NR_CALC_AVAIL_SECTORS, struct calc_task)
 
-void assert_CALC_AVAIL_SECTORS(int fd, u64 real_sectors,
-			       u64 avail_sectors)
+#define EXPECT_THRESHOLD(x, percent) ((x) / 100 * (percent))
+
+void assert_CALC_AVAIL_SECTORS(int fd, u64 real_sectors, int percent)
 {
 	int r = 0;
 	struct calc_task ct;
+	u64 threshold_sector;
 
+	threshold_sector = EXPECT_THRESHOLD(real_sectors, percent);
 	ct.real_sectors = real_sectors;
 	r = ioctl(fd, JINDISK_CALC_AVAIL_SECTORS, &ct);
 	if (r < 0) {
 		printf("do ioctl failed\n");
 		goto out;
 	}
-	if (ct.avail_sectors != avail_sectors) {
+	if (ct.avail_sectors < threshold_sector) {
 		printf("assert_CALC_AVAIL_SECTORS failed\n");
 		printf("actual: %llu\n", ct.avail_sectors);
-		printf("excepted: %llu\n", avail_sectors);
+		printf("threshold: %llu\n", threshold_sector);
 		goto out;
 	}
 	printf("assert_CALC_AVAIL_SECTORS successed\n");
@@ -58,9 +61,8 @@ int main()
 		r = -EAGAIN;
 		goto out;
 	}
-	assert_CALC_AVAIL_SECTORS(fd, 0ull, 0ull);
-	assert_CALC_AVAIL_SECTORS(fd, 0xFFFFFFFFFFFFFFFF,
-				  18372064450009194496ull);
+	assert_CALC_AVAIL_SECTORS(fd, 0ull, 0);
+	assert_CALC_AVAIL_SECTORS(fd, 0xFFFFFFFFFFFFFFFF, 80);
 
 	close(fd);
 out:

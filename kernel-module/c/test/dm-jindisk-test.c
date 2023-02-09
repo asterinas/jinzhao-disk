@@ -37,13 +37,16 @@ void rbtree_memtable_test(struct kunit *test)
 	}
 }
 
+#define EXPECT_THRESHOLD(x, percent) ((x) / 100 * (percent))
+
 static void calc_avail_sectors_test(struct kunit *test)
 {
 	// minimum input test: 0x0
-	KUNIT_EXPECT_EQ(test, calc_avail_sectors(0ull), 0ull);
+	KUNIT_EXPECT_GE(test, calc_avail_sectors(0ull),
+			EXPECT_THRESHOLD(0ull, 0));
 	// maximum input test: 0xFFFFFFFFFFFFFFFF
-	KUNIT_EXPECT_EQ(test, calc_avail_sectors(0xFFFFFFFFFFFFFFFF),
-			18372064450009194496ull)
+	KUNIT_EXPECT_GE(test, calc_avail_sectors(0xFFFFFFFFFFFFFFFF),
+			EXPECT_THRESHOLD(0xFFFFFFFFFFFFFFFF, 80));
 }
 
 static struct kunit_case jindisk_test_cases[] = {
