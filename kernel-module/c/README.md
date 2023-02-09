@@ -133,6 +133,97 @@ sdb              8:16   0   12G  0 disk
 └─test-jindisk 253:0    0   10G  0 dm
 ```
 
+ Additionally, to create a JinDisk device, you can also use the `jindisksetup` tool, provided by this repo. It is a dedicated command line tool for creating, accessing and managing encrypted JinDisk devices. Compared to `dmsetup`, it is much simplier and easier to use.
+
+ Here is a creating example, and `password` should be replaced by a secret phrase to protect the device cryptographically. For more details, please refer to this [README](../../user-cli/README.md).
+
+```bash
+$ sudo jindisksetup create <password> /dev/sdb test-jindisk
+```
+
+### Rapid Tests
+
+A quick test for reading and writing JinDisk can be conducted with [dd](https://en.wikipedia.org/wiki/Dd_(Unix)):
+
+```bash
+$ sudo dd if=/dev/random of=/dev/mapper/test-jindisk bs=1M count=100
+100+0 records in
+100+0 records out
+104857600 bytes (105 MB) copied, 0.348796 s, 301 MB/s
+
+$ sudo dd if=/dev/mapper/test-jindisk of=/dev/null bs=1M count=100
+100+0 records in
+100+0 records out
+104857600 bytes (105 MB) copied, 0.140638 s, 746 MB/s
+```
+
+Furthermore, you can format the JinDisk into a specific filesystem, e.g., ext4, then proceed with `dd` for basic file read & write tests.
+
+```bash
+$ sudo mkfs.ext4 /dev/mapper/test-jindisk
+mke2fs 1.43.5 (04-Aug-2017)
+Creating filesystem with 2621440 4k blocks and 655360 inodes
+Filesystem UUID: f0d2daf2-27a1-44e7-ba40-b31cd849829b
+Superblock backups stored on blocks:
+	32768, 98304, 163840, 229376, 294912, 819200, 884736, 1605632
+
+Allocating group tables: done
+Writing inode tables: done
+Creating journal (16384 blocks): done
+Writing superblocks and filesystem accounting information: done
+
+$ sudo mkdir test-dir
+$ sudo mount /dev/mapper/test-jindisk test-dir
+$ sudo dd if=/dev/random of=./test-dir/tmpfile bs=1M count=100
+100+0 records in
+100+0 records out
+104857600 bytes (105 MB) copied, 0.256483 s, 409 MB/s
+
+$ sudo dd if=./test-dir/tmpfile of=/dev/null bs=1M count=100
+100+0 records in
+100+0 records out
+104857600 bytes (105 MB) copied, 0.0132526 s, 7.9 GB/s
+```
+
+### Remove a JinDisk device
+
+If the filesystem on JinDisk device is still attached to some directory, you should `umount` it first:
+```bash
+$ sudo umount /dev/mapper/test-jindisk
+```
+
+Sometimes, the device may be too busy to umount. The following commands could provide useful infomation about processes that use the device, and help you decide how to deal with these conflicts(e.g., `kill <PID>`):
+```bash
+$ sudo findmnt -l /dev/mapper/test-jindisk
+TARGET        SOURCE                   FSTYPE OPTIONS
+/root/jindisk /dev/mapper/test-jindisk ext4   rw,relatime
+
+$ sudo lsof -l /dev/mapper/test-jindisk
+COMMAND   PID     USER   FD   TYPE DEVICE SIZE/OFF NODE NAME
+bash    12620        0  cwd    DIR  253,0     4096    2 /root/jindisk
+
+$ sudo fuser -v /root/jindisk
+                     USER        PID ACCESS COMMAND
+/root/jindisk:       root     kernel mount /root/jindisk
+                     root      12620 ..c.. bash
+```
+
+Then remove a JinDisk device with `dmsetup`:
+```bash
+$ sudo dmsetup remove test-jindisk
+```
+
+or with `jindisksetup`:
+```bash
+$ sudo jindisksetup close test-jindisk
+```
+
+Finally, remove the related kernel modules.
+```bash
+$ sudo rmmod dm-jindisk
+$ sudo modprobe -r dm-bufio
+```
+
 ## Fio Benchmark
 
 To benchmark persistent disk performance, you can use [FIO](https://fio.readthedocs.io/) instead of other disk benchmarking tools such as [dd](https://en.wikipedia.org/wiki/Dd_(Unix)). By default, `dd` uses a very low I/O queue depth, so it is difficult to ensure that the benchmark is generating a sufficient number of I/Os and bytes to accurately test disk performance.
