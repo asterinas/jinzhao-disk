@@ -1,4 +1,4 @@
-# JinDisk
+# Jinzhao Disk
 
 ## Introduction
 
