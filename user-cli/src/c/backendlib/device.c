@@ -34,6 +34,16 @@
 #include "internal.h"
 #include "device.h"
 
+struct calc_sectors {
+        uint64_t real;
+        uint64_t available;
+};
+
+#define JINDISK_IOC_MAGIC 'J'
+#define NR_CALC_AVAIL_SECTORS 0
+#define JINDISK_CALC_AVAIL_SECTORS      \
+                _IOWR(JINDISK_IOC_MAGIC, NR_CALC_AVAIL_SECTORS, struct calc_sectors)
+
 static size_t device_block_size_fd(int fd)
 {
 	struct stat st;
@@ -249,39 +259,25 @@ out:
 
 uint64_t get_payload_size(uint64_t disk_size)
 {
-	FILE *fp = NULL;
-	int max_size = 256;
-	char *disk_size_str = malloc(max_size);
-	char *data_size_str = malloc(max_size);
+        int r, fd;
+        struct calc_sectors cs = {
+                .real = disk_size,
+                .available = 0
+        };
 
-	uint64_t data_size = 0;
-	int r;
-	r = snprintf(disk_size_str, max_size, "%lu", disk_size);
-
-	fp = fopen("/sys/module/jindisk/calc_avail_sectors", "w");
-	if (fp == NULL) {
-		printf("Cannot find the sysfs object!\n");
-		goto err;
-	}
-	fputs(disk_size_str, fp);
-	fclose(fp);
-	printf("Disk size: %lu.\n", disk_size);
-
-	fp = fopen("/sys/module/jindisk/calc_avail_sectors", "r");
-	if (fp == NULL) {
-		printf("Cannot find the sysfs object!\n");
-		goto err;
-	}
-	fscanf(fp, "%s", data_size_str);
-	sscanf(data_size_str, "%lu", &data_size);
-	fclose(fp);
-
-	return data_size;
-
-err:
-	// FIXME: hack here
-	data_size = disk_size * 4 / 5;
-	return data_size;
+        fd = open("/dev/jindisk", O_RDWR);
+        if(fd < 0) {
+                printf("Open /dev/jindisk failed!\n");
+                return 0;
+        }
+        r = ioctl(fd, JINDISK_CALC_AVAIL_SECTORS, &cs);
+        if (r) {
+                printf("IOCTL failed\n");
+                return r;
+        }
+        printf("Real size: %lu, available size: %lu\n", cs.real, cs.available);
+        close(fd);
+        return cs.available;
 }
 
 int device_block_adjust(struct device *device, uint64_t device_offset,
@@ -290,12 +286,10 @@ int device_block_adjust(struct device *device, uint64_t device_offset,
 	int r, real_readonly;
 	uint64_t real_size;
 
-	uint64_t disk_size, data_size = 0;
-
 	if (!device)
 		return -ENOTBLK;
 
-	// WL: get the real size
+	// WL: get the disk size
 	r = device_info(device, &real_readonly, &real_size);
 	if (r)
 		return r;
