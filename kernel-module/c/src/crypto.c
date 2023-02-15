@@ -224,3 +224,174 @@ bad:
 		kfree(this);
 	return NULL;
 }
+
+/*
+ * This function could be strengthened by some keyed
+ * cryptographic hash function.
+ */
+static int generate_iv(uint64_t seed, char *iv, int len)
+{
+	u32 *p = (u32 *)iv;
+	int round = len / sizeof(u32);
+
+	memset(iv, 0, len);
+	while (round--)
+		*(p++) = crc32_be(seed, iv, len);
+
+	return 0;
+}
+
+/*
+ * __aes_cbc_cipher_helper - perform cbc(aes) encrypt/decrypt operation
+ * @sc: the pointer of skcipher object
+ * @op: operation code, e.g., AES_CBC_ENCRYPT/AES_CBC_DECRYPT
+ * @src: source buffer
+ * @len: length of the src in bytes, no more than 4096
+ * @key: symmetric key for the operation
+ * @iv: IV for the cipher operation, if NULL, use generate_iv() to obtain
+ *  an IV according to the seq parameter
+ * @seq: seed for IV generation, maybe unuse
+ * @dst: destination buffer
+ *
+ * This function assumes that all the pointer is valid, and will not cause
+ * illegal memory access.
+ *
+ * Return: 0 if the operation successed; < 0 if failed
+ */
+int __aes_cbc_cipher_helper(struct skcipher *sc, int op, char *src, int len,
+			    char *key, char *iv, uint64_t seq, char *dst)
+{
+	struct aes_cbc_cipher *this =
+		container_of(sc, struct aes_cbc_cipher, skcipher);
+	DECLARE_CRYPTO_WAIT(wait);
+	struct scatterlist src_sg, dst_sg;
+	char riv[AES_CBC_IV_SIZE] = { 0 };
+	int r = 0;
+
+	if (len <= 0 || len > BLOCK_SIZE)
+		return -EINVAL;
+
+	/* Align len to AES_CBC_BLOCK_SIZE */
+	if ((len & AES_CBC_BLOCK_MASK) != 0)
+		len = ((len | AES_CBC_BLOCK_MASK) ^ AES_CBC_BLOCK_MASK) + 1;
+
+	if (iv == NULL) {
+		r = generate_iv(seq, riv, AES_CBC_IV_SIZE);
+		if (r < 0)
+			goto exit;
+	} else {
+		/* The cbc(aes) will modify iv in-place, so copy it */
+		memcpy(riv, iv, AES_CBC_IV_SIZE);
+	}
+
+	r = mutex_lock_interruptible(&this->lock);
+	if (r < 0)
+		goto exit;
+
+	r = crypto_skcipher_setkey(this->tfm, key, AES_CBC_KEY_SIZE);
+	if (r < 0)
+		goto unlock_exit;
+
+	sg_init_one(&src_sg, src, len);
+	sg_init_one(&dst_sg, dst, len);
+	skcipher_request_set_callback(this->req,
+				      CRYPTO_TFM_REQ_MAY_BACKLOG |
+					      CRYPTO_TFM_REQ_MAY_SLEEP,
+				      crypto_req_done, &wait);
+	skcipher_request_set_crypt(this->req, &src_sg, &dst_sg, len, riv);
+
+	switch (op) {
+	case AES_CBC_ENCRYPT:
+		r = crypto_wait_req(crypto_skcipher_encrypt(this->req), &wait);
+		if (r < 0)
+			DMERR("cbc(aes) encryption failed");
+		break;
+	case AES_CBC_DECRYPT:
+		r = crypto_wait_req(crypto_skcipher_decrypt(this->req), &wait);
+		if (r < 0)
+			DMERR("cbc(aes) decryption failed");
+		break;
+	default:
+		DMERR("cbc(aes) handler: unsupported operation");
+		break;
+	}
+unlock_exit:
+	mutex_unlock(&this->lock);
+exit:
+	return r;
+}
+
+int aes_cbc_cipher_encrypt(struct skcipher *sc, char *data, int len, char *key,
+			   char *iv, uint64_t seq, char *out)
+{
+	return __aes_cbc_cipher_helper(sc, AES_CBC_ENCRYPT, data, len, key, iv,
+				       seq, out);
+}
+
+int aes_cbc_cipher_decrypt(struct skcipher *sc, char *data, int len, char *key,
+			   char *iv, uint64_t seq, char *out)
+{
+	return __aes_cbc_cipher_helper(sc, AES_CBC_DECRYPT, data, len, key, iv,
+				       seq, out);
+}
+
+void aes_cbc_cipher_destroy(struct skcipher *sc)
+{
+	struct aes_cbc_cipher *this =
+		container_of(sc, struct aes_cbc_cipher, skcipher);
+
+	crypto_free_skcipher(this->tfm);
+	skcipher_request_free(this->req);
+	kfree(this);
+}
+
+int aes_cbc_cipher_init(struct aes_cbc_cipher *this)
+{
+	int r = 0;
+
+	this->tfm = crypto_alloc_skcipher("cbc(aes)", 0, 0);
+	if (IS_ERR(this->tfm)) {
+		DMERR("could not allocate cbc(aes) handler");
+		r = -EAGAIN;
+		goto err;
+	}
+	this->req = skcipher_request_alloc(this->tfm, GFP_KERNEL);
+	if (!this->req) {
+		DMERR("could not allocate request for cbc(aes)");
+		r = -ENOMEM;
+		goto err;
+	}
+
+	mutex_init(&this->lock);
+	this->block_size = crypto_skcipher_blocksize(this->tfm);
+	this->iv_size = crypto_skcipher_ivsize(this->tfm);
+	this->key_size = AES_CBC_KEY_SIZE;
+
+	this->skcipher.encrypt = aes_cbc_cipher_encrypt;
+	this->skcipher.decrypt = aes_cbc_cipher_decrypt;
+	this->skcipher.destroy = aes_cbc_cipher_destroy;
+	return 0;
+err:
+	crypto_free_skcipher(this->tfm);
+	return r;
+}
+
+struct skcipher *aes_cbc_cipher_create(void)
+{
+	int r = 0;
+	struct aes_cbc_cipher *this;
+
+	this = kmalloc(sizeof(struct aes_cbc_cipher), GFP_KERNEL);
+	if (!this)
+		goto err;
+
+	r = aes_cbc_cipher_init(this);
+	if (r)
+		goto err;
+
+	return &this->skcipher;
+err:
+	if (this)
+		kfree(this);
+	return NULL;
+}
