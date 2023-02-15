@@ -425,14 +425,15 @@ int seg_validator_valid_segment_count(struct seg_validator *this, size_t *count)
 }
 
 int seg_validator_init(struct seg_validator *this, struct dm_bufio_client *bc,
-		       dm_block_t start, size_t nr_segment, int valid_field)
+		       char *key, dm_block_t start, size_t nr_segment,
+		       int valid_field)
 {
 	this->nr_segment = nr_segment;
 	this->blk_count = __seg_validity_table_blocks(nr_segment);
 	this->cur_segment = 0;
 	init_rwsem(&this->svt_lock);
 	this->seg_validity_table = disk_bitset_create(
-		bc, start + valid_field * this->blk_count, nr_segment);
+		bc, key, start + valid_field * this->blk_count, nr_segment);
 	if (IS_ERR_OR_NULL(this->seg_validity_table))
 		return -ENOMEM;
 
@@ -445,8 +446,8 @@ int seg_validator_init(struct seg_validator *this, struct dm_bufio_client *bc,
 }
 
 struct seg_validator *seg_validator_create(struct dm_bufio_client *bc,
-					   dm_block_t start, size_t nr_segment,
-					   int valid_field)
+					   char *key, dm_block_t start,
+					   size_t nr_segment, int valid_field)
 {
 	int r;
 	struct seg_validator *this;
@@ -455,7 +456,7 @@ struct seg_validator *seg_validator_create(struct dm_bufio_client *bc,
 	if (!this)
 		return NULL;
 
-	r = seg_validator_init(this, bc, start, nr_segment, valid_field);
+	r = seg_validator_init(this, bc, key, start, nr_segment, valid_field);
 	if (r)
 		return NULL;
 
@@ -529,14 +530,15 @@ out:
 }
 
 int reverse_index_table_init(struct reverse_index_table *this,
-			     struct dm_bufio_client *bc, dm_block_t start,
-			     size_t nr_block, int valid_field)
+			     struct dm_bufio_client *bc, char *key,
+			     dm_block_t start, size_t nr_block, int valid_field)
 {
 	init_rwsem(&this->rit_lock);
 	this->nr_block = nr_block;
 	this->blk_count = __reverse_index_table_blocks(nr_block);
 	this->array =
-		disk_array_create(bc, start + valid_field * this->blk_count,
+		disk_array_create(bc, key,
+				  start + valid_field * this->blk_count,
 				  nr_block, sizeof(struct reverse_index_entry));
 	if (!this->array)
 		return -ENOMEM;
@@ -549,8 +551,8 @@ int reverse_index_table_init(struct reverse_index_table *this,
 }
 
 struct reverse_index_table *
-reverse_index_table_create(struct dm_bufio_client *bc, dm_block_t start,
-			   size_t nr_block, int valid_field)
+reverse_index_table_create(struct dm_bufio_client *bc, char *key,
+			   dm_block_t start, size_t nr_block, int valid_field)
 {
 	int r;
 	struct reverse_index_table *this;
@@ -559,7 +561,8 @@ reverse_index_table_create(struct dm_bufio_client *bc, dm_block_t start,
 	if (!this)
 		return NULL;
 
-	r = reverse_index_table_init(this, bc, start, nr_block, valid_field);
+	r = reverse_index_table_init(this, bc, key, start, nr_block,
+				     valid_field);
 	if (r)
 		return NULL;
 
@@ -916,8 +919,8 @@ out:
 	return victim;
 }
 
-int dst_init(struct dst *this, struct dm_bufio_client *bc, dm_block_t start,
-	     size_t nr_segment, int valid_field);
+int dst_init(struct dst *this, struct dm_bufio_client *bc, char *key,
+	     dm_block_t start, size_t nr_segment, int valid_field);
 
 int dst_format(struct dst *this)
 {
@@ -933,13 +936,13 @@ int dst_format(struct dst *this)
 
 	kfree(this->node_list);
 
-	r = dst_init(this, this->bc, this->start, this->nr_segment,
-		     this->valid_field);
+	r = dst_init(this, this->bc, this->array->key, this->start,
+		     this->nr_segment, this->valid_field);
 	return r;
 }
 
-int dst_init(struct dst *this, struct dm_bufio_client *bc, dm_block_t start,
-	     size_t nr_segment, int valid_field)
+int dst_init(struct dst *this, struct dm_bufio_client *bc, char *key,
+	     dm_block_t start, size_t nr_segment, int valid_field)
 {
 	int r;
 
@@ -962,9 +965,9 @@ int dst_init(struct dst *this, struct dm_bufio_client *bc, dm_block_t start,
 	this->logging_segno = INF_ADDR;
 	this->blk_count = __data_seg_table_blocks(nr_segment);
 	this->valid_field = valid_field;
-	this->array =
-		disk_array_create(bc, start + valid_field * this->blk_count,
-				  nr_segment, sizeof(struct dst_entry));
+	this->array = disk_array_create(bc, key,
+					start + valid_field * this->blk_count,
+					nr_segment, sizeof(struct dst_entry));
 	if (!this->array)
 		return -ENOMEM;
 
@@ -978,7 +981,7 @@ int dst_init(struct dst *this, struct dm_bufio_client *bc, dm_block_t start,
 	return r;
 }
 
-struct dst *dst_create(struct dm_bufio_client *bc, dm_block_t start,
+struct dst *dst_create(struct dm_bufio_client *bc, char *key, dm_block_t start,
 		       size_t nr_segment, int valid_field)
 {
 	int r;
@@ -988,7 +991,7 @@ struct dst *dst_create(struct dm_bufio_client *bc, dm_block_t start,
 	if (!this)
 		return NULL;
 
-	r = dst_init(this, bc, start, nr_segment, valid_field);
+	r = dst_init(this, bc, key, start, nr_segment, valid_field);
 	if (r)
 		return NULL;
 
@@ -1142,7 +1145,7 @@ size_t bitc_get_current_version(struct bit_catalogue *this)
 }
 
 int bit_catalogue_init(struct bit_catalogue *this, struct dm_bufio_client *bc,
-		       struct superblock *superblock, int valid_svt,
+		       char *key, struct superblock *superblock, int valid_svt,
 		       int valid_bitc)
 {
 	int err = 0;
@@ -1159,7 +1162,7 @@ int bit_catalogue_init(struct bit_catalogue *this, struct dm_bufio_client *bc,
 	max_fd =
 		this->nr_bit + __extra_bit(superblock->max_disk_level_capacity);
 	this->bit_validity_table =
-		seg_validator_create(bc, this->start, max_fd, valid_svt);
+		seg_validator_create(bc, key, this->start, max_fd, valid_svt);
 	if (!this->bit_validity_table) {
 		err = -ENOMEM;
 		goto bad;
@@ -1169,8 +1172,8 @@ int bit_catalogue_init(struct bit_catalogue *this, struct dm_bufio_client *bc,
 						 NR_CHECKPOINT_PACKS;
 	this->blk_count = __bit_catalogue_blocks(max_fd);
 	this->file_stats = disk_array_create(
-		bc, file_stats_start + valid_bitc * this->blk_count, max_fd,
-		sizeof(struct file_stat));
+		bc, key, file_stats_start + valid_bitc * this->blk_count,
+		max_fd, sizeof(struct file_stat));
 	if (!this->file_stats) {
 		err = -ENOMEM;
 		goto bad;
@@ -1203,7 +1206,7 @@ bad:
 	return err;
 }
 
-struct bit_catalogue *bit_catalogue_create(struct dm_bufio_client *bc,
+struct bit_catalogue *bit_catalogue_create(struct dm_bufio_client *bc, char *key,
 					   struct superblock *superblock,
 					   int valid_svt, int valid_bitc)
 {
@@ -1214,7 +1217,8 @@ struct bit_catalogue *bit_catalogue_create(struct dm_bufio_client *bc,
 	if (!this)
 		goto bad;
 
-	err = bit_catalogue_init(this, bc, superblock, valid_svt, valid_bitc);
+	err = bit_catalogue_init(this, bc, key, superblock, valid_svt,
+				 valid_bitc);
 	if (err)
 		goto bad;
 
@@ -1346,6 +1350,19 @@ void meta_alloc_cb(struct dm_buffer *db)
 
 void meta_write_cb(struct dm_buffer *db)
 {
+	struct meta_aux_data *aux = dm_bufio_get_aux_data(db);
+	struct disk_array *array = aux->disk_array;
+	void *data = dm_bufio_get_block_data(db);
+	uint64_t seq = dm_bufio_get_block_number(db);
+	struct skcipher *sc = NULL;
+	char *key = NULL;
+
+	/* Superblock won't encrypt here */
+	if (array != NULL) {
+		sc = array->skcipher;
+		key = array->key;
+		sc->encrypt(sc, data, METADATA_BLOCK_SIZE, key, NULL, seq, data);
+	}
 }
 
 int metadata_init(struct metadata *this, char *key, char *iv,
@@ -1374,21 +1391,22 @@ int metadata_init(struct metadata *this, char *key, char *iv,
 
 	valid_field0 = test_bit(DATA_SVT, this->journal->valid_fields) ? 1 : 0;
 	this->seg_validator = seg_validator_create(
-		this->bc, this->superblock->seg_validity_table_start,
+		this->bc, key, this->superblock->seg_validity_table_start,
 		this->superblock->nr_segment, valid_field0);
 	if (IS_ERR_OR_NULL(this->seg_validator))
 		goto bad;
 
 	valid_field0 = test_bit(DATA_RIT, this->journal->valid_fields) ? 1 : 0;
 	this->rit = reverse_index_table_create(
-		this->bc, this->superblock->reverse_index_table_start,
+		this->bc, key, this->superblock->reverse_index_table_start,
 		this->superblock->nr_segment * this->superblock->blocks_per_seg,
 		valid_field0);
 	if (IS_ERR_OR_NULL(this->rit))
 		goto bad;
 
 	valid_field0 = test_bit(DATA_DST, this->journal->valid_fields) ? 1 : 0;
-	this->dst = dst_create(this->bc, this->superblock->data_seg_table_start,
+	this->dst = dst_create(this->bc, key,
+			       this->superblock->data_seg_table_start,
 			       this->superblock->nr_segment, valid_field0);
 	if (IS_ERR_OR_NULL(this->dst))
 		goto bad;
@@ -1396,8 +1414,8 @@ int metadata_init(struct metadata *this, char *key, char *iv,
 	valid_field0 = test_bit(INDEX_SVT, this->journal->valid_fields) ? 1 : 0;
 	valid_field1 =
 		test_bit(INDEX_BITC, this->journal->valid_fields) ? 1 : 0;
-	this->bit_catalogue = bit_catalogue_create(this->bc, this->superblock,
-						   valid_field0, valid_field1);
+	this->bit_catalogue = bit_catalogue_create(
+		this->bc, key, this->superblock, valid_field0, valid_field1);
 	if (IS_ERR_OR_NULL(this->bit_catalogue))
 		goto bad;
 
