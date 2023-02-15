@@ -8,6 +8,7 @@
 #define DM_JINDISK_DISK_STRUCTS_H
 
 #include <linux/types.h>
+#include "crypto.h"
 
 typedef uint64_t dm_block_t;
 
@@ -18,13 +19,15 @@ struct disk_array {
 	size_t entry_size;
 	size_t entries_per_block;
 	struct dm_bufio_client *bc;
+	struct skcipher *skcipher;
+	char key[AES_CBC_KEY_SIZE];
 
 	int (*format)(struct disk_array *this, bool value);
 	int (*set)(struct disk_array *this, size_t index, void *entry);
 	int (*get)(struct disk_array *this, size_t index, void *entry);
 };
 
-struct disk_array *disk_array_create(struct dm_bufio_client *bc,
+struct disk_array *disk_array_create(struct dm_bufio_client *bc, char *key,
 				     dm_block_t start, size_t nr_entry,
 				     size_t entry_size);
 void disk_array_destroy(struct disk_array *this);
@@ -40,7 +43,7 @@ struct disk_bitset {
 	int (*get)(struct disk_bitset *this, size_t index, bool *result);
 };
 
-struct disk_bitset *disk_bitset_create(struct dm_bufio_client *bc,
+struct disk_bitset *disk_bitset_create(struct dm_bufio_client *bc, char *key,
 				       dm_block_t start, size_t nr_bit);
 void disk_bitset_destroy(struct disk_bitset *this);
 
@@ -64,7 +67,7 @@ struct disk_queue {
 	int (*clear)(struct disk_queue *this);
 } __packed;
 
-struct disk_queue *disk_queue_create(struct dm_bufio_client *bc,
+struct disk_queue *disk_queue_create(struct dm_bufio_client *bc, char *key,
 				     dm_block_t start, size_t capacity,
 				     size_t elem_size);
 void disk_queue_destroy(struct disk_queue *this);

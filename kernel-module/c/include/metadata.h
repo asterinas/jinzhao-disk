@@ -16,8 +16,11 @@
 #include "lsm_tree.h"
 #include "segment_allocator.h"
 
+struct meta_aux_data {
+	struct disk_array *disk_array;
+};
 #define MAX_CONCURRENT_LOCKS 6
-#define META_AUX_SIZE 0
+#define META_AUX_SIZE sizeof(struct meta_aux_data)
 #define METADATA_BLOCK_SIZE 4096
 
 #define STRUCTURE_BLOCKS(x)                                                    \
@@ -99,8 +102,8 @@ struct seg_validator {
 };
 
 struct seg_validator *seg_validator_create(struct dm_bufio_client *bc,
-					   dm_block_t start, size_t nr_segment,
-					   int valid_field);
+					   char *key, dm_block_t start,
+					   size_t nr_segment, int valid_field);
 void seg_validator_destroy(struct seg_validator *this);
 
 // reverse index table definition
@@ -166,7 +169,7 @@ struct dst {
 	struct dst_entry *(*get)(struct dst *this, size_t segno);
 };
 
-struct dst *dst_create(struct dm_bufio_client *bc, dm_block_t start,
+struct dst *dst_create(struct dm_bufio_client *bc, char *key, dm_block_t start,
 		       size_t nr_segment, int valid_field);
 void dst_destroy(struct dst *this);
 

@@ -23,15 +23,27 @@ int disk_array_set(struct disk_array *this, size_t index, void *entry)
 {
 	struct dm_buffer *b = NULL;
 	void *data = NULL;
+	struct meta_aux_data *aux = NULL;
+	struct skcipher *sc = this->skcipher;
+	uint64_t seq;
 
 	if (index < 0 || index >= this->nr_entry)
 		return -EINVAL;
+
+	data = dm_bufio_get(this->bc, disk_array_entry_block(this, index), &b);
+	if (!IS_ERR_OR_NULL(data))
+		goto copy_data;
 
 	data = dm_bufio_read(this->bc, disk_array_entry_block(this, index), &b);
 	if (IS_ERR_OR_NULL(data)) {
 		DMERR("disk_array_set dm_bufio_read failed");
 		return data ? PTR_ERR(data) : -EBUSY;
 	}
+	aux = dm_bufio_get_aux_data(b);
+	aux->disk_array = this;
+	seq = dm_bufio_get_block_number(b);
+	sc->decrypt(sc, data, METADATA_BLOCK_SIZE, this->key, NULL, seq, data);
+copy_data:
 	data += disk_array_entry_offset(this, index);
 	memcpy(data, entry, this->entry_size);
 
@@ -44,7 +56,10 @@ int disk_array_set(struct disk_array *this, size_t index, void *entry)
 int disk_array_get(struct disk_array *this, size_t index, void *entry)
 {
 	struct dm_buffer *b = NULL;
+	struct meta_aux_data *aux = NULL;
 	void *data = NULL;
+	struct skcipher *sc = this->skcipher;
+	uint64_t seq;
 
 	if (index < 0 || index >= this->nr_entry)
 		return -EINVAL;
@@ -58,6 +73,10 @@ int disk_array_get(struct disk_array *this, size_t index, void *entry)
 		DMERR("disk_array_get dm_bufio_read failed");
 		return data ? PTR_ERR(data) : -EBUSY;
 	}
+	aux = dm_bufio_get_aux_data(b);
+	aux->disk_array = this;
+	seq = dm_bufio_get_block_number(b);
+	sc->decrypt(sc, data, METADATA_BLOCK_SIZE, this->key, NULL, seq, data);
 copy_data:
 	data += disk_array_entry_offset(this, index);
 	memcpy(entry, data, this->entry_size);
@@ -69,6 +88,7 @@ copy_data:
 int disk_array_format(struct disk_array *this, bool value)
 {
 	struct dm_buffer *b = NULL;
+	struct meta_aux_data *aux = NULL;
 	void *data = NULL;
 	size_t shift, total, cycle;
 
@@ -83,6 +103,8 @@ int disk_array_format(struct disk_array *this, bool value)
 			      this->start + shift);
 			return data ? PTR_ERR(data) : -EBUSY;
 		}
+		aux = dm_bufio_get_aux_data(b);
+		aux->disk_array = this;
 
 		cycle = METADATA_BLOCK_SIZE;
 		if (total < cycle)
@@ -100,22 +122,27 @@ int disk_array_format(struct disk_array *this, bool value)
 }
 
 int disk_array_init(struct disk_array *this, struct dm_bufio_client *bc,
-		    dm_block_t start, size_t nr_entry, size_t entry_size)
+		    char *key, dm_block_t start, size_t nr_entry,
+		    size_t entry_size)
 {
+	this->skcipher = aes_cbc_cipher_create();
+	if (!this->skcipher)
+		return -EAGAIN;
+
 	this->start = start;
 	this->nr_entry = nr_entry;
 	this->entry_size = entry_size;
 	this->entries_per_block = METADATA_BLOCK_SIZE / this->entry_size;
 	this->bc = bc;
+	memcpy(this->key, key, AES_CBC_KEY_SIZE);
 
 	this->set = disk_array_set;
 	this->get = disk_array_get;
 	this->format = disk_array_format;
-
 	return 0;
 }
 
-struct disk_array *disk_array_create(struct dm_bufio_client *bc,
+struct disk_array *disk_array_create(struct dm_bufio_client *bc, char *key,
 				     dm_block_t start, size_t nr_entry,
 				     size_t entry_size)
 {
@@ -126,7 +153,7 @@ struct disk_array *disk_array_create(struct dm_bufio_client *bc,
 	if (!this)
 		return NULL;
 
-	r = disk_array_init(this, bc, start, nr_entry, entry_size);
+	r = disk_array_init(this, bc, key, start, nr_entry, entry_size);
 	if (r)
 		return NULL;
 
@@ -135,8 +162,10 @@ struct disk_array *disk_array_create(struct dm_bufio_client *bc,
 
 void disk_array_destroy(struct disk_array *this)
 {
-	if (!IS_ERR_OR_NULL(this))
+	if (!IS_ERR_OR_NULL(this)) {
+		this->skcipher->destroy(this->skcipher);
 		kfree(this);
+	}
 }
 
 // disk bitset implementation
@@ -201,12 +230,12 @@ int disk_bitset_format(struct disk_bitset *this, bool value)
 }
 
 int disk_bitset_init(struct disk_bitset *this, struct dm_bufio_client *bc,
-		     dm_block_t start, size_t nr_bit)
+		     char *key, dm_block_t start, size_t nr_bit)
 {
 	this->nr_bit = nr_bit;
-	this->array =
-		disk_array_create(bc, start, __disk_bitset_nr_group(nr_bit),
-				  sizeof(unsigned long));
+	this->array = disk_array_create(bc, key, start,
+					__disk_bitset_nr_group(nr_bit),
+					sizeof(unsigned long));
 	if (IS_ERR_OR_NULL(this->array))
 		return -ENOMEM;
 
@@ -217,7 +246,7 @@ int disk_bitset_init(struct disk_bitset *this, struct dm_bufio_client *bc,
 	return 0;
 }
 
-struct disk_bitset *disk_bitset_create(struct dm_bufio_client *bc,
+struct disk_bitset *disk_bitset_create(struct dm_bufio_client *bc, char *key,
 				       dm_block_t start, size_t nr_bit)
 {
 	int r;
@@ -227,7 +256,7 @@ struct disk_bitset *disk_bitset_create(struct dm_bufio_client *bc,
 	if (!this)
 		return NULL;
 
-	r = disk_bitset_init(this, bc, start, nr_bit);
+	r = disk_bitset_init(this, bc, key, start, nr_bit);
 	if (r)
 		return NULL;
 
