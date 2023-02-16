@@ -178,6 +178,6 @@ help:
 	}
 	return -1;
 out:
-	printf("jindisk setup done.\n");
+	printf("JinZhao Disk setup done.\n");
 	return 0;
 }

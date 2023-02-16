@@ -162,12 +162,13 @@ echo "jindisk partition size: "${jindisk_partition_size}
 # sudo jindisksetup-rust create -p ${preset_key} -d ${jindisk_partition} -t jindisk_rootfs
 sudo jindisksetup create ${preset_key} ${jindisk_partition} jindisk_rootfs
 if [ $? -ne 0 ]; then
-	echo "jindisksetup failed"
+	echo "jindisksetup failed!"
 	exit -1
 else
-	echo "jindisksetup succeeded"
+	echo "jindisk initialized."
 fi
 
+echo "Filling the new image..."
 dd if=${ref_rootfs} of=/dev/mapper/jindisk_rootfs status=progress
 
 mount -t ext4 /dev/mapper/jindisk_rootfs ${jindisk_mnt}
@@ -201,16 +202,15 @@ if [ "${ID}" == "ubuntu" ]; then
         cp -f hook-unlock ${jindisk_mnt}/etc/initramfs-tools/scripts/init-premount/
         echo "Replacing fstab..."
         cp -f fstab ${jindisk_mnt}/etc/fstab
-        echo "Filling getting-key script..."
+        echo "Filling getting_key script..."
         cp -f key.example ${jindisk_mnt}/sbin/
-        #TODO: reading key/certificate using RA script/binary 'getting_key'
+        #TODO: reading key/certificate using RA script/binary 'getting_key.sh'
         cp -f getting_key.sh ${jindisk_mnt}/sbin/
-        echo "Filling unlocking script..."
+        echo "Filling opening_disk script..."
         #TODO: entry can be read from /etc/jindisktab
         cp -f opening_disk.sh ${jindisk_mnt}/sbin/
     popd
     
-
     run_chroot_cmd ${jindisk_mnt} update-initramfs -u -k all
 fi
 

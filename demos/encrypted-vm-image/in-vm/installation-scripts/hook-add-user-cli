@@ -14,8 +14,6 @@ esac
 
 . /usr/share/initramfs-tools/hook-functions
 
-copy_exec /usr/bin/jindisksetup
-# copy_exec /usr/bin/jindisksetup-rust
-copy_exec /usr/lib/x86_64-linux-gnu/libdm_jindisk.so
+copy_exec /sbin/jindisksetup
 
 

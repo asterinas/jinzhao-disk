@@ -15,6 +15,6 @@ make clean
 make
 make install
 
-#
+echo "Adding the JinDisk user-space CLI into the initramfs..."
 cp ${SHELL_FOLDER}/hook-add-user-cli /etc/initramfs-tools/hooks/
 update-initramfs -u -k all
