@@ -14,12 +14,12 @@ Note that the list could change as the distributions evolve.
 
 ## Installation
 
-Download the JinDisk source code and install user-space CLI.
+Download the JinDisk source code and install the user-space CLI.
 
 ```bash
 sudo apt install build-essential libssl-dev libdevmapper-dev
-git clone git@github.com:jinzhao-dev/jindisk.git
-cd jindisk/user-cli/src/c/
+git clone git@github.com:jinzhao-dev/jinzhao-disk.git
+cd jinzhao-disk/user-cli/src/c/
 make
 sudo make install
 ```

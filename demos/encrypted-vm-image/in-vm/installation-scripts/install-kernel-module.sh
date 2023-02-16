@@ -6,8 +6,8 @@ SHELL_FOLDER=$(cd "$(dirname "$0")";pwd)
 
 KERNEL_MODULE_SRC="${SHELL_FOLDER}/../../../../kernel-module/c"
 
-rmmod jindisk
-modprobe -r dm-bufio jindisk
+rmmod dm-jindisk
+modprobe -r dm-bufio dm-jindisk
 
 cd $KERNEL_MODULE_SRC
 
@@ -20,6 +20,7 @@ insmod ./dm-jindisk.ko
 cp ./dm-jindisk.ko /lib/modules/`uname -r`/kernel
 depmod
 
+echo "Adding the JinDisk kernel-module into the initramfs..."
 echo "" >> /etc/initramfs-tools/modules
 echo "dm-bufio" >> /etc/initramfs-tools/modules
 echo "dm-jindisk" >> /etc/initramfs-tools/modules
