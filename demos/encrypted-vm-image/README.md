@@ -18,6 +18,8 @@ The workflow of this demo can be described as the following steps.
 
 ## Step-by-step Instructions
 
+A step-by-step guide is given here to show how the guest owner can create the JinDisk-protected image and unlock the image during startup. All commands in this guide are expected to be executed on the host machine if not specified.
+
 ### Environment settings
 
 If one just intends to test the functionalities of JinDisk through this demo, this step may be skipped. However, if running the demo on a TDX or an SEV-SNP machine, it is imperative to have a TEE host system in place. The TEE host system requires the installation of essential software including QEMU, OVMF, and a patched Linux kernel.
@@ -53,45 +55,45 @@ docker run -d --name "encrypted-image-demo" liuweijie/jindisk-vm-image:ubuntu-20
 docker cp encrypted-image-demo:/home/ubuntu-20.04-jinzhao-disk.qcow2 .
 ```
 
-Anyone can create their own customized image which includes TEE-specific kernel modules and other tailored software packages if desired. Nonetheless it is worth noting that this demo at present can only convert Ubuntu-based images.
+Anyone can prepare their own customized image which includes TEE-specific kernel modules and other tailored software packages if desired. Nonetheless it is worth noting that this demo at present can only convert Ubuntu-based images.
 
 ### Assembling the new JinDisk-encrypted image
 
 Once the image is ready, the [qemu-create-jindisk-image.sh](./qemu-create-jindisk-image.sh) script can be used to create the new JinDisk-encrypted image using the above-mentioned reference image as a base. Encrypted partitions will be created and initramfs hooks will be placed.
 
-Invoke the `qemu-create-jindisk-image.sh` script to create a new QCOW2 image file called `ubuntu-20.04-new-jindisk.qcow2`, and resize it to 60GB.
-This command assumes that a QEMU executable is located at `~/AMDSEV/snp-release-<DATE>/usr/local/bin/qemu-system-x86_64` if the AMD SEV-SNP is enabled on the host. Feel free to change it to a customized version (e.g., a TDX-compatible QEMU) if necessary.
+Invoke the `qemu-create-jindisk-image.sh` script to create a new QCOW2 image file called `ubuntu-20.04-new-jindisk.qcow2` with the `-new` option, and resize it to `60GB`.
+Note that this command assumes that a QEMU executable is located at `~/AMDSEV/snp-release-<DATE>/usr/local/bin/qemu-system-x86_64` if the AMD SEV-SNP is enabled on the host. Feel free to change it to a customized version (e.g., a TDX-compatible QEMU) if necessary.
 
 ```bash
 sudo ./qemu-create-jindisk-image.sh 
     -qemu         ~/AMDSEV/snp-release-<DATE>/usr/local/bin/qemu-system-x86_64 \
     -ref          ~/ubuntu-20.04-jinzhao-disk.qcow2 \
     -new          ~/ubuntu-20.04-new-jinzhao-disk.qcow2 \
-    -size         60G \
-    -mem          8 \
-    -smp          16G
+    -size         60G
 ```
 
 ### Launching the new VM and unlocking the JinDisk-encrypted image
 
 Use the [qemu-launch-secure-vm.sh](./qemu-launch-secure-vm.sh) script to launch a secure VM and to verify whether the image is created successfully.
-Specify an SSH port or a VNC port to connect to the new VM via SSH or VNC, respectively. The command assumes the OVMF is located at `~/AMDSEV/snp-release-<DATE>/usr/local/share/qemu/`. Use `-tee` to specify which TEE guest is expected to be launched. For example in the following command, the last argument `-tee sev` will force the QEMU to start up an SEV guest VM.
-*Todo: add support in the script to launch a TD*
+Use the `-hda` option to specify the image file. The command assumes the OVMF is located at `~/AMDSEV/snp-release-<DATE>/usr/local/share/qemu/`. Use `-tee` to specify which TEE guest is expected to be launched. For example in the following command, the last argument `-tee sev` will force the QEMU to start up an SEV guest VM. A normal VM will be launched if the `-tee` option is not specified.
+Utilize the command line options `-mem`, `-smp`, `-ssh`, and `-vnc` to specify the virtual machine's allocated memory capacity, count of virtual CPU cores assigned, as well as the respective ports for SSH and VNC communication channels.
+
+*Todo: add TDX support in the launch script*
 
 ```bash
 sudo ./qemu-launch-secure-vm.sh \
     -qemu         ~/AMDSEV/snp-release-<DATE>/usr/local/bin/qemu-system-x86_64 \
-	-hda          ubuntu-20.04-new-jinzhao-disk.qcow2 \
-	-mem          8 \
-	-smp          16G \
-	-ssh          10086 \
-	-vnc          1 \
-	-uefi_code    ~/AMDSEV/snp-release-<DATE>/usr/local/share/qemu/OVMF_CODE.fd \
-	-uefi_vars    ~/AMDSEV/snp-release-<DATE>/usr/local/share/qemu/OVMF_VARS.fd \
+    -hda          ubuntu-20.04-new-jinzhao-disk.qcow2 \
+    -mem          8 \
+    -smp          16G \
+    -ssh          10086 \
+    -vnc          1 \
+    -uefi_code    ~/AMDSEV/snp-release-<DATE>/usr/local/share/qemu/OVMF_CODE.fd \
+    -uefi_vars    ~/AMDSEV/snp-release-<DATE>/usr/local/share/qemu/OVMF_VARS.fd \
     -tee sev
 ```
 
-Once logged onto the VM, run the `lsblk` command inside the VM. A JinDisk-formatted block device mounted as the RootFS will be listed if the instructions have been followed correctly.
+If the instructions have been followed correctly, a JinDisk-formatted block device mounted as the RootFS can be listed by the `lsblk` command running inside the VM.
 
 
 ## Future Work
