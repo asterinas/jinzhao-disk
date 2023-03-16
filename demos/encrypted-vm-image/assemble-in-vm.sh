@@ -4,7 +4,6 @@ password=$1
 
 cd ~
 rm -rf jinzhao-disk/
-
 git clone git@github.com:jinzhao-dev/jinzhao-disk.git
 
 cd jinzhao-disk/
