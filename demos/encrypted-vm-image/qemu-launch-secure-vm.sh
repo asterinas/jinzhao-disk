@@ -1,8 +1,9 @@
 #!/bin/bash
 
 # Default arguments
-qemu_binary_dir="${HOME}/AMDSEV/usr/local/bin"
-image_dir="${HOME}/dev/demo"
+home="/home/weijie"
+qemu_binary_dir="${home}/AMDSEV/usr/local/bin"
+image_dir="${home}/dev/demo"
 image="${image_dir}/ubuntu-20.04-jindisk.qcow2"
 ovmf_code="${image_dir}/OVMF_CODE.fd"
 ovmf_vars="${image_dir}/OVMF_VARS.fd"
@@ -104,7 +105,7 @@ add_opts "${QEMU} -enable-kvm -machine q35"
 
 # set OVMF
 [ ! -z ${ovmf_code} ] && add_opts "${OVMF_CODE_PARAM}"
-[ ! -z ${ovmf_vars} ] && add_opts "${OVMF_VARS_PARAM}"
+# [ ! -z ${ovmf_vars} ] && add_opts "${OVMF_VARS_PARAM}"
 
 # set HDA
 [ ! -z ${image} ] && add_opts "${DISK}"
@@ -119,16 +120,21 @@ add_opts "${VIRTIO}"
 [ ! -z ${vnc_port} ] && add_opts "${VNC}" && echo "Starting VNC on port ${vnc_port}"
 
 # If this is a TEE-specific guest, add the encryption device objects to enable respective supports
-if [ ${tee_option} = "sev" ]; then
+if [[ ${tee_option} == "sev" ]]; then
 	echo "Starting up an SEV guest"
 	add_opts "${SEV_SNP}"
-elif [ ${tee_option} = "tdx" ]; then
+elif [[ ${tee_option} == "tdx" ]]; then
 	echo "Starting up a TDX guest"
 	add_opts "${TDX}"
 else
 	echo "No TEE speficied"
 	add_opts ""
 fi
+
+echo "Terminating the current VM ..."
+qemu_pid=`lsof ${image} | awk 'END {print $2}'`
+sudo kill ${qemu_pid}
+sleep 1s
 
 echo "Launching secure VM ..."
 cat ${QEMU_CMDLINE}

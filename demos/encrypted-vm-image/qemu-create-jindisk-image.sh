@@ -1,8 +1,9 @@
 #!/bin/bash
 
 # Default arguments
-qemu_binary_dir="${HOME}/AMDSEV/usr/local/bin"
-image_dir="${HOME}/dev/demo"
+home="/home/weijie"
+qemu_binary_dir="${home}/AMDSEV/usr/local/bin"
+image_dir="${home}/dev/demo"
 ref_image="${image_dir}/ubuntu-20.04-jindisk.qcow2"
 ref_image_username="ref"
 ref_image_password="ref"
@@ -120,7 +121,7 @@ add_opts "${QEMU} -enable-kvm -machine q35"
 
 # set OVMF
 [ ! -z ${ovmf_code} ] && add_opts "${OVMF_CODE_PARAM}"
-[ ! -z ${ovmf_vars} ] && add_opts "${OVMF_VARS_PARAM}"
+# [ ! -z ${ovmf_vars} ] && add_opts "${OVMF_VARS_PARAM}"
 
 # set HDA
 [ ! -z ${ref_image} ] && add_opts "${DISK}"
@@ -136,7 +137,7 @@ add_opts "${VIRTIO}"
 [ ! -z ${vnc_port} ] && add_opts "${VNC}"
 
 echo "Terminating the current VM ..."
-qemu_pid=`lsof ${ref_image} ｜ grep qemu | awk 'END {print $2}'`
+qemu_pid=`lsof ${ref_image} | awk 'END {print $2}'`
 sudo kill ${qemu_pid}
 sleep 1s
 
@@ -146,9 +147,9 @@ qemu-img create -f qcow2 ${new_image} ${new_image_size}
 
 echo "Launching the secure VM ..."
 bash ${QEMU_CMDLINE} &
-sleep 30s
+sleep 40s
 
 echo "Transforming the VM ..."
 # sudo apt install sshpass
-sshpass -p ${ref_image_password} ssh -t -p ${ssh_port} ${ref_image_username}@localhost 'bash -s' < ./assemble-in-vm.sh ${ref_image_password}
+#sshpass -p ${ref_image_password} ssh -t -p ${ssh_port} ${ref_image_username}@localhost 'bash -s' < ./assemble-in-vm.sh ${ref_image_password}
 
