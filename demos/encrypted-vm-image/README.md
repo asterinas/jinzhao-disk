@@ -2,7 +2,7 @@
 
 This demo shows how one can start up a [confidential virtual machine (CVM)](https://cloud.google.com/compute/confidential-vm/docs/about-cvm) whose VM image is protected with JinDisk. It provides tools that (1) can convert a plain virtual machine (VM) image into a JinDisk-protected one and (2) can use a JinDisk-protected VM image to start up a confidential VM. During the VM startup, a customizable process of remote attestation is triggered to fetch the root key that can unlock the JinDisk-protected VM image.
 
-The demo presents how to build and deploy a JinDisk-encrypted image on both Intel TDX and AMD SEV, while users can experiment with the demo without any VM-based TEE support.
+This demo is intended for TEE VMs, including Intel TDX and AMD SEV, although it is also runnable on non-TEE VMs (with weaker security guarantees, of course).
 
 ## High-level Workflow
 
@@ -18,7 +18,7 @@ The workflow of this demo can be described as the following steps.
 
 ## Step-by-step Instructions
 
-A step-by-step guide is given here to show how the guest owner can create the JinDisk-protected image and unlock the image during startup. All commands in this guide are expected to be executed on the host machine if not specified.
+A step-by-step guide is given here to show how the guest owner can create the JinDisk-protected image and unlock the image during startup. All commands in this guide are to be executed on the host machine if not specified otherwise.
 
 ### Environment settings
 
