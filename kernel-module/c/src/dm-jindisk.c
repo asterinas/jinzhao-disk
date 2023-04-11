@@ -800,6 +800,15 @@ static const struct attribute *disk_attributes[] = { &disk_stats.attr,
 
 /*---- ioctl interface ----*/
 
+#define JINDISK_IOC_MAGIC 'J'
+#define NR_CALC_AVAIL_SECTORS 0
+#define NR_GET_MEASUREMENT 1
+
+#define JINDISK_CALC_AVAIL_SECTORS                                             \
+	_IOWR(JINDISK_IOC_MAGIC, NR_CALC_AVAIL_SECTORS, struct calc_task)
+#define JINDISK_GET_MEASUREMENT                                                \
+	_IOR(JINDISK_IOC_MAGIC, NR_GET_MEASUREMENT, char[AES_GCM_AUTH_SIZE])
+
 struct calc_task {
 	uint64_t real_sectors;
 	uint64_t avail_sectors;
@@ -821,11 +830,22 @@ out:
 	return r;
 }
 
-#define JINDISK_IOC_MAGIC 'J'
-#define NR_CALC_AVAIL_SECTORS 0
+static long ctl_get_measurement(unsigned long arg)
+{
+	long r = -EINVAL;
+	char *mac = NULL;
+	uint32_t size = 0;
 
-#define JINDISK_CALC_AVAIL_SECTORS                                             \
-	_IOWR(JINDISK_IOC_MAGIC, NR_CALC_AVAIL_SECTORS, struct calc_task)
+	if (jindisk == NULL) {
+		DMERR("jindisk target is missing");
+		goto out;
+	}
+	mac = jindisk->meta->superblock->root_mac;
+	size = _IOC_SIZE(JINDISK_GET_MEASUREMENT);
+	r = copy_to_user((void __user *)arg, mac, size);
+out:
+	return r;
+}
 
 static long dev_jindisk_ioctl(struct file *filp, unsigned int ioctl,
 			      unsigned long arg)
@@ -835,6 +855,9 @@ static long dev_jindisk_ioctl(struct file *filp, unsigned int ioctl,
 	switch (ioctl) {
 	case JINDISK_CALC_AVAIL_SECTORS:
 		r = ctl_calc_avail_sectors(arg);
+		break;
+	case JINDISK_GET_MEASUREMENT:
+		r = ctl_get_measurement(arg);
 		break;
 	default:
 		break;

@@ -19,10 +19,15 @@ struct calc_task {
 	u64 avail_sectors;
 };
 
+#define AES_GCM_AUTH_SIZE 16
+
 #define JINDISK_IOC_MAGIC 'J'
 #define NR_CALC_AVAIL_SECTORS 0
+#define NR_GET_MEASUREMENT 1
 #define JINDISK_CALC_AVAIL_SECTORS	\
 	_IOWR(JINDISK_IOC_MAGIC, NR_CALC_AVAIL_SECTORS, struct calc_task)
+#define JINDISK_GET_MEASUREMENT	\
+	_IOR(JINDISK_IOC_MAGIC, NR_GET_MEASUREMENT, char[AES_GCM_AUTH_SIZE])
 
 #define EXPECT_THRESHOLD(x, percent) ((x) / 100 * (percent))
 
@@ -50,6 +55,21 @@ out:
 	return;
 }
 
+void get_measurement(int fd)
+{
+	int r = 0;
+	char mac[AES_GCM_AUTH_SIZE];
+
+	r = ioctl(fd, JINDISK_GET_MEASUREMENT, mac);
+	if (r < 0) {
+		printf("JINDISK_GET_MEASUREMENT ioctl failed\n");
+		goto out;
+	}
+	printf("JINDISK_GET_MEASUREMENT ioctl successed\n");
+out:
+	return;
+}
+
 int main()
 {
 	int fd;
@@ -63,6 +83,8 @@ int main()
 	}
 	assert_CALC_AVAIL_SECTORS(fd, 0ull, 0);
 	assert_CALC_AVAIL_SECTORS(fd, 0xFFFFFFFFFFFFFFFF, 80);
+
+	get_measurement(fd);
 
 	close(fd);
 out:
