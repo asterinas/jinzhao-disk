@@ -96,6 +96,7 @@ int superblock_write(struct superblock *this)
 		DMERR("encrypt superblock failed");
 		return r;
 	}
+	memcpy(this->root_mac, disk_super->root_mac, AES_GCM_AUTH_SIZE);
 
 	dm_bufio_mark_buffer_dirty(b);
 	dm_bufio_release(b);
