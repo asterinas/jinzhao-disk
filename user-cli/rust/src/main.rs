@@ -1,15 +1,14 @@
 use data_encoding::HEXLOWER;
+use nix::unistd::Uid;
 use ring::{digest, pbkdf2};
 use std::num::NonZeroU32;
-
-use nix::unistd::Uid;
 
 mod backend;
 use crate::backend::device::*;
 use crate::backend::dm::*;
 
-#[macro_use]
 extern crate clap;
+use clap::load_yaml;
 use clap::App;
 
 enum SetupErr {
@@ -48,13 +47,29 @@ fn jindisk_activate(
         key: keyset,
     };
 
-    let r = device_size_adjust(device_path, tgt.offset);
+    let r = get_device_available_size(device_path, tgt.offset);
     match r {
         Ok(adjusted_size) => {
             tgt.size = adjusted_size;
         }
-        Err(_) => {
-            println!("Set device {} failed!", device_path);
+        Err(errortype) => {
+            match errortype {
+                DeviceError::DeviceBusy => {
+                    println!("Cannot use device {} which is in use!", device_path);
+                }
+                DeviceError::NoPermission => {
+                    println!("No permission to access device {}!", device_path);
+                }
+                DeviceError::WrongIOCTL => {
+                    println!("Cannot get info about device {}!", device_path);
+                }
+                DeviceError::WrongSize => {
+                    println!("Requested offset is beyond device {}'s size!", device_path);
+                }
+                DeviceError::NotBlockDevice => {
+                    println!("{} is not a block device!", device_path);
+                }
+            }
             return Err(SetupErr::DeviceError);
         }
     }
@@ -64,8 +79,6 @@ fn jindisk_activate(
         Ok(_) => return Ok(()),
         Err(_) => {
             println!("Set DM target {} failed!", dm_name);
-            // need to clean up the target and its DM table
-            dm_remove_device(dm_name).unwrap();
             return Err(SetupErr::DmTargetError);
         }
     }
@@ -87,7 +100,7 @@ fn action_create(password: &str, data_dev: &str, dm_name: &str) {
     println!("PBKDF2 hash: {}", HEXLOWER.encode(&pbkdf2_hash));
 
     match jindisk_activate(data_dev, dm_name, pbkdf2_hash, 1) {
-        Ok(_) => println!("DM target {} created successfully.", dm_name),
+        Ok(_) => println!("JinDisk DM target '{}' created successfully.", dm_name),
         Err(_) => println!("Activation failed!"),
     };
 }
@@ -104,14 +117,14 @@ fn action_open(password: &str, data_dev: &str, dm_name: &str) {
 
 fn action_close(dm_name: &str) {
     match jindisk_deactivate(dm_name) {
-        Ok(_) => println!("DM target {} closed.", dm_name),
+        Ok(_) => println!("JinDisk DM target '{}' closed.", dm_name),
         Err(_) => println!("Deactivation failed!"),
     };
 }
 
 fn main() {
     if !Uid::effective().is_root() {
-        panic!("You must run this executable with root permissions");
+        panic!("You must run this executable with root permissions!");
     }
 
     let yaml = load_yaml!("cli.yml");

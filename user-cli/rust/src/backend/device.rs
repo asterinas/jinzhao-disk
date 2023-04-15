@@ -1,24 +1,20 @@
-use nix::{ioctl_read, ioctl_readwrite};
-
 use std::fs;
 use std::fs::OpenOptions;
 use std::os::unix::fs::FileTypeExt;
 use std::os::unix::io::AsRawFd;
 
+use nix::{ioctl_read, ioctl_readwrite};
 use nix::errno::Errno;
 
-pub enum DeviceError {
-    NotBlockDevice,
-    DeviceBusy,
-    NoPermission,
-    WrongIOCTL,
-    WrongSize,
-}
+use derive_more::{Add, Div, From, Into, Mul, Sub};
 
 // Defined in linux/fs.h
 const BLKGETSIZE64_CODE: u8 = 0x12;
 const BLKGETSIZE64_SEQ: u8 = 114;
 ioctl_read!(ioctl_blkgetsize64, BLKGETSIZE64_CODE, BLKGETSIZE64_SEQ, u64);
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Add, Sub, Mul, Div, From, Into)]
+pub struct Sectors(pub u64);
 
 // JinDisk interface for querying disk available size
 pub struct CalcSectors {
@@ -35,39 +31,45 @@ ioctl_readwrite!(
     CalcSectors
 );
 
-pub fn device_ready(device: &str) -> Result<&str, DeviceError> {
+pub enum DeviceError {
+    NotBlockDevice,
+    DeviceBusy,
+    NoPermission,
+    WrongIOCTL,
+    WrongSize,
+}
+
+impl From<Errno> for DeviceError {
+    fn from(errno: Errno) -> Self {
+        match errno {
+            nix::errno::Errno::EBUSY => {
+                return DeviceError::DeviceBusy;
+            }
+            nix::errno::Errno::EACCES => {
+                return DeviceError::NoPermission;
+            }
+            _ => {
+                return DeviceError::WrongIOCTL;
+            }
+        }
+    }
+}
+
+/// Check if the input path points to a valid device
+pub fn is_device_ready(device: &str) -> Result<&str, DeviceError> {
     let meta = fs::metadata(device).unwrap();
     let file_type = meta.file_type();
 
     if file_type.is_block_device() {
-        println!("Device {} is ready.", device);
         return Ok(device);
     } else {
-        println!("{} is not a block device!", device);
         return Err(DeviceError::NotBlockDevice);
     }
 }
 
-fn ioctl_err_handler(errno: Errno, device_path: &str) -> DeviceError {
-    match errno {
-        nix::errno::Errno::EBUSY => {
-            println!("Cannot use device {} which is in use.", device_path);
-            return DeviceError::DeviceBusy;
-        }
-        nix::errno::Errno::EACCES => {
-            println!("Cannot use device {} which is in use.", device_path);
-            return DeviceError::NoPermission;
-        }
-        _ => {
-            println!("Cannot get info about device {}.", device_path);
-            return DeviceError::WrongIOCTL;
-        }
-    }
-}
-
-/// Determine the device size
-fn device_info(device_path: &str) -> Result<u64, DeviceError> {
-    device_ready(device_path)?;
+/// Determine the device size in bytes
+fn fetch_device_size_in_bytes(device_path: &str) -> Result<u64, DeviceError> {
+    is_device_ready(device_path)?;
 
     let file = OpenOptions::new().write(true).open(device_path).unwrap();
     let fd = file.as_raw_fd();
@@ -75,14 +77,12 @@ fn device_info(device_path: &str) -> Result<u64, DeviceError> {
     let size_ptr = &mut size as *mut u64;
 
     unsafe {
-        let r = ioctl_blkgetsize64(fd, size_ptr);
-        match r {
-            Ok(_) => return Ok(size),
-            Err(errno) => return Err(ioctl_err_handler(errno, device_path)),
-        }
+        ioctl_blkgetsize64(fd, size_ptr)?;
     }
+    return Ok(size);
 }
 
+/// Calculate the payload size of a JinDisk device with the given IOCTL interface
 fn get_payload_size(disk_size: u64) -> Result<u64, DeviceError> {
     // use std::ffi or a safer OpenOptions to handle the path
     let jindisk_interface = "/dev/jindisk";
@@ -96,33 +96,26 @@ fn get_payload_size(disk_size: u64) -> Result<u64, DeviceError> {
         real: disk_size,
         available: 0,
     };
-    let cs_ptr = &mut cs as *mut CalcSectors;
 
-    println!("Querying {} ...", jindisk_interface);
+    let cs_ptr = &mut cs as *mut CalcSectors;
     unsafe {
-        let r = ioctl_jindisk_calc_sector(fd, cs_ptr);
-        match r {
-            Ok(_) => {
-                let data_size = cs.available;
-                println!("Real size: {}, available size: {}", cs.real, cs.available);
-                return Ok(data_size);
-            }
-            Err(errno) => return Err(ioctl_err_handler(errno, jindisk_interface)),
-        }
+        ioctl_jindisk_calc_sector(fd, cs_ptr)?;
     }
+    let data_size = cs.available;
+    return Ok(data_size);
 }
 
-pub fn device_size_adjust(device: &str, device_offset: u64) -> Result<u64, DeviceError> {
-    let dev_size = device_info(device)?;
+/// Determine the device size in sectors
+pub fn get_device_available_size(device: &str, dev_offset: u64) -> Result<u64, DeviceError> {
+    let dev_size_in_bytes = fetch_device_size_in_bytes(device)?;
     // every sector has 512 bytes
-    let blk_dev_sector_size = dev_size >> 9;
-
-    if device_offset >= blk_dev_sector_size {
-        println!("Requested offset is beyond real size of device {}", device);
+    let dev_size_in_sectors: Sectors = (dev_size_in_bytes >> 9).into();
+    let dev_offset_in_sectors: Sectors = dev_offset.into();
+    if dev_offset_in_sectors >= dev_size_in_sectors {
         return Err(DeviceError::WrongSize);
     }
-    let size = blk_dev_sector_size - device_offset;
+    let size = dev_size_in_sectors - dev_offset_in_sectors;
 
-    let avail_size = get_payload_size(size)?;
+    let avail_size = get_payload_size(size.into())?;
     return Ok(avail_size);
 }
