@@ -15,7 +15,7 @@ vnc_port="2"
 usage() {
 	echo "$0 [options]"
 	echo "Available <commands>:"
-	echo " -qemu         QEMU to use"
+	echo " -qemu         QEMU binary directory"
 	echo " -hda          guest disk file"
 	echo " -mem          guest memory"
 	echo " -smp          number of cpus"
@@ -42,6 +42,9 @@ fi
 
 while [[ $1 != "" ]]; do
 	case "$1" in
+		-qemu) 		qemu_binary_dir="${2}"
+				shift
+				;;
 		-hda) 		image="${2}"
 				shift
 				;;
@@ -79,8 +82,8 @@ MEM="-m ${mem_size}"
 OVMF_CODE_PARAM="-drive if=pflash,format=raw,unit=0,file=${ovmf_code},readonly=on"
 OVMF_VARS_PARAM="-drive if=pflash,format=raw,unit=1,file=${ovmf_vars}"
 
-DISK="-drive file=${image},if=none,id=disk0,format=qcow2"
-VIRTIO="-device virtio-scsi-pci,id=scsi,disable-legacy=on,iommu_platform=true -device scsi-hd,drive=disk0"
+DISK="-drive file=${image},if=virtio,format=qcow2"
+# VIRTIO="-device virtio-scsi-pci,id=scsi,disable-legacy=on,iommu_platform=true -device scsi-hd,drive=disk0"
 
 NETSSH="-netdev user,id=unet0,hostfwd=tcp::${ssh_port}-:22 -device e1000,netdev=unet0"
 VNC="-vnc :${vnc_port} -monitor pty"

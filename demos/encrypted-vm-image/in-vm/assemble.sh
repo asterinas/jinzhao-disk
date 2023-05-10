@@ -5,11 +5,14 @@
 
 set -e
 
-trap cleanup ERR EXIT
+trap cleanup ERR
 
 preset_key="2333"
 
-new_img_dev=/dev/sdb
+ref_img_dev="/dev/vda"
+new_img_dev="/dev/sdb"
+
+LINUX_RESERVED_PART_CODE="8300"
 
 BOOT_PART_NR="1"
 BOOT_PART_NAME="boot"
@@ -27,8 +30,6 @@ jindisk_DM_NAME="${jindisk_PART_NAME}"
 boot_partition=${new_img_dev}${BOOT_PART_NR}
 efi_partition=${new_img_dev}${EFI_PART_NR}
 jindisk_partition=${new_img_dev}${jindisk_PART_NR}
-
-ref_rootfs=/dev/sda2
 
 jindisk_MNT=$(mktemp -d /tmp/jindisk-mnt-XXXXXX)
 
@@ -53,7 +54,7 @@ create_disk_partitions()
 {
         local dev=${1}
 
-        [ -z "${dev}" ] && die "disk device unspecified"
+        [ -z "${dev}" ] && echo "disk device unspecified"
 
         sgdisk --zap-all ${dev}
 
@@ -75,8 +76,8 @@ get_partition_number()
     local dev=${1}
     local code=${2^^}   # Convert to upper case
 
-    [ -z "${dev}" ] && die "block device is unspecified."
-    [ -z "${code}" ] && die "partition code is unspecified."
+    [ -z "${dev}" ] && echo "block device is unspecified."
+    [ -z "${code}" ] && echo "partition code is unspecified."
 
     sgdisk --print ${dev} | \
         grep "^ \+[0-9]\+" | \
@@ -91,10 +92,10 @@ add_fstab_entry()
     local fstab=${1}
     local entry=${2}
 
-    [ -z "${fstab}" ] && die "fstab location is empty!"
-    [ -z "${entry}" ] && die "fstab entry is empty!"
+    [ -z "${fstab}" ] && echo "fstab location is empty!"
+    [ -z "${entry}" ] && echo "fstab entry is empty!"
 
-    [ ! -w "${fstab}" ] && die "${fstab} is not writable!"
+    [ ! -w "${fstab}" ] && echo "${fstab} is not writable!"
 
     # Read the existing fstab entries
     local -a fstab_entries=( "${entry}" )
@@ -111,8 +112,8 @@ run_chroot_cmd()
     local new_root=${1}
     shift
 
-    [ -z "${new_root}" ] && die "new root directory is empty!"
-    [ ${#} -eq 0 ] && die "no command specified!"
+    [ -z "${new_root}" ] && echo "new root directory is empty!"
+    [ ${#} -eq 0 ] && echo "no command specified!"
 
     # Mount /dev and virtual filesystems inside the chroot
     mount --bind /dev ${new_root}/dev
@@ -155,18 +156,23 @@ mkfs.vfat -F 16 -n ${EFI_PART_LABEL} ${efi_partition}
 jindisk_mnt=${jindisk_MNT}
 mkdir -p ${jindisk_mnt}
 
-echo "Prepare jindisk partition: ${jindisk_partition} ..."
+echo "Prepare Jindisk partition: ${jindisk_partition} ..."
 jindisk_partition_size=`blockdev --getsize ${jindisk_partition}`
-echo "jindisk partition size: "${jindisk_partition_size}
+echo "Jindisk partition size: "${jindisk_partition_size}
 
 # sudo jindisksetup-rust create -p ${preset_key} -d ${jindisk_partition} -t jindisk_rootfs
 sudo jindisksetup create ${preset_key} ${jindisk_partition} jindisk_rootfs
 if [ $? -ne 0 ]; then
-	echo "jindisksetup failed!"
+	echo "Jindisksetup failed!"
 	exit -1
 else
-	echo "jindisk initialized."
+	echo "Jindisk initialized."
 fi
+
+# Determine which partition on the reference image contains the rootfs
+ref_linux_part=$(get_partition_number ${ref_img_dev} ${LINUX_RESERVED_PART_CODE})
+ref_rootfs=${ref_img_dev}${ref_linux_part}
+echo "Ref image rootfs: ${ref_rootfs}"
 
 echo "Filling the new image..."
 dd if=${ref_rootfs} of=/dev/mapper/jindisk_rootfs status=progress
