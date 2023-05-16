@@ -24,45 +24,42 @@ A step-by-step guide is given here to show how the guest owner can create the Ji
 
 If one just intends to test the functionalities of JinDisk through this demo, this step may be skipped. However, if running the demo on a TDX or an SEV-SNP machine, it is imperative to have a TEE host system in place. The TEE host system requires the installation of essential software including QEMU, OVMF, and a patched Linux kernel.
 
-*A warning here: this demo represents the state of the art and includes patches that are certainly not deployed in distributions and may not even be upstream, so anyone follows along at home will need to patch things like QEMU, Grub, and OVMF as below.*
+*A warning here: this demo represents the state of the art and includes patches that are certainly not deployed in distributions and may not even be upstream, so anyone follows along will need to patch things like QEMU, Grub, and OVMF as below.*
 
-For Intel TDX, 
-*Todo: add installation instructions to install TDX-compatible QEMU/TDVF*
-
-For AMD SEV-SNP, the following commands build the SEV-compatible QEMU/OVMF used for launching an SEV-SNP guest VM.
-
-```bash
-cd ~
-git clone https://github.com/AMDESE/AMDSEV.git
-git checkout sev-snp-devel
-./build.sh --package
-sudo cp kvm.conf /etc/modprobe.d/
-```
-
-On succesful build, the binaries will be available in `~/AMDSEV/snp-release-<DATE>/`.
-
-Check [Intel TDX's whitepaper](https://software.intel.com/content/www/us/en/develop/articles/intel-trust-domain-extensions.html) and [AMD SEV-SNP's Github repository](https://github.com/AMDESE/AMDSEV/tree/sev-snp-devel) for more details to deploy and bring up a confidential guest VM.
+Check [Intel TDX's manual](xxxxx) and [AMD SEV-SNP's Github repository](https://github.com/AMDESE/AMDSEV/tree/sev-snp-devel) for more details to deploy and bring up a confidential guest VM.
 
 
 ### Preparing the reference image
 
-A JinDisk-installed VM image can be downloaded via the following commands.
+A reference image must include the JinDisk driver and the corresponding components. 
+Anyone can prepare their own customized image which includes TEE-specific kernel modules and other tailored software packages if desired. Nonetheless it is worth noting that this demo at present can only convert Ubuntu-based images.
+
+One option is to download a pre-installed VM image.
+For example, a TD image (equipped with JinDisk) can be downloaded via the following commands.
 
 ```bash
 cd ~
-docker pull liuweijie/jindisk-vm-image:ubuntu-20.04
-docker run -d --name "encrypted-image-demo" liuweijie/jindisk-vm-image:ubuntu-20.04
-docker cp encrypted-image-demo:/home/ubuntu-20.04-jinzhao-disk.qcow2 .
+docker pull xxx/xxxx:xxxxx
+docker run -d --name "encrypted-image-demo" xxx/xxxx:xxxxx
+docker cp encrypted-image-demo:<path-to-the-image> .
 ```
 
-Anyone can prepare their own customized image which includes TEE-specific kernel modules and other tailored software packages if desired. Nonetheless it is worth noting that this demo at present can only convert Ubuntu-based images.
+Or one can munually install the driver and components on a clean image from scratch using the [JinDisk kernel module installation](./in-vm/installation-scripts/install-kernel-module.sh) script and the [Jindisk user CLI installation](./in-vm/installation-scripts/install-user-cli.sh) script.
+
 
 ### Assembling the new JinDisk-encrypted image
 
-Once the image is ready, the [qemu-create-jindisk-image.sh](./qemu-create-jindisk-image.sh) script can be used to create the new JinDisk-encrypted image using the above-mentioned reference image as a base. Encrypted partitions will be created and initramfs hooks will be placed.
+Once the reference image is ready, one can assemble the new JinDisk-encrypted on different TEE platforms.
+
+For TDX, you should apply certain patches and use the following commands to build the new image.
+
+*Todo: add TDX's patches*
+
+
+For non-TEE or AMD SEV-SNP environment, the [qemu-create-jindisk-image.sh](./qemu-create-jindisk-image.sh) script can be used to create the new JinDisk-encrypted image using the above-mentioned reference image as a base. Encrypted partitions will be created and initramfs hooks will be placed.
 
 Invoke the `qemu-create-jindisk-image.sh` script to create a new QCOW2 image file called `ubuntu-20.04-new-jindisk.qcow2` with the `-new` option, and resize it to `60GB`.
-Note that this command assumes that a QEMU executable is located at `~/AMDSEV/snp-release-<DATE>/usr/local/bin/qemu-system-x86_64` if the AMD SEV-SNP is enabled on the host. Feel free to change it to a customized version (e.g., a TDX-compatible QEMU) if necessary.
+Note that this command assumes that a QEMU executable is located at `~/AMDSEV/snp-release-<DATE>/usr/local/bin/qemu-system-x86_64` if the AMD SEV-SNP is enabled on the host. Feel free to change it to a customized version if necessary.
 
 ```bash
 sudo ./qemu-create-jindisk-image.sh 
@@ -72,13 +69,20 @@ sudo ./qemu-create-jindisk-image.sh
     -size         60G
 ```
 
+### Launching the attestation/key service
+
+To decrypt a non-TEE VM, the key can be located at the initramfs or can be input by the user manually. Therefore, the service is not required.
+
+In TDX, the service
+*Todo: add TDX's Attestation service*
+
+
 ### Launching the new VM and unlocking the JinDisk-encrypted image
 
-Use the [qemu-launch-secure-vm.sh](./qemu-launch-secure-vm.sh) script to launch a secure VM and to verify whether the image is created successfully.
+In a non-TEE environment, one can use the [qemu-launch-secure-vm.sh](./qemu-launch-secure-vm.sh) script to launch a secure VM and to verify whether the image is created successfully.
 Use the `-hda` option to specify the image file. The command assumes the OVMF is located at `~/AMDSEV/snp-release-<DATE>/usr/local/share/qemu/`. Use `-tee` to specify which TEE guest is expected to be launched. For example in the following command, the last argument `-tee sev` will force the QEMU to start up an SEV guest VM. A normal VM will be launched if the `-tee` option is not specified.
 Utilize the command line options `-mem`, `-smp`, `-ssh`, and `-vnc` to specify the virtual machine's allocated memory capacity, count of virtual CPU cores assigned, as well as the respective ports for SSH and VNC communication channels.
 
-*Todo: add TDX support in the launch script*
 
 ```bash
 sudo ./qemu-launch-secure-vm.sh \
@@ -93,28 +97,25 @@ sudo ./qemu-launch-secure-vm.sh \
     -tee sev
 ```
 
+For TDX,
+
+*Todo: add TD's the launch script*
+```bash
+sudo ./start-qemu \
+    -i      xxx.qcow2
+```
+
+
+
+
+
+
+
 If the instructions have been followed correctly, a JinDisk-formatted block device mounted as the RootFS can be listed by the `lsblk` command running inside the VM.
-
-
-## Future Work
-
-The forthcoming updates to this demo will include additional examples of performing RA on VM-based TEE platforms.
-
-At present the retrieval of disk decryption in this demo is done locally from the initramfs without resorting to remote attestation.
-However it is imperative and feasible to integrate remote attestation protocols at this stage by embedding scripts into the initramfs hooks. 
-By replacing the [getting key script](./in-vm/initramfs-hooks/getting_key.sh) one can obtain the **attestation report** and exchange it with the guest owner/key server.
-Both Intel TDX and AMD SEV offer attestation reports to the guest owner for verification purposes.
-
-Specifically in Intel TDX, the guest VM (aka. the trust domain, TD) can request a TDREPORT which is locally MAC’d and used to generate a quote via a quoting enclave (QE). The guest owner can verify the quote to further verify the trustworthiness of the TD. 
-To integrate TDX's RA into the demo, 
-*Todo: add more details about Intel TDX's remote attestation*
-
-In AMD's SEV-SNP, a guest VM can use the SEV-SNP hardware to procure a signed attestation report via the `sevguest.ko` and the `ccp.ko` modules. The [ccp.ko](https://lwn.net/Articles/735732/) module can store the VCEK certificate for the platform along with the certificate chain necessary to validate the VCEK certificate. This guest kernel driver is also responsible for sending the `SNP_GUEST_REQUEST` message to the ASP firmware and presenting the reply back to the guest VM's user space.
-Therefore to integrate SEV-SNP's RA into the demo the initramfs should include a proxy program that can be called by the `getting key script`. The proxy program should query the attestation report from the `/dev/sev-guest` device inside the SEV-SNP guest VM and then send the report to the verifier (the guest owner/key server). This will establish a trusted channel between the guest VM and the verifier allowing them to exchange the disk decryption key securely.
 
 
 ## Compatibility and Security
 
-This demo has been tested on Ubuntu 20.04/22.04 as the guest VM's OS, with Linux 5.15/5.17 as the guest VM's kernel. Other versions may work but are not guaranteed.
+This demo has been tested on Ubuntu 20.04/22.04 as the guest VM's OS, with Linux 5.15/5.17/5.19 as the guest VM's kernel. Other versions may work but are not guaranteed.
 
 Architectural discussions and security considerations are available in the [docs](../../docs/) directory. To better understand the rationale and security implications behind it, consult [security-considerations.md](../../docs/security-considerations.md) in docs.
