@@ -1,0 +1,2 @@
+# example: 192.168.1.10 ra.service.com
+ip_addr_of_machine_with_ra_server ra.service.com

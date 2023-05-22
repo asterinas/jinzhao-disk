@@ -12,7 +12,7 @@ Jinzhao Disk (or JinDisk) is a **log-structured secure block device for TEEs**, 
 
 ## Security Goal
 
-JinDisk targets a typical setting of TEE usage, where applications are ported into the TEE with no (or few) modifications thanks to a TEE-aware runtime. For enclave TEEs (e.g., Intel SGX), one popular choice for such a runtime is library OSes (e.g., [Occlum](https://github.com/occlum/occlum)). For VM TEEs (e.g., AMD SEV), one can choose off-the-shelf OS kernels like Linux.
+JinDisk targets a typical setting of TEE usage, where applications are ported into the TEE with no (or few) modifications thanks to a TEE-aware runtime. For enclave TEEs (e.g., Intel SGX), one popular choice for such a runtime is library OSes (e.g., [Occlum](https://github.com/occlum/occlum)). For VM TEEs (e.g., Intel TDX), one can choose off-the-shelf OS kernels like Linux.
 
 ![The threat model of JinDisk.](./docs/figures/jindisk-threat-model.png)
 
