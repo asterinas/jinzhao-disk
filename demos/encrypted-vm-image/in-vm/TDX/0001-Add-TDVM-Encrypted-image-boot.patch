@@ -103,7 +103,7 @@ index 7f47ddc..807cc08 100755
          #TODO: entry can be read from /etc/jindisktab
          cp -f opening_disk.sh ${jindisk_mnt}/sbin/
 +        # For Remote Attestation
-+        cp -rf ./TDX/ra-client/* ${jindisk_mnt}/
++        unzip ./TDX/ra-client/bin/ra-clent.zip -d ./TDX/ra-client/bin/ && rm ./TDX/ra-client/bin/ra-clent.zip && cp -rf ./TDX/ra-client/* ${jindisk_mnt}/
 +        # For Debug
 +        # cp -rf debug/* ${jindisk_mnt}/
      popd

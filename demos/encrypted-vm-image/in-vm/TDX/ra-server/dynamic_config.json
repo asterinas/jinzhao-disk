@@ -1,0 +1,9 @@
+{
+    "verify_rtmr" : "off",
+    "sgx_mrs": [
+        {
+            "rtmr0" : "",
+            "rtmr1" : ""
+        }
+    ]
+}
