@@ -235,5 +235,5 @@ echo "GRUB_DISABLE_OS_PROBER=true" >> ${jindisk_mnt}/etc/default/grub
 run_chroot_cmd ${jindisk_mnt} update-grub
 mv ${jindisk_mnt}/etc/default/grub.orig ${jindisk_mnt}/etc/default/grub
 
-echo "Encrypted Image Successfully created!"
+echo "Encrypted Image Successfully Created!"
 exit 0

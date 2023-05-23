@@ -2,7 +2,7 @@
 
 This demo shows how one can start up a confidential TDVM whose TDVM image is protected with JinDisk. It provides tools that (1) can convert a plain TD virtual machine (VM) image into a JinDisk-protected one and (2) can use a JinDisk-protected VM image to start up a confidential VM. During the VM startup, a customizable process of remote attestation is triggered to fetch the root key that can unlock the JinDisk-protected VM image.
 
-This demo is intended for Intel TDX, although it is also runnable on non-TEE VMs (with weaker security guarantees, of course).
+This demonstration is presently designed for Intel TDX, although it can also be executed on non-TEE environment (albeit with inferior security assurances).
 
 ## High-level Workflow
 
@@ -34,13 +34,6 @@ Check [Intel TDX's Linux Stack](https://cczoo.readthedocs.io/en/latest/TEE/TDX/t
 A reference image must include the JinDisk driver and the corresponding components. 
 Anyone can prepare their own customized image which includes TEE-specific kernel modules and other tailored software packages if desired. Nonetheless it is worth noting that this demo at present can only convert Ubuntu-based images.
 
-Download jindisk source code:
-
-```bash
-mkdir -p /home/jindisk && cd /home/jindisk
-git clone https://github.com/jinzhao-dev/jinzhao-disk.git
-```
-
 One option is to download a pre-installed TDVM image.
 For example, a TD image (equipped with JinDisk) can be downloaded via the following commands.
 
@@ -59,50 +52,57 @@ Or one can manually install the driver and components on a clean image from scra
 
 Once the reference image is ready, one can assemble the new JinDisk-encrypted on different TEE platforms.
 
-For TDX, you should apply certain patches and use the following commands to build the new image.
+Download JinDisk source code.
+
+```bash
+mkdir -p /home/jindisk && cd /home/jindisk
+git clone https://github.com/jinzhao-dev/jinzhao-disk.git
+```
+
+For TDX, certain patches need to be applied and specific commands must be utilized in order to build the new image. This step can be skipped if no TEE platform is available.
 
 ```bash
 cd /home/jindisk/jinzhao-disk/demos/encrypted-vm-image/in-vm/TDX
 git am 0001-Add-TDVM-Encrypted-image-boot.patch
 ```
 
-Copy above new patched jindisk source code to reference TDVM image:
+Copy the (newly patched) JinDisk source code to the reference TDVM image by following the steps below with the [copy-into-image.sh](./copy-into-image.sh) script.
 
 ```bash
 cd ..
 ./copy-into-image.sh -src /home/jindisk/jinzhao-disk -image /home/jindisk/td-guest-ubuntu-22.04-jindisk.qcow2 -dest /home/
 ```
 
-*Note:* Please update the `IP address` of machine running `ra-server` in the file `TDX/ra-client/etc/hosts`.
+*Note:* 
+Please update the `IP address` of machine running `ra-server` in the file `TDX/ra-client/etc/hosts`.
 
-Invoke the `qemu-create-jindisk-image.sh` script to create a new QCOW2 image file called `ubuntu-20.04-new-jindisk.qcow2` with the `-new` option, and resize it to `60GB`. And it will boot into the reference image.
-Note that this command assumes that a QEMU executable is located at `/usr/libexec/qemu-kvm` if the TDX is enabled and TDX Linux stack is installed on the host.
+Invoke the `create-jindisk-image.sh` script to create a new QCOW2 image file called `ubuntu-20.04-new-jindisk.qcow2` with the `-new` option, and resize it to `60GB`. And it will boot into the reference image.
 
-*Need Update with Weijie new update of the script*
 ```bash
-sudo ./qemu-create-jindisk-image.sh 
-    -qemu         /usr/libexec/qemu-kvm \
+./create-jindisk-image.sh 
     -ref          /home/jindisk/td-guest-ubuntu-22.04-jindisk.qcow2 \
     -new          /home/jindisk/encrypted-td-guest-ubuntu-22.04.qcow2 \
     -size         60G
 ```
-*Note:* The TDVM image user/password is root/123456.
 
-After booting into reference TDVM, make the encrypted TDVM image as below:
+After booting into reference TDVM, proceed to create the encrypted TDVM image as below. 
+
+*Note:* 
+The initial user and password combination in this demo for the TDVM image is "root/123456".
 
 ```bash
-cd /home/jinzhao-disk/demo/encrypted-vm-image/in-vm
+cd /home/jinzhao-disk/demos/encrypted-vm-image/in-vm
 ./assemble.sh
 ```
 
-It will show "Encrypted Image Successfully created" when the encrypted image is made.
-Then return the host and you should find the image `encrypted-td-guest-ubuntu-22.04.qcow2`.
+Upon successful encryption of the image, a message - "Encrypted Image Successfully Created!" - will be displayed. Subsequently, the host should be returned and the image, named `encrypted-td-guest-ubuntu-22.04.qcow2`, should be readily accessible.
 
-### Launching the attestation/key service
 
-To decrypt a non-TEE VM, the key can be located at the initramfs or can be input by the user manually. Therefore, the service is not required.
+### Launching the key service
 
-For TDX, suppose the TDX Linux stack is already installed and configured correctly to support TDX remote attestation.
+To decrypt the a non-TEE VM, the key may be found within the initramfs or provided manually by the user. Thus, the utilization of the key service is unnecessary.
+
+Assuming the TDX Linux stack is already installed and configured correctly to support TDX remote attestation, you can launch the key service using the following command.
 
 ```bash
 cd /home/jindisk/jinzhao-disk/demos/encrypted-vm-image/in-vm/TDX/ra-server
@@ -111,43 +111,31 @@ http_proxy= https_proxy= HTTP_PROXY= HTTPS_PROXY= GRPC_DEFAULT_SSL_ROOTS_FILE_PA
 
 *Note:*
 1. The port of the remote attestation service is 50051.
-2. The secret key (the value should be the same as "preset_key" in assemble.sh) is stored in secret.json file, user reset the key as needed.
-3. Please refer to the source code of `ra-server` [here](https://github.com/intel/confidential-computing-zoo/tree/main/cczoo/tdx-encrypted-vfs/get_secret). 
+2. The secret key (whose value ought to match that of `preset_key` in [assemble.sh](./in-vm/assemble.sh)) should be configured in the [secret.json](./in-vm/TDX/ra-server/secret.json) file, and can be reset by the user as necessary.
 
-### Launching the new VM and unlocking the JinDisk-encrypted image
+Please refer to the source code of `ra-server` [here](https://github.com/intel/confidential-computing-zoo/tree/main/cczoo/tdx-encrypted-vfs/get_secret) for more detials about the key service. 
 
-In a non-TEE environment, one can use the [qemu-launch-secure-vm.sh](./qemu-launch-secure-vm.sh) script to launch a secure VM and to verify whether the image is created successfully.
-Use the `-hda` option to specify the image file. The command assumes the OVMF is located at `~/AMDSEV/snp-release-<DATE>/usr/local/share/qemu/`. Use `-tee` to specify which TEE guest is expected to be launched. For example in the following command, the last argument `-tee sev` will force the QEMU to start up an SEV guest VM. A normal VM will be launched if the `-tee` option is not specified.
-Utilize the command line options `-mem`, `-smp`, `-ssh`, and `-vnc` to specify the virtual machine's allocated memory capacity, count of virtual CPU cores assigned, as well as the respective ports for SSH and VNC communication channels.
 
+### Launching and unlocking the JinDisk-encrypted image
+
+One can use the [start-qemu.sh](./start-qemu.sh) script to launch a VM and to verify whether the image is created successfully.
+
+Use the `-i` option to specify the image file. 
+Use the `-t` option to specify the VM type. To launch a normal VM, one can use the `-t legacy` option. To launch a VM with a custom EFI configuration (such as a SEV secure VM), one should specify `-t efi` and use `-o` and `-a` to indicate the OVMF code and OVMF vars. The script assumes the OVMF binaries are located at `/usr/share/qemu/`.
+
+For TDX, you should use the `-t td` option to indicate a TD will be launched with the following commands.
 
 ```bash
-sudo ./qemu-launch-secure-vm.sh \
-    -qemu         ~/AMDSEV/snp-release-<DATE>/usr/local/bin/qemu-system-x86_64 \
-    -hda          ubuntu-20.04-new-jinzhao-disk.qcow2 \
-    -mem          8 \
-    -smp          16G \
-    -ssh          10086 \
-    -vnc          1 \
-    -uefi_code    ~/AMDSEV/snp-release-<DATE>/usr/local/share/qemu/OVMF_CODE.fd \
-    -uefi_vars    ~/AMDSEV/snp-release-<DATE>/usr/local/share/qemu/OVMF_VARS.fd \
-    -tee sev
+./start-qemu \
+    -i /home/jindisk/encrypted-td-guest-ubuntu-22.04.qcow2 \
+    -b grub \
+    -t td
 ```
 
-For TDX,
+Note that this command assumes that a QEMU executable is located at `/usr/libexec/qemu-kvm` if the TDX is enabled and TDX Linux stack is installed on the host.
+Utilize the command line options `-c`, `-f`, and `-p` to specify the count of virtual CPU cores assigned, the port for SSH, and the port Telnet, respectively.
 
-*Todo: add TD's the launch script*
-```bash
-cd /home/jindisk/jinzhao-disk/demo/encrypted-vm-image/in-vm
-cp /home/jindisk/encrypted-td-guest-ubuntu-22.04.qcow2 .
-sudo ./start-qemu \
-    -i  encrypted-td-guest-ubuntu-22.04.qcow2 \
-    -b grub
-```
-
-During the boot process, the `getting_key.sh` in initramfs will try to connect the `ra-server`.
-`ra-server` will receive the attestation request and verifies the TD report.
- `openining_disk.sh` will decrypt the encrypted rootfs with the retrieved key.
+During the boot sequence, the `getting_key.sh` script within the initramfs will endeavor to establish a connection with the `ra-server`, which will subsequently receive the attestation request and proceed to authenticate the TD report. Upon successful authentication, the `opening_disk.sh` script will proceed to decrypt the encrypted rootfs utilizing the obtained key.
 
 
 ## Compatibility and Security
