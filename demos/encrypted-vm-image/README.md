@@ -62,21 +62,21 @@ git clone https://github.com/jinzhao-dev/jinzhao-disk.git
 For TDX, certain patches need to be applied and specific commands must be utilized in order to build the new image. This step can be skipped if no TEE platform is available.
 
 ```bash
-cd /home/jindisk/jinzhao-disk/demos/encrypted-vm-image/in-vm/TDX
-git am 0001-Add-TDVM-Encrypted-image-boot.patch
+cd /home/jindisk/jinzhao-disk/
+git apply demos/encrypted-vm-image/in-vm/TDX/0001-Add-TDVM-Encrypted-image-boot.patch
 ```
 
 Copy the (newly patched) JinDisk source code to the reference TDVM image by following the steps below with the [copy-into-image.sh](./copy-into-image.sh) script.
 
 ```bash
-cd ..
+cd /home/jindisk/jinzhao-disk/demos/encrypted-vm-image
 ./copy-into-image.sh -src /home/jindisk/jinzhao-disk -image /home/jindisk/td-guest-ubuntu-22.04-jindisk.qcow2 -dest /home/
 ```
 
 *Note:* 
 Please update the `IP address` of machine running `ra-server` in the file `TDX/ra-client/etc/hosts`.
 
-Invoke the `create-jindisk-image.sh` script to create a new QCOW2 image file called `ubuntu-20.04-new-jindisk.qcow2` with the `-new` option, and resize it to `60GB`. And it will boot into the reference image.
+Invoke the `create-jindisk-image.sh` script to create a new encrypted QCOW2 image file called `encrypted-td-guest-ubuntu-22.04.qcow2` with the `-new` option, and resize it to `60GB`. And it will boot into the reference image.
 
 ```bash
 ./create-jindisk-image.sh 
@@ -106,6 +106,7 @@ Assuming the TDX Linux stack is already installed and configured correctly to su
 
 ```bash
 cd /home/jindisk/jinzhao-disk/demos/encrypted-vm-image/in-vm/TDX/ra-server
+unzip ra-server.zip
 http_proxy= https_proxy= HTTP_PROXY= HTTPS_PROXY= GRPC_DEFAULT_SSL_ROOTS_FILE_PATH=./roots.pem ./ra-server -host=0.0.0.0:50051 -cfg=dynamic_config.json -s=secret.json
 ```
 
@@ -126,7 +127,7 @@ Use the `-t` option to specify the VM type. To launch a normal VM, one can use t
 For TDX, you should use the `-t td` option to indicate a TD will be launched with the following commands.
 
 ```bash
-./start-qemu \
+./start-qemu.sh \
     -i /home/jindisk/encrypted-td-guest-ubuntu-22.04.qcow2 \
     -b grub \
     -t td

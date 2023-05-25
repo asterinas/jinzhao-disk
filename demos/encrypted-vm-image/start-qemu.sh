@@ -189,14 +189,19 @@ process_args() {
         KERNEL_CMD_TD="${KERNEL_CMD_NON_TD}"
     fi
 
-    case ${EXTRA_DISK##*.} in
-        qcow2) EXTRA_DISK_FORMAT="qcow2";;
-          img) EXTRA_DISK_FORMAT="raw";;
-            *) echo "Unknown extra disk image's format"; exit 1 ;;
-    esac
+   QEMU_CMD+=" -drive file=$(readlink -f "${GUEST_IMG}"),if=virtio,format=${FORMAT} "
 
-    QEMU_CMD+=" -drive file=$(readlink -f "${GUEST_IMG}"),if=virtio,format=${FORMAT} "
-    QEMU_CMD+=" -drive file=$(readlink -f "${EXTRA_DISK}"),if=virtio,format=${EXTRA_DISK_FORMAT},media=disk "
+    if [[ -n ${EXTRA_DISK} ]]; then
+
+        case ${EXTRA_DISK##*.} in
+            qcow2) EXTRA_DISK_FORMAT="qcow2";;
+            img) EXTRA_DISK_FORMAT="raw";;
+                *) echo "Unknown extra disk image's format"; exit 1 ;;
+        esac
+
+        QEMU_CMD+=" -drive file=$(readlink -f "${EXTRA_DISK}"),if=virtio,format=${EXTRA_DISK_FORMAT},media=disk "
+    fi
+
     QEMU_CMD+=" -monitor telnet:127.0.0.1:${MONITOR_PORT},server,nowait "
 
     if [[ ${DEBUG} == true ]]; then
