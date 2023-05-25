@@ -1,17 +1,17 @@
-From 742a5869edd13518360aa64ce120be631a27f51f Mon Sep 17 00:00:00 2001
-From: root <root@ocsbesrhlrepo01.amr.corp.intel.com>
-Date: Mon, 22 May 2023 11:07:47 +0800
-Subject: [PATCH] Add TDVM Encrypted image boot
+From 6855cf3301bee5cf2261c312a5f2857a774b7b24 Mon Sep 17 00:00:00 2001
+From: RodgerZhu
+Date: Thu, 25 May 2023 19:42:58 +0800
+Subject: [PATCH] Add TDVM Encrypted Image Support
 
 ---
- demos/encrypted-vm-image/in-vm/assemble.sh    | 39 ++++++++++---------
- .../in-vm/initramfs-hooks/getting_key.sh      | 19 ++++++++-
+ demos/encrypted-vm-image/in-vm/assemble.sh    | 37 ++++++++++---------
+ .../in-vm/initramfs-hooks/getting_key.sh      | 19 +++++++++-
  .../initramfs-hooks/hook-add-executables      | 12 +++++-
  .../in-vm/initramfs-hooks/hook-unlock         | 10 +++--
- 4 files changed, 57 insertions(+), 23 deletions(-)
+ 4 files changed, 56 insertions(+), 22 deletions(-)
 
 diff --git a/demos/encrypted-vm-image/in-vm/assemble.sh b/demos/encrypted-vm-image/in-vm/assemble.sh
-index 7f47ddc..807cc08 100755
+index 7618884..9a3d684 100755
 --- a/demos/encrypted-vm-image/in-vm/assemble.sh
 +++ b/demos/encrypted-vm-image/in-vm/assemble.sh
 @@ -5,12 +5,11 @@
@@ -119,9 +119,8 @@ index 7f47ddc..807cc08 100755
 +echo "GRUB_ENABLE_BLSCFG=false" >> ${jindisk_mnt}/etc/default/grub
  run_chroot_cmd ${jindisk_mnt} update-grub
 -mv ${jindisk_mnt}/etc/default/grub.orig ${jindisk_mnt}/etc/default/grub
-+echo "Successfully created TDVIM image: ${new_image}!"
  
--echo "Successfully created ${new_image}!"
+ echo "Encrypted Image Successfully Created!"
  exit 0
 diff --git a/demos/encrypted-vm-image/in-vm/initramfs-hooks/getting_key.sh b/demos/encrypted-vm-image/in-vm/initramfs-hooks/getting_key.sh
 index c405575..ee29cc4 100755
@@ -206,5 +205,5 @@ index 53d5fcc..0b2070f 100755
 +
  exit 0
 -- 
-2.31.1
+2.27.0
 
