@@ -127,7 +127,7 @@ Use the `-t` option to specify the VM type. To launch a normal VM, one can use t
 For TDX, you should use the `-t td` option to indicate a TD will be launched with the following commands.
 
 ```bash
-./start-qemu \
+./start-qemu.sh \
     -i /home/jindisk/encrypted-td-guest-ubuntu-22.04.qcow2 \
     -b grub \
     -t td
