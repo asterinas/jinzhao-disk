@@ -9,7 +9,7 @@ ref_image_password="123456"
 new_image="/home/jindisk/encrypted-td-guest-ubuntu-22.04.qcow2"
 new_image_size="60G"
 
-ovmf_dir="/home/weijie/dev/demo"
+ovmf_dir="/usr/share/qemu/"
 ovmf_code="${ovmf_dir}/OVMF_CODE.fd"
 ovmf_vars="${ovmf_dir}/OVMF_VARS.fd"
 
