@@ -3,7 +3,7 @@
 # Saved for RA
 key=`/sbin/getting_key.sh`
 
-jindisksetup open ${key} /dev/sda3 jindisk_rootfs
+jindisksetup open ${key} /dev/vda3 jindisk_rootfs
 
 # For jindisksetup-rust
 # jindisksetup-rust open -p ${key} -d /dev/sda3 -t jindisk_rootfs
